@@ -1,0 +1,49 @@
+---
+creation date: 2026-06-26 08:37
+modification date: 2026-06-27 18:00
+---
+# Vision and Goals
+
+## Project goal
+
+Build a multiuser, open-source web application: a top-down pixel-art MMORPG-style
+virtual world (in the spirit of Gather.town, ZEP, Workadventu/re) aimed at
+companies that need to bring remote workers together and hold video meetings.
+
+That base experience — a shared spatial office with positional video/audio — is
+the essential, must-have scope of the project.
+
+## Architectural north star
+
+The project must be **modular** so that NPCs (bots or AI agents) can be added in
+the future, and so that objects can carry generic characteristics and react to /
+interact with users. To achieve this, the codebase will be built around an
+**Entity-Component-System (ECS)** rather than a classic object-oriented class
+hierarchy. See `15-ecs-design.md` (to be created) and the current
+`Entity-Component-System.md` for the rationale.
+
+## Why this project
+
+- **Open source**: existing players (Gather, ZEP) are proprietary and hosted;
+  companies with strict data-residency or self-hosting requirements have no
+  credible open alternative.
+- **Modular / extensible**: the ECS core makes it cheap to add new object types,
+  triggers, and AI behaviours without forking the engine.
+- **Self-hostable, no Kubernetes**: deployable with Docker Compose only, so a
+  small IT team can run it for a single company without a platform-engineering
+  budget.
+
+## Out of scope (for the MVP)
+
+The following ideas are captured in `02-functional-requirements.md` under
+"Extra features" and are **not** part of the MVP; they are listed so the
+architecture does not preclude them:
+
+- AI / NPC agents
+- Plant growth over time
+- User inventories
+- Owned workplaces with leave-a-message
+- Whiteboard objects
+- Map-wide / zone-wide audio-video broadcast via object triggers
+
+A phased roadmap will be defined separately (`18-roadmap.md`, to be created).
