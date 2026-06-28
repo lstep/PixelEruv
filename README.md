@@ -1,5 +1,5 @@
 # Pixel Eruv
 
-![Pixel Eruv](assets/cover.png)
+![Pixel Eruv](assets/gh-banner.jpg)
 
 ## The open-source virtual office platform
