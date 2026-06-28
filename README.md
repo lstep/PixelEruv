@@ -2,4 +2,4 @@
 
 ![Pixel Eruv](assets/cover.png)
 
-Remote Office facilitator
+## The open-source virtual office platform
