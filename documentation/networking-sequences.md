@@ -158,12 +158,12 @@ sequenceDiagram
             N->>W: deliver reply
             Note over W: apply reply → dirty flags
         else no ExtensionOwner and no notify trigger
-            W-->>N: publish ActionResultFrame { ok: false, reason: "no_target" }
+            W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: false, reason: "no_target" })
             N->>P: deliver batch
             P-->>B: ServerFrame.action_result
         end
     else no action trigger, no entity
-        W-->>N: publish ActionResultFrame { ok: false, reason: "no_target" }
+        W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: false, reason: "no_target" })
         N->>P: deliver batch
         P-->>B: ServerFrame.action_result
     end
