@@ -75,14 +75,19 @@ The full set will be finalised in `13-ecs-design.md`.
 | `ZoneAccess` | `policy` (open, knock, invite_only), `owner_entity_id` | Zone entities with access control (see `14-zones-and-interactions.md`) |
 | `ExtensionOwner` | `extension_id` | Entities driven by an extension (server-only, never replicated; see `18-extensions.md`) |
 | `TriggerOwner` | `trigger_id`, `extension_id` | Entities claimed by an extension via trigger registration (server-only, never replicated; see `18-extensions.md` §3a) |
+| `Item` | `item_type`, `display_name`, `icon`, `stackable`, `quantity` | All items (see inventory/equipment design in `plans/2026-07-01-inventory-equipment-action-triggers-design.md`) |
+| `InventorySlot` | `owner_entity_id` | Items in a player's inventory (no `Position`; replicated to owner only) |
+| `Equipped` | `owner_entity_id`, `slot` (e.g. "main_hand") | Items equipped by a player (replicated to owner only) |
+| `Equipment` | `slots: [{slot, item_entity_id, item_type}]` | Player avatars (replicated to all in AOI, so others can render equipped items) |
 
 ## 5. Initial system set
 
 | System | Queries | Responsibility | Runs in |
 |---|---|---|---|
-| `PlayerMovementSystem` | `Position` + `NetworkSession` + `InputState` | Authoritative player avatar position update per tick. Computes target tile from input, evaluates access triggers (block/allow cached, ask routed to extension via NATS), updates Position if allowed. This is the only gameplay system in the kernel. | World Simulator (kernel) |
+| `PlayerMovementSystem` | `Position` + `NetworkSession` + `InputState` | Authoritative player avatar position update per tick. Computes target tile from input, evaluates access triggers (block/allow cached, ask routed to extension via NATS), updates Position if allowed. This is the only gameplay movement system in the kernel. | World Simulator (kernel) |
+| `ActionTriggerSystem` | `Position` + `NetworkSession` + `Equipment` | Evaluates `ActionFrame` input: validates range and line-of-sight (Bresenham raycast through the tile grid), then routes to action triggers on the clicked tile or falls back to entity interaction routing. Spatial validation only — does not decide what the action does. | World Simulator (kernel) |
 | `ReplicationSystem` | `NetworkSession` + (changed components) | Encodes dirty components into generic replication messages (`SpawnEntity`, `UpdateComponent`, `DestroyEntity`, `PlayAnimation`) for interested clients. Runs in the World Simulator. See `11-replication.md`. | World Simulator (kernel) |
-| `TriggerSystem` | (deprecated in kernel) | Trigger logic is now implemented by extensions via the trigger registry (see `18-extensions.md` §3a). The kernel evaluates access triggers (block/allow/ask) and dispatches event triggers (notify) but does not implement trigger behavior. | Extension |
+| `TriggerSystem` | (deprecated in kernel) | Trigger logic is now implemented by extensions via the trigger registry (see `18-extensions.md` §3a). The kernel evaluates access triggers (block/allow/ask), dispatches event triggers (notify), and validates range/LOS for action triggers (click) — but does not implement trigger behavior. | Extension |
 | `BehaviorTreeSystem` | (deprecated in kernel) | NPC AI is implemented by extensions. The kernel does not run AI systems. | Extension |
 | `ZoneSystem` | (deprecated in kernel) | Zone behavior (exclusivity, knock-to-join, timers) is implemented by extensions via triggers on zone boundary tiles. The kernel stores zone boundaries and routes zone-entry triggers to the owning extension. | Extension |
 
@@ -93,9 +98,11 @@ The full set will be finalised in `13-ecs-design.md`.
   filtering (see `14-zones-and-interactions.md`)?
 - **[DECISION]** The ECS runs inside the **World Simulator** process (the
   kernel), not the Pusher. The Pusher is a thin WebSocket proxy with no ECS
-  knowledge. The kernel's only gameplay systems are PlayerMovementSystem and
-  ReplicationSystem; all other gameplay behavior is delegated to extensions via
-  NATS (see `18-extensions.md`). See `10-world-simulator.md` for the World
-  Simulator specification and `09-pusher.md` for the Pusher specification.
+  knowledge. The kernel's only gameplay systems are PlayerMovementSystem,
+  ActionTriggerSystem (spatial validation + routing), and ReplicationSystem;
+  all other gameplay behavior (inventory, equipment, item effects) is delegated
+  to extensions via NATS (see `18-extensions.md`). See `10-world-simulator.md`
+  for the World Simulator specification and `09-pusher.md` for the Pusher
+  specification.
 - How are NPC entities injected: real WebSocket connection or in-process input
   injection? (See `08-auth-and-identity.md` §7.)

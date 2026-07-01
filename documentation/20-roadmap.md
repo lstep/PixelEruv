@@ -19,9 +19,14 @@ positional audio/video.
   extensions.
 - ECS core (`13-ecs-design.md`), component-based replication
   (`11-replication.md`), netcode (`12-netcode.md`).
-- Trigger system (access: block/allow/ask; event: notify) — the mechanism
-  by which extensions declare spatial rules on tiles and entities
-  (`18-extensions.md` §3a).
+- Trigger system (access: block/allow/ask; event: notify; action: click with
+  range/LOS validation) — the mechanism by which extensions declare spatial
+  rules on tiles and entities (`18-extensions.md` §3a). Action triggers enable
+  click-based interactions (shooting, throwing, remote object interaction)
+  with kernel-validated range and line-of-sight.
+- `ActionFrame` protocol — replaces `InteractFrame` with a unified frame for
+  all player-initiated spatial actions (tile clicks and keypress interactions)
+  (`07-network-protocol.md` §1.5).
 - Zones incl. exclusive zones and knock-to-join meeting rooms
   (`14-zones-and-interactions.md`) — implemented as extension-owned triggers
   on zone boundary tiles.
@@ -53,7 +58,15 @@ From `01-vision-and-goals.md` and `02-functional-requirements.md` § 8:
 - **Matrix Synapse chat** for federation / rich clients / E2EE
   (`17-chat.md`).
 - **Map-wide / zone-wide A/V broadcast** via object triggers.
-- **Plant growth**, **user inventories**, **owned workplaces with
+- **Inventory & equipment system** — items as ECS entities, equipment that
+  changes available actions, inventory extension (see
+  `plans/2026-07-01-inventory-equipment-action-triggers-design.md` and
+  `18-extensions.md` §6a). The kernel handles spatial transitions (items on
+  ground have `Position`, picking up removes it); the inventory extension
+  handles all gameplay semantics (equipment slots, item effects, use actions,
+  persistence). Action triggers use the equipment snapshot to enable
+  equipment-dependent actions (e.g. bow → shoot, empty-handed → no action).
+- **Plant growth**, **owned workplaces with
   leave-a-message**, **whiteboard objects**.
 - **Mobile client**; **multi-region**.
 - **HA deployment** (beyond single-host).

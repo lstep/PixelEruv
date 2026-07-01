@@ -116,7 +116,7 @@ flowchart LR
 
   subgraph Backend [Go services]
     PUSH[Pusher<br/>WebSocket gateway<br/>session + auth]
-    WORLDSIM[World Simulator<br/>spatial authority<br/>ECS + triggers + replication]
+    WORLDSIM[World Simulator<br/>spatial authority<br/>ECS + triggers + action/LOS + replication]
     BRIDGE[LiveKit Bridge<br/>zone ↔ LiveKit room sync]
   end
 
@@ -218,7 +218,7 @@ flowchart LR
       TriggerReg["Trigger registry<br/>(trigger_id → owner, behavior)"]
       ZoneReg["Zone registry<br/>(zone_id → boundaries)"]
       PlayerMove["Player movement<br/>(input → position, in-kernel)"]
-      TriggerEval["Trigger evaluator<br/>(block/allow cached, ask routed)"]
+      TriggerEval["Trigger evaluator<br/>(block/allow cached, ask routed<br/>action: range/LOS validated)"]
     end
 
     subgraph WSRep["Replication layer"]
@@ -299,11 +299,11 @@ flowchart LR
 
   subgraph Extensions["Extensions (any language)"]
     direction TB
-    ExtLogic["Entity logic<br/>Trigger logic<br/>Zone behavior<br/>NPC AI / LLM"]
+    ExtLogic["Entity logic<br/>Trigger logic<br/>Zone behavior<br/>NPC AI / LLM<br/>Inventory & equipment"]
   end
 
-  Extensions -- "register, spawn, update,<br/>register_triggers, register_zone,<br/>trigger replies, KV watch/write" --> NATSCore
-  NATSCore -- "trigger queries, notify broadcasts,<br/>interactions, arrived, errors" --> Extensions
+  Extensions -- "register, spawn, update,<br/>register_triggers (access/event/action), register_zone,<br/>trigger replies, action replies, KV watch/write" --> NATSCore
+  NATSCore -- "trigger queries, notify broadcasts,<br/>action dispatches, interactions, arrived, errors" --> Extensions
 
   %% ===========================
   %% World Sim ↔ Bridge (via NATS)
@@ -346,7 +346,7 @@ flowchart LR
 | **World Sim** | NATS Core | pub/sub | Publish `client.provisioned` (for LiveKit Bridge token issuance) | On connect |
 | **World Sim** | NATS JetStream KV | KV read/write | Player positions, player status; reads zone state (written by extensions) | Per change |
 | **World Sim** | PocketBase | HTTP | User lookup/create, world config, audit log writes | On login / rare |
-| **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones, reply to trigger queries, handle interactions | Per tick / event-driven |
+| **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones (access/event/action), reply to trigger queries and action dispatches, handle interactions | Per tick / event-driven |
 | **Extension** | NATS JetStream KV | KV read/write | Extension-private state, shared world state (e.g. zone properties) | Event-driven |
 | **Bridge** | NATS JetStream KV | `kv.Watch` | React to zone-state changes | Event-driven |
 | **Bridge** | NATS Core | subscribe | Receive `client.provisioned` for token issuance | Event-driven |
@@ -415,8 +415,10 @@ flowchart LR
   (latency-critical, deployment-invariant). All other gameplay behavior is
   delegated to extensions via NATS.
 - **Evaluates access triggers** (`block`/`allow` cached locally; `ask` routed
-  to the owning extension via NATS) and **dispatches event triggers**
-  (`notify` to owning extensions or broadcast).
+  to the owning extension via NATS), **dispatches event triggers**
+  (`notify` to owning extensions or broadcast), and **evaluates action
+  triggers** (validates range and line-of-sight, then dispatches to the owning
+  extension with an equipment snapshot). See `10-world-simulator.md` §5f.
 - Computes the area-of-interest (AOI) per client and encodes component-based
   replication batches (`SpawnEntity`, `UpdateComponent`, `DestroyEntity`,
   `PlayAnimation` — see `11-replication.md`).
@@ -497,11 +499,13 @@ flowchart LR
    video.
 
 ### 2. A user toggles a zone to exclusive (e.g. closes a door)
-1. Client sends a "close door" input over the WebSocket.
+1. Client sends an `ActionFrame` (clicking the door tile) over the WebSocket.
 2. **Pusher** publishes the input to NATS Core.
-3. **World Simulator** receives the input. The door entity is extension-owned
-   (or has a `notify` trigger for `interact`). The World Sim forwards the
-   interaction to the owning extension (e.g. the "doors" extension).
+3. **World Simulator** receives the `ActionFrame`. No action trigger on the
+   tile → fallback to entity interaction routing. The door entity is
+   extension-owned (or has a `notify` trigger for `interact`). The World Sim
+   forwards the interaction to the owning extension (e.g. the "doors"
+   extension).
 4. The **doors extension** processes the interaction, updates the door
    component (via `entity.<entity_id>.update`), and writes the new zone state
    to JetStream KV (`zones.<zone_id>.properties`). It may also register/unregister
@@ -563,9 +567,13 @@ flowchart LR
   in the World Sim. *To confirm.*
 - **[DECISION] Durable store is PocketBase.** User accounts, world/map
   metadata, audit logs, and other durable relational data live in PocketBase.
-  See `06-data-model-and-persistence.md` for the full schema. (Persistent
-  inventory, plant-growth state, and leave-a-message contents are out of MVP
-  scope; their storage will be defined when those features are added.)
+  See `06-data-model-and-persistence.md` for the full schema. (Inventory and
+  equipment state is persisted by the inventory extension to JetStream KV, or
+  by coordinating with the kernel for PocketBase access; see
+  `18-extensions.md` §6a. Extensions do not access PocketBase directly — see
+  `06-data-model-and-persistence.md` §1. Plant-growth state and
+  leave-a-message contents are out of MVP scope; their storage will be defined
+  when those features are added.)
 - **[DECISION] Chat backend is PocketBase** (`messages` collection) for the
   MVP. Matrix Synapse is deferred to the post-MVP roadmap. See `17-chat.md`
   and `06-data-model-and-persistence.md` § 3.
@@ -577,7 +585,8 @@ flowchart LR
   that own all gameplay behavior for non-player entities. Extensions can
   spawn entities (no type restrictions), update any component directly
   (per-tick or event-driven), register custom component types, register
-  triggers (access: block/allow/ask; event: notify) on tiles and entities,
+  triggers (access: block/allow/ask; event: notify; action: click) on tiles
+  and entities,
   register zones, handle client interactions, and read/write JetStream KV.
   The World Sim's role is spatial authority (ECS, spatial index, trigger
   registry, zone boundaries) and replication gateway (AOI, replication

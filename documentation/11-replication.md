@@ -102,8 +102,8 @@ message UpdateComponent {
 > the encoder and decoder trivial: no per-field diffing, no field masks, no
 > partial-merge logic on the client. The bandwidth cost is small because most
 > components are tiny (Position is ~20 bytes). Components that are genuinely
-> large (e.g. a future `Inventory` with 50 slots) can be split into smaller
-> sub-components if needed.
+> large (e.g. an `Equipment` component with many slots) can be split into
+> smaller sub-components if needed.
 
 ### 2.3 `DestroyEntity`
 
@@ -219,6 +219,43 @@ entities outside the AOI consume zero serialization bandwidth. This is the
 primary scalability mechanism: each client only receives updates for the
 slice of the world it can see.
 
+### 3.3a Owner-only replication (inventory and equipment)
+
+Items in a player's inventory or equipment are **not visible to other players**
+— they are replicated only to the owning player. The replication encoder
+applies a second filter for entities with `InventorySlot` or `Equipped`
+components:
+
+- If the entity has an `InventorySlot` or `Equipped` component, it is only
+  included in a client's replication batch if that client's avatar entity ID
+  matches the `owner_entity_id` field.
+- This filter is applied **after** the AOI filter. An item on the ground (has
+  `Position`, no `InventorySlot`/`Equipped`) passes the AOI filter normally
+  and is replicated to all clients in range.
+
+**Pickup/drop transitions:**
+
+When an extension updates an item from ground → inventory (removes `Position`,
+adds `InventorySlot`):
+
+1. The item leaves all other clients' AOI naturally — no `Position` means it's
+   not in the spatial index. The next tick sends `DestroyEntity` to everyone
+   who had it.
+2. The item enters the owner's replication — the encoder sees
+   `InventorySlot{owner: "user-42"}` and includes it as `SpawnEntity` in
+   `user-42`'s batch.
+
+When an extension drops an item (removes `InventorySlot`, adds `Position`):
+
+1. The item leaves the owner's replication (`DestroyEntity` to owner).
+2. The item enters the spatial index — `SpawnEntity` to all clients in AOI on
+   the next tick.
+
+The `Equipment` component on the player entity is replicated to **all clients
+in AOI** (normal replication), so other clients can render equipped items
+(e.g. a bow in the player's hand). The item entities themselves are only
+visible to the owner.
+
 ### 3.4 Reliability
 
 Replication crosses two transport hops with different guarantees:
@@ -278,6 +315,10 @@ registry, generated at build time from the component definitions.
 | 5 | `AvatarAppearance` | `AvatarAppearanceData { ... }` |
 | 6 | `ZoneMembership` | `ZoneMembershipData { string zone_id; string joined_at; }` |
 | 7 | `NetworkSession` | *(not replicated — server-only)* |
+| 8 | `Item` | `ItemData { string item_type; string display_name; string icon; bool stackable; uint32 quantity; }` |
+| 9 | `InventorySlot` | `InventorySlotData { string owner_entity_id; }` *(replicated to owner only)* |
+| 10 | `Equipped` | `EquippedData { string owner_entity_id; string slot; }` *(replicated to owner only)* |
+| 11 | `Equipment` | `EquipmentData { repeated EquipmentSlot slots; }` *(replicated to all in AOI)* |
 | ... | ... | ... |
 
 > `NetworkSession` is never replicated — it is a World-Simulator-only

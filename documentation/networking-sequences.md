@@ -110,11 +110,14 @@ sequenceDiagram
 
 ## 3. Interaction with extension routing
 
-An `InteractFrame` targets an entity the client learned from a prior
-`SpawnEntity`. The World Simulator validates proximity, then routes the
-interaction to the owning extension based on the `ExtensionOwner` component
-or entity-bound `notify` triggers. The kernel has no TriggerSystem — all
-interaction behavior is in extensions.
+An `ActionFrame` targets a tile the player clicks (or the facing tile for
+keypress interactions — `InteractFrame` has been deprecated and replaced by
+`ActionFrame`). The World Simulator validates range and line-of-sight (if
+action triggers require them), then routes: action triggers on the clicked
+tile take priority; if none exist, the kernel falls back to entity interaction
+routing based on the `ExtensionOwner` component or entity-bound `notify`
+triggers. The kernel has no TriggerSystem — all interaction behavior is in
+extensions.
 
 ```mermaid
 sequenceDiagram
@@ -125,16 +128,28 @@ sequenceDiagram
     participant W as WorldSim
     participant E as Extension
 
-    B->>P: InteractFrame { target_entity_id, interaction_type, params }
+    B->>P: ActionFrame { seq, target_map_id, target_x, target_y, params }
     P->>N: publish client.<client_id>.input
-    N->>W: deliver InteractFrame
+    N->>W: deliver ActionFrame
 
-    W->>W: validate proximity (AOI radius)
+    W->>W: look up action triggers on clicked tile
 
-    alt validation fails
-        W-->>N: no reply on hot path — client sees no effect
-        Note over B: server is authoritative — ignored input is silent
-    else validation passes
+    alt action trigger exists
+        W->>W: validate range + LOS (Bresenham raycast)
+        alt validation fails
+            W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: false, reason })
+            N->>P: deliver batch
+            P-->>B: ServerFrame.action_result
+        else validation passes
+            W->>N: publish trigger.<trigger_id>.action { equipment snapshot, reply_to }
+            N->>E: deliver action
+            E->>E: run custom logic (based on equipment)
+            E->>N: publish trigger.<trigger_id>.action.reply.<req_id> { updates, consume_items }
+            N->>W: deliver reply
+            Note over W: apply reply → dirty flags
+        end
+    else no action trigger, entity on tile
+        W->>W: fallback to entity interaction routing
         alt entity has ExtensionOwner or notify trigger
             W->>N: publish entity.<entity_id>.interact { req_id, params }
             N->>E: deliver interaction
@@ -143,8 +158,14 @@ sequenceDiagram
             N->>W: deliver reply
             Note over W: apply reply → dirty flags
         else no ExtensionOwner and no notify trigger
-            Note over W: non-interactive entity — interaction dropped
+            W-->>N: publish ActionResultFrame { ok: false, reason: "no_target" }
+            N->>P: deliver batch
+            P-->>B: ServerFrame.action_result
         end
+    else no action trigger, no entity
+        W-->>N: publish ActionResultFrame { ok: false, reason: "no_target" }
+        N->>P: deliver batch
+        P-->>B: ServerFrame.action_result
     end
 
     Note over W: result flows back to client via the §2 replication loop

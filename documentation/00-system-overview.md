@@ -113,7 +113,7 @@ flowchart TB
   %% =========================
   %% Extensions (peer simulators)
   %% =========================
-  Extensions <==>|register · spawn ·<br/>update · interact ·<br/>KV watch/write| NATS
+  Extensions <==>|register · spawn ·<br/>update · action · interact ·<br/>KV watch/write| NATS
 
   %% =========================
   %% Media wiring
@@ -220,9 +220,10 @@ entities.
 
 - Register with the World Sim via NATS, spawn entities in the ECS (no type
   restrictions).
-- Register triggers (access: block/allow/ask; event: notify) on tiles and
-  entities. The kernel caches block/allow triggers locally and routes ask
-  triggers to the extension at runtime.
+- Register triggers (access: block/allow/ask; event: notify; action: click)
+  on tiles and entities. The kernel caches block/allow triggers locally,
+  routes ask triggers to the extension at runtime, and validates range/LOS
+  for action triggers before dispatching.
 - Register zones (polygon regions with associated triggers). Zone boundaries
   are stored in the kernel; zone behavior is implemented by the extension via
   triggers.
@@ -321,9 +322,10 @@ Browser → Traefik → Pusher (WebSocket)
 ### B. A user closes a door (activates an exclusive zone)
 
 ```
-Browser → Pusher: "close door"
+Browser → Pusher: ActionFrame (click door tile)
          ↳ Pusher forwards input to NATS
-         ↳ World Simulator receives input:
+         ↳ World Simulator receives ActionFrame:
+            • no action trigger on tile → fallback to entity interaction routing
             • forwards interaction to the owning extension (e.g. doors extension). The extension updates the door component, writes zone state to KV, and may register/unregister block triggers on the zone boundary tiles.
             • encodes replication batch (zone state change)
             • publishes batch to NATS → Pusher → clients (visual filter)

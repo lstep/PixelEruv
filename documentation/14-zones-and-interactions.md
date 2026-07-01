@@ -72,18 +72,83 @@ subsequent entrants must be admitted.
 
 > **[OPEN]** Exact wire messages for knock / allow / deny / invite — to be
 > added to `07-network-protocol.md` once the popup UX is settled. Likely a
-> `ControlFrame` variant server→client and an `InteractFrame` client→server.
+> `ControlFrame` variant server→client and an `ActionFrame` client→server
+> (the client sends an `ActionFrame` on the meeting room door tile).
 
 ---
 
 ## 3. Interaction routing
 
 Interactions are routed via NATS subjects (see `07-network-protocol.md` § 2).
-Client interactions arrive as `InteractFrame` and are routed to the owning
-extension based on the `ExtensionOwner` component or entity-bound notify
-triggers (see `18-extensions.md` § 6). The kernel does not have a
-`TriggerSystem` or `ZoneSystem` — all trigger and zone behavior is implemented
-by extensions.
+Client interactions arrive as `ActionFrame` (tile clicks and keypress
+interactions — `InteractFrame` has been deprecated and replaced by
+`ActionFrame`). The kernel validates range and line-of-sight, then routes:
+
+1. **Action triggers on the clicked tile?** → dispatch to the owning extension
+   with an equipment snapshot (see `18-extensions.md` §3a).
+2. **Entity on the clicked tile?** → fallback to entity interaction routing:
+   `ExtensionOwner` component or entity-bound `notify` triggers (see
+   `18-extensions.md` § 6).
+3. **No trigger, no entity** → `ActionResultFrame{ ok: false, reason: "no_target" }`.
+
+The kernel does not have a `TriggerSystem` or `ZoneSystem` — all trigger and
+zone behavior is implemented by extensions. The kernel only validates spatial
+reachability (range, LOS) and routes.
+
+## 3a. Action triggers
+
+Action triggers are a third trigger category (alongside access and event
+triggers). They are registered by extensions on tiles and fire when a player
+clicks that tile. Unlike access triggers (which gate movement) and event
+triggers (which notify on enter/exit), action triggers are **player-initiated**
+and support **range and line-of-sight validation** by the kernel.
+
+### Use cases
+
+- **Ranged actions**: shooting a bow, throwing an object at a distant tile
+  (with `max_range` and `require_los`).
+- **Adjacent interactions**: clicking a tile next to the player to interact
+  with whatever is on it (the kernel falls back to entity interaction routing
+  if no action trigger is registered on the tile).
+- **Equipment-dependent actions**: the action depends on what the player is
+  holding (e.g. bow → spawn arrow, empty-handed → no action). The kernel
+  includes an equipment snapshot in the dispatch payload.
+
+### Registration
+
+See `18-extensions.md` §3a for the full registration protocol. An action
+trigger declares:
+
+```
+{
+  "trigger_id": "bow-shot-zone",
+  "category": "action",
+  "binding": "tile",
+  "tiles": [{"map_id": "arena", "x": 10, "y": 5}],
+  "event": "click",
+  "max_range": 8,
+  "require_los": true,
+  "los_through_walls": false,
+  "default_on_timeout": "drop"
+}
+```
+
+### Kernel validation
+
+When a player clicks a tile with an action trigger:
+
+1. **Range check**: distance from player's `Position` to the clicked tile ≤
+   `max_range`. If no `max_range` is set, defaults to adjacent-only (distance
+   ≤ 1).
+2. **Line-of-sight check**: if `require_los` is true, the kernel raycasts
+   (Bresenham line through tiles) from the player to the clicked tile. A tile
+   blocks LOS if it has a `block` access trigger, a non-traversable entity
+   (`Traversable=false`), or is a wall in the map. If `los_through_walls` is
+   false, walls block.
+3. **If validation fails**: `ActionResultFrame{ ok: false, reason }` sent to
+   the client immediately (no NATS round-trip).
+4. **If validation passes**: dispatch to the owning extension with the
+   player's equipment snapshot. See `18-extensions.md` §3a.
 
 ---
 

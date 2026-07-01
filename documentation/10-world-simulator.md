@@ -106,6 +106,16 @@ does not implement trigger behavior itself.
    triggers (`notify`) on the entered/exited tile. Entity-bound `notify`
    triggers are sent to the owning extension (point-to-point). Tile-bound
    `notify` triggers are broadcast to all extensions. See §5d.
+6. **Action trigger evaluation** — when a player clicks a tile (via
+   `ActionFrame`), the kernel validates range and line-of-sight, then
+   dispatches to action triggers on the clicked tile. If no action trigger
+   exists, falls back to entity interaction routing. See §5f.
+7. **Line-of-sight raycasting** — the kernel can raycast through the tile grid
+   (Bresenham line algorithm) to determine if a player has line-of-sight to a
+   target tile. A tile blocks LOS if it has a `block` access trigger, a
+   non-traversable entity (`Traversable=false`), or is a wall in the map. This
+   is a spatial operation, consistent with the kernel's role as spatial
+   authority. See §5f.
 6. **Replication encoder** — encodes dirty components into generic replication
    messages (`SpawnEntity`, `UpdateComponent`, `DestroyEntity`,
    `PlayAnimation`). See `11-replication.md`.
@@ -128,7 +138,8 @@ does not implement trigger behavior itself.
 12. **Extension lifecycle management** — accepts registration from external
     extension processes, hosts their entities in the ECS, validates their
     commands (same rules as its own), applies component updates, tracks
-    heartbeats, and routes client interactions to the owning extension. See
+    heartbeats, and routes client actions and interactions to the owning
+    extension (action triggers first, then entity interaction fallback). See
     `18-extensions.md`.
 13. **Token revocation execution** — when an admin kick is requested (by an
     admin extension or authorized client), the kernel publishes
@@ -148,7 +159,9 @@ World Simulator process
 ├── Trigger registry      (trigger_id → owner_extension, category, behavior, tiles/entities)
 ├── Zone registry         (zone_id → boundaries, owner_extension)
 ├── Player movement       (input → target tile → trigger evaluation → Position update)
-├── Trigger evaluator     (access: block/allow/ask; event: notify)
+├── Trigger evaluator     (access: block/allow/ask; event: notify; action: click)
+├── Action handler        (ActionFrame → range/LOS validation → action trigger dispatch or entity interaction fallback)
+├── LOS raycaster         (Bresenham line through tiles; checks walls, block triggers, Traversable=false)
 ├── Replication encoder   (component-based, per-client batches)
 ├── AOI manager           (per-client area-of-interest filter)
 ├── NATS subscriber       (client input, connect/disconnect, extension updates, trigger replies)
@@ -188,10 +201,10 @@ reply queue, KV event queue).
 
 ```
 Each tick (fixed interval, e.g. 50 ms for 20 Hz):
-  1. Drain input queue         ← client inputs from NATS subscriber
+  1. Drain input queue         ← client inputs (InputFrame + ActionFrame) from NATS subscriber
   2. Drain event queue         ← connect/disconnect events
   3. Drain extension queue     ← entity updates, spawn/despawn from extensions
-  4. Drain trigger reply queue ← ask-trigger replies from extensions
+  4. Drain trigger reply queue ← ask-trigger replies + action-trigger replies from extensions
   5. Process player avatar movement (in-kernel):
      a. For each player with input:
         - Compute target tile from input direction
@@ -199,23 +212,31 @@ Each tick (fixed interval, e.g. 50 ms for 20 Hz):
         - Any block trigger? → refuse, don't move
         - All allow or no triggers? → accept, update Position, mark dirty
         - Has ask trigger? → mark move as pending, publish query to extension
-  6. Resolve pending moves (ask-trigger replies / timeouts):
+  6. Process action frames (in-kernel, see §5f):
+     a. For each ActionFrame:
+        - Look up action triggers on the clicked tile
+        - Validate range (player Position vs. clicked tile ≤ max_range)
+        - Validate LOS (Bresenham raycast, if require_los)
+        - If validation fails → ActionResultFrame{ ok: false, reason }
+        - If validation passes → dispatch to owning extension (with equipment snapshot)
+        - If no action trigger → fallback to entity interaction routing (§6)
+  7. Resolve pending moves (ask-trigger replies / timeouts):
      a. For each pending move with all replies received:
         - All approved? → accept, update Position, mark dirty
         - Any refused? → refuse
      b. For each pending move whose timeout expired:
         - Refuse (fail closed, see §5c)
-  7. Apply extension entity updates:
+  8. Apply extension entity updates:
      a. Validate each update (position bounds, collision, trigger evaluation)
      b. Apply valid updates, mark dirty
      c. Reject invalid updates, publish error to extension
-  8. Fire event triggers for completed moves (see §5d):
+  9. Fire event triggers for completed moves (see §5d):
      a. For each entity that entered a tile:
         - Entity-bound notify triggers → publish to owning extension
         - Tile-bound notify triggers → broadcast to all extensions
      b. For each entity that exited a tile:
         - Same for exit events
-  9. Replication system:
+  10. Replication system:
      a. Collect dirty components
      b. Apply AOI filter per client
      c. Encode per-client replication batches
@@ -262,14 +283,17 @@ A trigger registration declares:
 {
   "trigger_id": "wall-lobby-north",
   "owner_extension": "walls-v1",
-  "category": "access" | "event",
+  "category": "access" | "event" | "action",
   "binding": "tile" | "entity",
   "tiles": [...],           // if tile-bound
   "entity_id": "...",       // if entity-bound
   "event": "enter" | "exit" | "interact",  // for event triggers
   "behavior": "block" | "allow" | "ask",   // for access triggers
   "default_on_timeout": "block",           // for ask
-  "ttl_ms": 500                            // for ask
+  "ttl_ms": 500,                           // for ask
+  "max_range": 8,                          // for action triggers (tiles)
+  "require_los": true,                     // for action triggers
+  "los_through_walls": false               // for action triggers
 }
 ```
 
@@ -277,6 +301,7 @@ A trigger registration declares:
 |---|---|---|---|
 | **Access** | `block`, `allow`, `ask` | Yes | `block`/`allow`: no (cached in spatial index). `ask`: yes (pending, async) |
 | **Event** | `notify` | No | No (fire and forget) |
+| **Action** | `click` | No (player-initiated) | Range/LOS validated locally; dispatch to extension is async |
 
 ### Spatial index
 
@@ -284,10 +309,13 @@ The spatial index maps each tile to:
 
 - **Access triggers** on that tile (with their behavior: `block`/`allow`/`ask`).
 - **Event triggers** on that tile (with their event type and binding).
+- **Action triggers** on that tile (with their `max_range`, `require_los`,
+  `los_through_walls` flags).
 - **Entities** currently on that tile.
 
 This allows O(1) lookup during movement validation: "what triggers are on the
-target tile?" and "what entities are on the target tile?"
+target tile?" and "what entities are on the target tile?" The same lookup is
+used for action trigger evaluation when a player clicks a tile.
 
 ### Zone registry
 
@@ -402,11 +430,12 @@ movement — they are notifications, fire-and-forget.
 |---|---|---|---|
 | `enter` | Entity arrived at a tile | NPC notices a player approached | Welcome mat plays a sound |
 | `exit` | Entity left a tile | NPC stops following | Meeting room decrements occupancy |
-| `interact` | Client pressed interact key targeting an entity | NPC starts dialogue | Floor switch activates |
+| `interact` | Client clicked a tile with an entity (via `ActionFrame`) | NPC starts dialogue | Floor switch activates |
 
-The `interact` event for entity-bound triggers unifies with the existing
-interaction routing (see `18-extensions.md` §6). When a client interacts with an
-entity, the kernel checks for entity-bound `notify` triggers with event
+The `interact` event for entity-bound triggers unifies with the action trigger
+fallback to entity interaction routing (see `18-extensions.md` §6). When a
+client clicks a tile with an entity and no action trigger is registered on
+that tile, the kernel checks for entity-bound `notify` triggers with event
 `interact` and forwards the interaction to the owning extension. This is the
 same mechanism, named consistently.
 
@@ -458,6 +487,79 @@ the same Pusher) without disrupting other clients' view.
 
 > **[OPEN]** Grace-period duration (30 s default) to tune. Whether to show a
 > distinct "reconnecting" vs "away" state.
+
+---
+
+## 5f. Action trigger evaluation and line-of-sight
+
+When a player clicks a tile (via `ActionFrame`), the kernel evaluates action
+triggers on that tile. This is a spatial operation — the kernel validates
+**range** and **line-of-sight** before dispatching to the owning extension.
+
+### Range validation
+
+The kernel computes the distance from the player's `Position` to the clicked
+tile. If the distance exceeds the action trigger's `max_range`, the kernel
+sends `ActionResultFrame{ ok: false, reason: "out_of_range" }` immediately. If
+no `max_range` is set, it defaults to adjacent-only (distance ≤ 1).
+
+### Line-of-sight validation
+
+If the action trigger has `require_los: true`, the kernel raycasts from the
+player's tile to the clicked tile using **Bresenham's line algorithm** in tile
+space. For each tile along the ray:
+
+1. **Wall check**: is the tile a wall in the Tiled map? If yes, LOS blocked.
+2. **Block trigger check**: does the tile have a `block` access trigger? If
+   yes, LOS blocked.
+3. **Entity check**: is there a non-traversable entity on the tile
+   (`Traversable=false`)? If yes, LOS blocked.
+
+The ray starts from the tile adjacent to the player (the player's own tile
+doesn't block). If `los_through_walls` is true, the kernel skips wall checks
+but still checks entity blocking.
+
+If LOS is blocked, the kernel sends
+`ActionResultFrame{ ok: false, reason: "no_los" }` immediately.
+
+### Dispatch
+
+If range and LOS validation pass, the kernel publishes the action event to the
+owning extension with a snapshot of the player's `Equipment` component:
+
+```
+Subject: trigger.<trigger_id>.action
+Payload:
+{
+  "trigger_id": "bow-shot-zone",
+  "entity_id": "user-42",
+  "client_id": "abc123",
+  "clicked_tile": {"map_id": "arena", "x": 10, "y": 5},
+  "equipment": [
+    {"slot": "main_hand", "item_entity_id": "bow-7", "item_type": "bow"},
+    {"slot": "off_hand", "item_entity_id": null}
+  ],
+  "reply_to": "trigger.bow-shot-zone.action.reply.<request_id>"
+}
+```
+
+The extension replies asynchronously (see `18-extensions.md` §3a). The kernel
+does not block the tick loop waiting for a reply.
+
+### Fallback to entity interaction routing
+
+If no action trigger exists on the clicked tile but there is an entity on the
+tile, the kernel falls back to entity interaction routing (see
+`18-extensions.md` §6): checks for `ExtensionOwner` or entity-bound `notify`
+triggers with event `interact`. This unifies tile clicks with the existing
+interaction system — clicking an adjacent tile with an NPC routes to the NPC's
+owning extension, same as pressing the interact key.
+
+### Performance
+
+Raycasting is O(ray length) — at most `max_range` tiles. With `max_range`
+typically ≤ 20, this is cheap and runs synchronously in the input handling
+path. No NATS round-trip is needed for rejected clicks.
 
 ---
 
@@ -576,6 +678,7 @@ shared memory.
 | `entity.<entity_id>.move` | Extension | Movement target | On demand |
 | `entity.<entity_id>.interact.reply.<req_id>` | Extension | Interaction response | Async |
 | `trigger.<trigger_id>.reply` | Extension | Access trigger reply (for `ask`) | Async |
+| `trigger.<trigger_id>.action.reply.<req_id>` | Extension | Action trigger response (updates, consume_items) | Async |
 
 ### Outbound (published by the World Sim)
 
@@ -590,6 +693,7 @@ shared memory.
 | `entity.<entity_id>.arrived` | Extension | Reached movement target | On arrival |
 | `entity.<entity_id>.despawned` | Extension | Entity removed | Event-driven |
 | `trigger.<trigger_id>.query` | Extension (owning the trigger) | Access trigger query (for `ask`) | On move attempt |
+| `trigger.<trigger_id>.action` | Extension (owning the trigger) | Action trigger dispatch (player clicked a tile) | On ActionFrame |
 | `trigger.notify.tile.<map_id>.<x>.<y>` | All extensions (broadcast) | Tile-bound event trigger notification | On enter/exit |
 | `extension.<ext_id>.error` | Extension | Validation error | On error |
 | `admin.revoke.<entity_id>` | Pusher (all instances) | Force-disconnect a user | On admin kick |
@@ -615,11 +719,15 @@ previously overloaded (see `09-pusher.md` §1 for the history).
   `client.provisioned` for token issuance. The World Sim publishes
   `client.provisioned` (after provisioning); it does not mediate token delivery.
 - ❌ Does not run gameplay systems for non-player entities (NPC movement, AI,
-  trigger logic, zone behavior, custom game mechanics). These are extension
-  responsibilities, communicated via NATS. The kernel's only gameplay system
-  is player avatar movement.
+  trigger logic, zone behavior, custom game mechanics, inventory, equipment,
+  item effects). These are extension responsibilities, communicated via NATS.
+  The kernel's only gameplay systems are player avatar movement and action
+  trigger spatial validation (range/LOS) — both latency-critical and
+  deployment-invariant.
 - ❌ Does not decide what a trigger does — it routes trigger queries to the
-  owning extension and caches the result for `block`/`allow` triggers.
+  owning extension and caches the result for `block`/`allow` triggers. For
+  action triggers, it validates range/LOS and dispatches to the owning
+  extension with an equipment snapshot; the extension decides what happens.
 - ❌ Does not decide zone behavior (exclusivity, knock-to-join, timers) — it
   stores zone boundaries and routes zone-entry triggers to the owning
   extension.

@@ -51,17 +51,18 @@ See `06-data-model-and-persistence.md` § 3.
 
 ## Transport
 
-- Chat messages are sent as an `InteractFrame` (or a dedicated chat frame) over
+- Chat messages are sent as an `ActionFrame` (or a dedicated chat frame) over
   the existing WebSocket (see `07-network-protocol.md`), routed through the
   World Simulator, which persists to PocketBase and replicates to recipients.
+  (`InteractFrame` has been deprecated and replaced by `ActionFrame`.)
 - Incoming messages may also drive **speech bubbles** on the sender's avatar
   (see `16-avatars.md`, `Bubble` component).
 
 ## Open questions
 
 - **[OPEN] Spatial filtering** — AOI-based vs. per-map.
-- **[OPEN] Chat wire frame** — reuse `InteractFrame` or add a `ChatFrame` in
-  `07-network-protocol.md`.
+- **[OPEN] Chat wire frame** — reuse `ActionFrame` (with chat-specific
+  `params`) or add a dedicated `ChatFrame` in `07-network-protocol.md`.
 - **[OPEN] Moderation / retention** — message retention policy, moderation
   tools (post-MVP).
 - **[OPEN] Bubble integration** — does every chat message pop a bubble?
