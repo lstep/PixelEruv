@@ -1,7 +1,3 @@
----
-creation date: 2026-06-26 08:37
-modification date: 2026-06-27 18:00
----
 # Vision and Goals
 
 ## Project goal
@@ -19,8 +15,8 @@ The project must be **modular** so that NPCs (bots or AI agents) can be added in
 the future, and so that objects can carry generic characteristics and react to /
 interact with users. To achieve this, the codebase will be built around an
 **Entity-Component-System (ECS)** rather than a classic object-oriented class
-hierarchy. See `15-ecs-design.md` (to be created) and the current
-`Entity-Component-System.md` for the rationale.
+hierarchy. See `13-ecs-design.md` and the current
+`13-ecs-design.md` for the rationale.
 
 ## Why this project
 
@@ -46,4 +42,4 @@ architecture does not preclude them:
 - Whiteboard objects
 - Map-wide / zone-wide audio-video broadcast via object triggers
 
-A phased roadmap will be defined separately (`18-roadmap.md`, to be created).
+A phased roadmap will be defined separately (`20-roadmap.md`).

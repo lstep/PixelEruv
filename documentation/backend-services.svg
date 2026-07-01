@@ -1,0 +1,357 @@
+<svg width="100%" viewBox="0 0 1280 920" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Pixel Eruv — Backend services (Go microservices and communication)</title>
+  <desc>The three Go services (Pusher, World Simulator, LiveKit Bridge), extensions, their internal modules, and every communication channel between them and the surrounding state stores and external services.</desc>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#64748b"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#2563eb"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#16a34a"/>
+    </marker>
+    <marker id="arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#7c3aed"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#d97706"/>
+    </marker>
+    <marker id="arr-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#ea580c"/>
+    </marker>
+    <marker id="arr-dash" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="920" fill="#f8fafc"/>
+
+  <!-- Title -->
+  <text x="640" y="28" text-anchor="middle" font-size="20" font-weight="650" fill="#172033">Backend Services — Go Microservices &amp; Communication</text>
+  <text x="640" y="48" text-anchor="middle" font-size="13" fill="#5b6475">Pusher (network proxy) · World Simulator (spatial authority + replication gateway) · LiveKit Bridge (media sync)</text>
+
+  <!-- ==========================================
+       CONNECTORS (drawn before nodes)
+       ========================================== -->
+
+  <!-- Browser → Pusher (WebSocket) -->
+  <line x1="580" y1="112" x2="220" y2="148" stroke="#4338ca" stroke-width="2.5" marker-end="url(#arr)"/>
+  <text x="360" y="122" text-anchor="middle" font-size="10" font-weight="600" fill="#4338ca">WebSocket (protobuf, sticky)</text>
+
+  <!-- Pusher → NATS Core (pub input, connect/disc) -->
+  <line x1="190" y1="420" x2="240" y2="556" stroke="#2563eb" stroke-width="2" marker-end="url(#arr-blue)"/>
+  <text x="160" y="480" text-anchor="middle" font-size="10" font-weight="500" fill="#2563eb">pub: input ·</text>
+  <text x="160" y="493" text-anchor="middle" font-size="10" font-weight="500" fill="#2563eb">connect/disc</text>
+
+  <!-- NATS Core → Pusher (sub replication + control) -->
+  <line x1="300" y1="556" x2="310" y2="420" stroke="#2563eb" stroke-width="2" marker-end="url(#arr-blue)"/>
+  <text x="345" y="480" text-anchor="middle" font-size="10" font-weight="500" fill="#2563eb">sub: replication</text>
+  <text x="345" y="493" text-anchor="middle" font-size="10" font-weight="500" fill="#2563eb">+ control</text>
+
+  <!-- World Sim → NATS Core (sub input, pub replication + triggers) -->
+  <line x1="520" y1="420" x2="340" y2="556" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="400" y="470" text-anchor="middle" font-size="10" font-weight="500" fill="#16a34a">sub: input · ext updates</text>
+  <text x="400" y="483" text-anchor="middle" font-size="10" font-weight="500" fill="#16a34a">pub: replication · triggers</text>
+
+  <!-- World Sim → JetStream KV (read/write player positions, read zone state) -->
+  <line x1="600" y1="420" x2="580" y2="556" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="615" y="480" text-anchor="start" font-size="10" font-weight="500" fill="#16a34a">KV r/w: positions</text>
+  <text x="615" y="493" text-anchor="start" font-size="10" font-weight="500" fill="#16a34a">read: zone state</text>
+
+  <!-- World Sim → PocketBase (HTTP) -->
+  <line x1="720" y1="420" x2="820" y2="556" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="790" y="480" text-anchor="middle" font-size="10" font-weight="500" fill="#16a34a">HTTP: users ·</text>
+  <text x="790" y="493" text-anchor="middle" font-size="10" font-weight="500" fill="#16a34a">config · audit</text>
+
+  <!-- World Sim → NATS (pub client.provisioned, dashed to Bridge) -->
+  <line x1="800" y1="290" x2="936" y2="215" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr-dash)"/>
+  <text x="890" y="248" text-anchor="middle" font-size="10" fill="#64748b">via NATS:</text>
+  <text x="890" y="261" text-anchor="middle" font-size="10" fill="#64748b">client.provisioned</text>
+
+  <!-- Extensions → NATS Core (register, spawn, update, triggers, zones) -->
+  <line x1="500" y1="530" x2="310" y2="556" stroke="#d97706" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+  <line x1="640" y1="530" x2="540" y2="556" stroke="#d97706" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+  <text x="430" y="548" text-anchor="middle" font-size="10" font-weight="500" fill="#d97706">register · spawn · update · triggers · zones · KV</text>
+
+  <!-- NATS → Extensions (trigger queries, notify, interactions) -->
+  <line x1="380" y1="556" x2="460" y2="530" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
+
+  <!-- Bridge → JetStream KV (kv.Watch zone state) -->
+  <line x1="1000" y1="215" x2="700" y2="556" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr-purple)"/>
+  <text x="840" y="380" text-anchor="middle" font-size="10" font-weight="500" fill="#7c3aed">kv.Watch: zone state</text>
+
+  <!-- Bridge → NATS (sub client.provisioned, pub client.control) -->
+  <line x1="960" y1="250" x2="380" y2="560" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr-dash)"/>
+  <text x="640" y="380" text-anchor="middle" font-size="10" fill="#7c3aed">sub: client.provisioned</text>
+  <text x="640" y="393" text-anchor="middle" font-size="10" fill="#7c3aed">pub: client.&lt;id&gt;.control</text>
+
+  <!-- Bridge → LiveKit SFU (Server API) -->
+  <line x1="1220" y1="345" x2="1190" y2="556" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr-purple)"/>
+  <text x="1235" y="450" text-anchor="middle" font-size="10" font-weight="500" fill="#7c3aed">Server API:</text>
+  <text x="1235" y="463" text-anchor="middle" font-size="10" font-weight="500" fill="#7c3aed">rooms · grants</text>
+
+  <!-- Bridge → Redis -->
+  <line x1="1050" y1="345" x2="1030" y2="556" stroke="#7c3aed" stroke-width="1.5" marker-end="url(#arr-purple)"/>
+  <text x="1075" y="450" text-anchor="middle" font-size="10" fill="#7c3aed">room state</text>
+
+  <!-- LiveKit → Redis (shared) -->
+  <line x1="1150" y1="595" x2="1085" y2="595" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 2" marker-end="url(#arr)"/>
+  <text x="1118" y="585" text-anchor="middle" font-size="9" fill="#dc2626">shared</text>
+
+  <!-- Pusher → Dex (JWKS validation) -->
+  <line x1="120" y1="380" x2="110" y2="556" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr-orange)"/>
+  <text x="80" y="470" text-anchor="middle" font-size="10" fill="#ea580c">JWKS</text>
+  <text x="80" y="483" text-anchor="middle" font-size="10" fill="#ea580c">validate</text>
+
+  <!-- ==========================================
+       NODES
+       ========================================== -->
+
+  <!-- Browser (external) -->
+  <g>
+    <rect x="540" y="68" width="200" height="44" rx="8" fill="#fde68a" stroke="#ea580c" stroke-width="1.5"/>
+    <text x="640" y="88" text-anchor="middle" font-size="14" font-weight="600" fill="#7c2d12">Browser</text>
+    <text x="640" y="104" text-anchor="middle" font-size="11" fill="#ea580c">Phaser 4 · LiveKit JS SDK</text>
+  </g>
+
+  <!-- ==========================================
+       PUSHER (Go) — left column
+       ========================================== -->
+  <g>
+    <rect x="60" y="150" width="300" height="270" rx="10" fill="#bfdbfe" stroke="#2563eb" stroke-width="2"/>
+    <text x="210" y="172" text-anchor="middle" font-size="15" font-weight="700" fill="#1e3a8a">Pusher (Go)</text>
+    <text x="210" y="188" text-anchor="middle" font-size="11" fill="#2563eb">thin WebSocket proxy · no game logic</text>
+
+    <rect x="80" y="205" width="260" height="36" rx="6" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+    <text x="210" y="222" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">WebSocket gateway</text>
+    <text x="210" y="236" text-anchor="middle" font-size="10" fill="#3b82f6">coder/websocket · protobuf frames</text>
+
+    <rect x="80" y="251" width="260" height="36" rx="6" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+    <text x="210" y="268" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Token validator</text>
+    <text x="210" y="282" text-anchor="middle" font-size="10" fill="#3b82f6">JWKS cache · Dex OIDC</text>
+
+    <rect x="80" y="297" width="260" height="36" rx="6" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+    <text x="210" y="314" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Session manager</text>
+    <text x="210" y="328" text-anchor="middle" font-size="10" fill="#3b82f6">client_id · sticky-session state</text>
+
+    <rect x="80" y="343" width="260" height="36" rx="6" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+    <text x="210" y="360" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">NATS forwarder</text>
+    <text x="210" y="374" text-anchor="middle" font-size="10" fill="#3b82f6">pub input · sub replication + control</text>
+
+    <line x1="210" y1="241" x2="210" y2="249" stroke="#93c5fd" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="210" y1="287" x2="210" y2="295" stroke="#93c5fd" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="210" y1="333" x2="210" y2="341" stroke="#93c5fd" stroke-width="1.5" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- ==========================================
+       WORLD SIMULATOR (Go) — center column
+       ========================================== -->
+  <g>
+    <rect x="420" y="150" width="400" height="270" rx="10" fill="#c7d2fe" stroke="#4338ca" stroke-width="2"/>
+    <text x="620" y="172" text-anchor="middle" font-size="15" font-weight="700" fill="#312e81">World Simulator (Go)</text>
+    <text x="620" y="188" text-anchor="middle" font-size="11" fill="#4338ca">spatial authority · ECS · triggers · replication · AOI</text>
+
+    <!-- Spatial + Sim layer -->
+    <rect x="440" y="200" width="170" height="110" rx="6" fill="#ddd6fe" stroke="#7c3aed" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="525" y="216" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6" letter-spacing="0.5">SPATIAL + SIM</text>
+
+    <rect x="450" y="222" width="150" height="22" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="525" y="237" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">ECS host (Ark)</text>
+
+    <rect x="450" y="250" width="150" height="22" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="525" y="265" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">Spatial index</text>
+
+    <rect x="450" y="278" width="150" height="22" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="525" y="293" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">Player movement</text>
+
+    <!-- Replication layer -->
+    <rect x="630" y="200" width="170" height="110" rx="6" fill="#ddd6fe" stroke="#7c3aed" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="715" y="216" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6" letter-spacing="0.5">REPLICATION</text>
+
+    <rect x="640" y="222" width="150" height="22" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="715" y="237" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">AOI manager</text>
+
+    <rect x="640" y="250" width="150" height="22" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="715" y="265" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">Replication encoder</text>
+
+    <rect x="640" y="278" width="150" height="22" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="715" y="293" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">Trigger evaluator</text>
+
+    <!-- State access layer -->
+    <rect x="440" y="320" width="360" height="46" rx="6" fill="#ddd6fe" stroke="#7c3aed" stroke-width="1" stroke-dasharray="3 2"/>
+    <text x="620" y="336" text-anchor="middle" font-size="10" font-weight="600" fill="#5b21b6" letter-spacing="0.5">STATE ACCESS</text>
+
+    <rect x="460" y="340" width="150" height="20" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="535" y="354" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">JetStream KV r/w</text>
+
+    <rect x="630" y="340" width="150" height="20" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
+    <text x="705" y="354" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">PocketBase HTTP</text>
+
+    <!-- Internal flow: sim → replication -->
+    <line x1="610" y1="255" x2="638" y2="255" stroke="#a5b4fc" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="610" y1="285" x2="638" y2="285" stroke="#a5b4fc" stroke-width="1.5" marker-end="url(#arr)"/>
+    <!-- Internal flow: sim → state -->
+    <line x1="525" y1="300" x2="525" y2="338" stroke="#a5b4fc" stroke-width="1.5" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- ==========================================
+       LIVEKIT BRIDGE (Go) — right column
+       ========================================== -->
+  <g>
+    <rect x="940" y="150" width="300" height="270" rx="10" fill="#c7d2fe" stroke="#7c3aed" stroke-width="2"/>
+    <text x="1090" y="172" text-anchor="middle" font-size="15" font-weight="700" fill="#581c87">LiveKit Bridge (Go)</text>
+    <text x="1090" y="188" text-anchor="middle" font-size="11" fill="#7c3aed">zone ↔ room sync · media control</text>
+
+    <rect x="960" y="205" width="260" height="36" rx="6" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1"/>
+    <text x="1090" y="222" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">KV watcher</text>
+    <text x="1090" y="236" text-anchor="middle" font-size="10" fill="#8b5cf6">kv.Watch on zone state</text>
+
+    <rect x="960" y="255" width="260" height="36" rx="6" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1"/>
+    <text x="1090" y="272" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">Zone → room translator</text>
+    <text x="1090" y="286" text-anchor="middle" font-size="10" fill="#8b5cf6">exclusive zones · audio isolation</text>
+
+    <rect x="960" y="305" width="260" height="36" rx="6" fill="#ede9fe" stroke="#8b5cf6" stroke-width="1"/>
+    <text x="1090" y="322" text-anchor="middle" font-size="12" font-weight="600" fill="#5b21b6">LiveKit SDK client</text>
+    <text x="1090" y="336" text-anchor="middle" font-size="10" fill="#8b5cf6">Server API · rooms · grants</text>
+
+    <line x1="1090" y1="241" x2="1090" y2="253" stroke="#c4b5fd" stroke-width="1.5" marker-end="url(#arr)"/>
+    <line x1="1090" y1="291" x2="1090" y2="303" stroke="#c4b5fd" stroke-width="1.5" marker-end="url(#arr)"/>
+  </g>
+
+  <!-- ==========================================
+       EXTENSIONS (peer simulators)
+       ========================================== -->
+  <g>
+    <rect x="420" y="470" width="400" height="60" rx="8" fill="#fde68a" stroke="#d97706" stroke-width="1.5" stroke-dasharray="5 3"/>
+    <text x="620" y="492" text-anchor="middle" font-size="13" font-weight="600" fill="#92400e">Extensions (peer simulators · any language)</text>
+    <text x="620" y="512" text-anchor="middle" font-size="11" fill="#b45309">NPCs · triggers · zones · LLM agents · objects — via NATS only</text>
+  </g>
+
+  <!-- ==========================================
+       SHARED STATE & INFRASTRUCTURE ROW
+       ========================================== -->
+
+  <!-- Dex -->
+  <g>
+    <rect x="40" y="560" width="140" height="70" rx="8" fill="#fde68a" stroke="#ea580c" stroke-width="1.5"/>
+    <text x="110" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">Dex</text>
+    <text x="110" y="600" text-anchor="middle" font-size="10" fill="#ea580c">OIDC provider</text>
+    <text x="110" y="616" text-anchor="middle" font-size="10" fill="#f97316">JWT · JWKS</text>
+  </g>
+
+  <!-- NATS Core -->
+  <g>
+    <rect x="220" y="560" width="260" height="70" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+    <text x="350" y="582" text-anchor="middle" font-size="14" font-weight="700" fill="#1e293b">NATS Core</text>
+    <text x="350" y="600" text-anchor="middle" font-size="11" fill="#475569">ephemeral pub/sub · at-most-once</text>
+    <text x="350" y="616" text-anchor="middle" font-size="10" fill="#64748b">input · replication · triggers · events</text>
+  </g>
+
+  <!-- NATS JetStream KV -->
+  <g>
+    <rect x="520" y="560" width="220" height="70" rx="8" fill="#99f6e4" stroke="#475569" stroke-width="2"/>
+    <text x="630" y="582" text-anchor="middle" font-size="14" font-weight="700" fill="#1e293b">NATS JetStream KV</text>
+    <text x="630" y="600" text-anchor="middle" font-size="11" fill="#475569">semi-persistent · kv.Watch</text>
+    <text x="630" y="616" text-anchor="middle" font-size="10" fill="#64748b">zones · positions · world.time</text>
+  </g>
+
+  <!-- PocketBase -->
+  <g>
+    <rect x="780" y="560" width="160" height="70" rx="8" fill="#99f6e4" stroke="#0ea5e9" stroke-width="1.5"/>
+    <text x="860" y="582" text-anchor="middle" font-size="14" font-weight="700" fill="#075985">PocketBase</text>
+    <text x="860" y="600" text-anchor="middle" font-size="11" fill="#0ea5e9">durable · HTTP API</text>
+    <text x="860" y="616" text-anchor="middle" font-size="10" fill="#0ea5e9">users · chat · config · audit</text>
+  </g>
+
+  <!-- Redis -->
+  <g>
+    <rect x="980" y="560" width="140" height="70" rx="8" fill="#fecaca" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="1050" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#991b1b">Redis</text>
+    <text x="1050" y="600" text-anchor="middle" font-size="10" fill="#dc2626">LiveKit ONLY</text>
+    <text x="1050" y="616" text-anchor="middle" font-size="10" fill="#ef4444">rooms · participants</text>
+  </g>
+
+  <!-- LiveKit SFU -->
+  <g>
+    <rect x="1140" y="560" width="100" height="70" rx="8" fill="#99f6e4" stroke="#059669" stroke-width="1.5"/>
+    <text x="1190" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#064e3b">LiveKit SFU</text>
+    <text x="1190" y="600" text-anchor="middle" font-size="10" fill="#059669">WebRTC media</text>
+    <text x="1190" y="616" text-anchor="middle" font-size="10" fill="#10b981">audio · video</text>
+  </g>
+
+  <!-- ==========================================
+       LEGEND
+       ========================================== -->
+  <g transform="translate(40, 670)">
+    <rect x="0" y="0" width="1200" height="230" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>
+
+    <text x="20" y="25" font-size="13" font-weight="700" fill="#0f172a">Legend</text>
+
+    <!-- Service colors -->
+    <text x="20" y="50" font-size="11" font-weight="600" fill="#334155">Services:</text>
+
+    <rect x="100" y="40" width="16" height="16" rx="3" fill="#bfdbfe" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="122" y="52" font-size="11" fill="#334155">Pusher (Go) — WebSocket proxy</text>
+
+    <rect x="340" y="40" width="16" height="16" rx="3" fill="#c7d2fe" stroke="#4338ca" stroke-width="1.5"/>
+    <text x="362" y="52" font-size="11" fill="#334155">World Simulator (Go) — spatial authority</text>
+
+    <rect x="640" y="40" width="16" height="16" rx="3" fill="#c7d2fe" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="662" y="52" font-size="11" fill="#334155">LiveKit Bridge (Go) — media sync</text>
+
+    <rect x="900" y="40" width="16" height="16" rx="3" fill="#fde68a" stroke="#d97706" stroke-width="1.5" stroke-dasharray="3 2"/>
+    <text x="922" y="52" font-size="11" fill="#334155">Extensions (any language)</text>
+
+    <!-- State stores -->
+    <text x="20" y="80" font-size="11" font-weight="600" fill="#334155">State:</text>
+
+    <rect x="100" y="70" width="16" height="16" rx="3" fill="#e2e8f0" stroke="#475569" stroke-width="1.5"/>
+    <text x="122" y="82" font-size="11" fill="#334155">NATS (Core + KV) — the bus</text>
+
+    <rect x="340" y="70" width="16" height="16" rx="3" fill="#99f6e4" stroke="#0ea5e9" stroke-width="1.5"/>
+    <text x="362" y="82" font-size="11" fill="#334155">PocketBase — durable store</text>
+
+    <rect x="640" y="70" width="16" height="16" rx="3" fill="#fecaca" stroke="#dc2626" stroke-width="1.5"/>
+    <text x="662" y="82" font-size="11" fill="#334155">Redis — LiveKit only</text>
+
+    <rect x="900" y="70" width="16" height="16" rx="3" fill="#fde68a" stroke="#ea580c" stroke-width="1.5"/>
+    <text x="922" y="82" font-size="11" fill="#334155">Dex — OIDC identity</text>
+
+    <!-- Arrow types -->
+    <text x="20" y="115" font-size="11" font-weight="600" fill="#334155">Arrows:</text>
+
+    <line x1="100" y1="110" x2="150" y2="110" stroke="#2563eb" stroke-width="2" marker-end="url(#arr-blue)"/>
+    <text x="160" y="114" font-size="11" fill="#334155">Pusher flow</text>
+
+    <line x1="280" y1="110" x2="330" y2="110" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
+    <text x="340" y="114" font-size="11" fill="#334155">World Sim flow</text>
+
+    <line x1="470" y1="110" x2="520" y2="110" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr-purple)"/>
+    <text x="530" y="114" font-size="11" fill="#334155">Bridge flow</text>
+
+    <line x1="660" y1="110" x2="710" y2="110" stroke="#d97706" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+    <text x="720" y="114" font-size="11" fill="#334155">Extension flow (NATS)</text>
+
+    <line x1="900" y1="110" x2="950" y2="110" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr-dash)"/>
+    <text x="960" y="114" font-size="11" fill="#334155">Via NATS (indirect)</text>
+
+    <line x1="100" y1="135" x2="150" y2="135" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arr-orange)"/>
+    <text x="160" y="139" font-size="11" fill="#334155">Auth / JWKS validation</text>
+
+    <line x1="350" y1="135" x2="400" y2="135" stroke="#4338ca" stroke-width="2.5" marker-end="url(#arr)"/>
+    <text x="410" y="139" font-size="11" fill="#334155">Client WebSocket</text>
+
+    <!-- Key principles -->
+    <text x="20" y="170" font-size="11" font-weight="600" fill="#334155">Key principles:</text>
+    <text x="20" y="190" font-size="10" fill="#64748b">• All backend services communicate via NATS — no direct service-to-service RPC.</text>
+    <text x="20" y="205" font-size="10" fill="#64748b">• The World Sim is the spatial authority: ECS, spatial index, triggers, zone boundaries, replication.</text>
+    <text x="20" y="220" font-size="10" fill="#64748b">• Extensions own all gameplay behavior (NPCs, triggers, zones, AI) — the kernel only moves player avatars.</text>
+
+    <text x="620" y="190" font-size="10" fill="#64748b">• Redis is isolated to LiveKit — no other service may use it.</text>
+    <text x="620" y="205" font-size="10" fill="#64748b">• NATS Core is at-most-once (ephemeral); JetStream KV is semi-persistent with kv.Watch.</text>
+    <text x="620" y="220" font-size="10" fill="#64748b">• Replication: World Sim → NATS Core → Pusher → Browser (never direct to client).</text>
+  </g>
+</svg>

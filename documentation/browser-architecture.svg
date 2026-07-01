@@ -1,0 +1,332 @@
+<svg width="100%" viewBox="0 0 1200 950" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Pixel Eruv — Browser Architecture (Client-Side)</title>
+  <desc>The browser-side architecture: Phaser 4 renderer with GPU layers, LiveKit JS SDK for audio/video, WebSocket transport for game state, replication decoder, local entity store, netcode (prediction + interpolation), input capture, interaction system, extension component renderers, and the external services they connect to (Dex, SeaweedFS, Pusher, LiveKit SFU).</desc>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#475569"/>
+    </marker>
+    <marker id="arr-indigo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#4338ca"/>
+    </marker>
+    <marker id="arr-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#2563eb"/>
+    </marker>
+    <marker id="arr-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#16a34a"/>
+    </marker>
+    <marker id="arr-purple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#7c3aed"/>
+    </marker>
+    <marker id="arr-orange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#ea580c"/>
+    </marker>
+    <marker id="arr-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#d97706"/>
+    </marker>
+    <marker id="arr-cyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#0891b2"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="950" fill="#fafaf9"/>
+
+  <!-- Title -->
+  <text x="600" y="30" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Browser Architecture — Client-Side</text>
+  <text x="600" y="52" text-anchor="middle" font-size="13" fill="#64748b">Phaser 4 renderer · LiveKit JS SDK · WebSocket transport · replication decoder · netcode · input · extensions</text>
+
+  <!-- ========================================== -->
+  <!-- BROWSER BOUNDARY -->
+  <!-- ========================================== -->
+  <rect x="30" y="70" width="860" height="850" rx="14" fill="#eef2ff" fill-opacity="0.3" stroke="#4338ca" stroke-width="2.5" stroke-dasharray="8 4"/>
+  <text x="50" y="92" font-size="12" font-weight="700" fill="#4338ca" letter-spacing="1">🌐 BROWSER</text>
+
+  <!-- ========================================== -->
+  <!-- EXTERNAL SERVICES (right side) -->
+  <!-- ========================================== -->
+
+  <!-- Dex -->
+  <g>
+    <rect x="930" y="100" width="240" height="60" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="2"/>
+    <text x="1050" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">🔐 Dex</text>
+    <text x="1050" y="140" text-anchor="middle" font-size="11" fill="#ea580c">OIDC · JWT issuance</text>
+    <text x="1050" y="154" text-anchor="middle" font-size="10" fill="#f97316">redirect login flow</text>
+  </g>
+
+  <!-- SeaweedFS / RustFS -->
+  <g>
+    <rect x="930" y="190" width="240" height="60" rx="8" fill="#e0f2fe" stroke="#0ea5e9" stroke-width="2"/>
+    <text x="1050" y="212" text-anchor="middle" font-size="13" font-weight="700" fill="#075985">📦 SeaweedFS / RustFS</text>
+    <text x="1050" y="230" text-anchor="middle" font-size="11" fill="#0ea5e9">S3-compatible asset storage</text>
+    <text x="1050" y="244" text-anchor="middle" font-size="10" fill="#38bdf8">maps · tilesets · sprites (via Traefik)</text>
+  </g>
+
+  <!-- Pusher -->
+  <g>
+    <rect x="930" y="380" width="240" height="70" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="2"/>
+    <text x="1050" y="402" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">🚀 Pusher (via Traefik)</text>
+    <text x="1050" y="420" text-anchor="middle" font-size="11" fill="#2563eb">WebSocket proxy</text>
+    <text x="1050" y="435" text-anchor="middle" font-size="10" fill="#3b82f6">sticky session · protobuf frames</text>
+  </g>
+
+  <!-- LiveKit SFU -->
+  <g>
+    <rect x="930" y="560" width="240" height="70" rx="8" fill="#faf5ff" stroke="#7c3aed" stroke-width="2"/>
+    <text x="1050" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#581c87">🎥 LiveKit SFU (via Traefik)</text>
+    <text x="1050" y="600" text-anchor="middle" font-size="11" fill="#7c3aed">WebRTC media relay</text>
+    <text x="1050" y="615" text-anchor="middle" font-size="10" fill="#8b5cf6">audio · video · screen share</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 1: BOOTSTRAP / AUTH -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="50" y="105" width="380" height="65" rx="8" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
+    <text x="240" y="127" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">🔐 Auth &amp; Bootstrap</text>
+    <text x="240" y="144" text-anchor="middle" font-size="10" fill="#ea580c">• Redirect to Dex → OIDC login → JWT</text>
+    <text x="240" y="158" text-anchor="middle" font-size="10" fill="#ea580c">• Load Phaser app bundle · load map/tileset URLs from PocketBase config</text>
+  </g>
+
+  <!-- LAYER 1b: Asset Loader -->
+  <g>
+    <rect x="460" y="105" width="380" height="65" rx="8" fill="#e0f2fe" stroke="#0ea5e9" stroke-width="1.5"/>
+    <text x="650" y="127" text-anchor="middle" font-size="13" font-weight="700" fill="#075985">📦 Asset Loader</text>
+    <text x="650" y="144" text-anchor="middle" font-size="10" fill="#0ea5e9">• Fetch Tiled JSON + tileset images from SeaweedFS</text>
+    <text x="650" y="158" text-anchor="middle" font-size="10" fill="#0ea5e9">• Cache in browser · feed to Phaser TilemapGPULayer</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 2: TRANSPORT -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="50" y="200" width="380" height="80" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
+    <text x="240" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">🔌 WebSocket Transport</text>
+    <text x="240" y="240" text-anchor="middle" font-size="10" fill="#2563eb">• Protobuf frame envelope (ClientFrame / ServerFrame)</text>
+    <text x="240" y="254" text-anchor="middle" font-size="10" fill="#2563eb">• AuthFrame → InputFrame → InteractFrame → TokenRefresh</text>
+    <text x="240" y="268" text-anchor="middle" font-size="10" fill="#3b82f6">• Receives: ReplicationBatch, AuthResult, ControlFrame, Error</text>
+  </g>
+
+  <g>
+    <rect x="460" y="200" width="380" height="80" rx="8" fill="#faf5ff" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="650" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#581c87">🎥 WebRTC Transport (LiveKit JS SDK)</text>
+    <text x="650" y="240" text-anchor="middle" font-size="10" fill="#7c3aed">• Peer connection to LiveKit SFU</text>
+    <text x="650" y="254" text-anchor="middle" font-size="10" fill="#7c3aed">• Publish local mic/camera · subscribe to remote tracks</text>
+    <text x="650" y="268" text-anchor="middle" font-size="10" fill="#8b5cf6">• Proximity-based volume · zone-scoped rooms</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 3: REPLICATION DECODER + NETCODE -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="50" y="310" width="380" height="100" rx="8" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+    <text x="240" y="332" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">📥 Replication Decoder</text>
+    <text x="240" y="350" text-anchor="middle" font-size="10" fill="#16a34a">• Decode ReplicationBatch → protobuf messages</text>
+    <text x="240" y="364" text-anchor="middle" font-size="10" fill="#16a34a">• SpawnEntity → create entity + components</text>
+    <text x="240" y="378" text-anchor="middle" font-size="10" fill="#16a34a">• UpdateComponent → replace component data</text>
+    <text x="240" y="392" text-anchor="middle" font-size="10" fill="#16a34a">• DestroyEntity → remove entity · PlayAnimation → trigger VFX</text>
+  </g>
+
+  <g>
+    <rect x="460" y="310" width="380" height="100" rx="8" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+    <text x="650" y="332" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">⚡ Netcode (latency compensation)</text>
+    <text x="650" y="350" text-anchor="middle" font-size="10" fill="#d97706">• Client-side prediction for local avatar (instant feel)</text>
+    <text x="650" y="364" text-anchor="middle" font-size="10" fill="#d97706">• Server reconciliation (replay un-acked inputs by seq)</text>
+    <text x="650" y="378" text-anchor="middle" font-size="10" fill="#d97706">• Snapshot interpolation (LERP) for remote avatars</text>
+    <text x="650" y="392" text-anchor="middle" font-size="10" fill="#b45309">• Dead reckoning on packet loss · snapshot_seq gap detection</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 4: LOCAL ENTITY STORE (core) -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="50" y="440" width="790" height="90" rx="10" fill="#f1f5f9" stroke="#475569" stroke-width="2"/>
+    <text x="445" y="462" text-anchor="middle" font-size="14" font-weight="700" fill="#1e293b">🗂️ Local Entity Store</text>
+    <text x="445" y="480" text-anchor="middle" font-size="11" fill="#475569">Mirrors the server's replicated ECS state — component-based, not entity-type-based</text>
+    <text x="445" y="497" text-anchor="middle" font-size="10" fill="#64748b">Entities = {entity_id → {component_id → component_data}}  ·  Generic: a Position update is handled identically for players, NPCs, or objects</text>
+    <text x="445" y="514" text-anchor="middle" font-size="10" fill="#64748b" font-style="italic">Local avatar's Position is driven by prediction, not by UpdateComponent (other components still replicated)</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 5: INPUT + INTERACTION -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="50" y="560" width="380" height="80" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+    <text x="240" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#064e3b">⌨️ Input Capture</text>
+    <text x="240" y="600" text-anchor="middle" font-size="10" fill="#059669">• Keyboard / touch → InputState (up, down, left, right, run)</text>
+    <text x="240" y="614" text-anchor="middle" font-size="10" fill="#059669">• Monotonic seq number per InputFrame</text>
+    <text x="240" y="628" text-anchor="middle" font-size="10" fill="#10b981">• Fed to prediction (local) + sent to Pusher (authoritative)</text>
+  </g>
+
+  <g>
+    <rect x="460" y="560" width="380" height="80" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+    <text x="650" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#064e3b">🖱️ Interaction System</text>
+    <text x="650" y="600" text-anchor="middle" font-size="10" fill="#059669">• Click entity → InteractFrame {target_entity_id, type, params}</text>
+    <text x="650" y="614" text-anchor="middle" font-size="10" fill="#059669">• Popup UI for interactable objects (actions from components)</text>
+    <text x="650" y="628" text-anchor="middle" font-size="10" fill="#10b981">• Knock-to-join · sit/sleep · open URL · talk to NPC</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 6: PHASER RENDERER -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="50" y="670" width="540" height="220" rx="10" fill="#eef2ff" stroke="#4338ca" stroke-width="2"/>
+    <text x="320" y="692" text-anchor="middle" font-size="14" font-weight="700" fill="#312e81">🎨 Phaser 4 Renderer</text>
+
+    <!-- GPU Layers -->
+    <rect x="70" y="702" width="240" height="50" rx="6" fill="#c7d2fe" stroke="#6366f1" stroke-width="1"/>
+    <text x="190" y="720" text-anchor="middle" font-size="11" font-weight="600" fill="#3730a3">TilemapGPULayer</text>
+    <text x="190" y="735" text-anchor="middle" font-size="9" fill="#6366f1">GPU-rendered tilemaps · zoom without slowdown</text>
+
+    <rect x="330" y="702" width="240" height="50" rx="6" fill="#c7d2fe" stroke="#6366f1" stroke-width="1"/>
+    <text x="450" y="720" text-anchor="middle" font-size="11" font-weight="600" fill="#3730a3">SpriteGPULayer</text>
+    <text x="450" y="735" text-anchor="middle" font-size="9" fill="#6366f1">Batched sprites · avatars · objects · decorations</text>
+
+    <!-- Avatar compositing -->
+    <rect x="70" y="762" width="240" height="50" rx="6" fill="#c7d2fe" stroke="#6366f1" stroke-width="1"/>
+    <text x="190" y="780" text-anchor="middle" font-size="11" font-weight="600" fill="#3730a3">Avatar Compositor</text>
+    <text x="190" y="795" text-anchor="middle" font-size="9" fill="#6366f1">body + hair + outfit + accessory · idle/walk/sit</text>
+
+    <rect x="330" y="762" width="240" height="50" rx="6" fill="#c7d2fe" stroke="#6366f1" stroke-width="1"/>
+    <text x="450" y="780" text-anchor="middle" font-size="11" font-weight="600" fill="#3730a3">Animation Player</text>
+    <text x="450" y="795" text-anchor="middle" font-size="9" fill="#6366f1">PlayAnimation triggers · emotes · one-shot VFX</text>
+
+    <!-- Bubbles + UI -->
+    <rect x="70" y="822" width="240" height="50" rx="6" fill="#c7d2fe" stroke="#6366f1" stroke-width="1"/>
+    <text x="190" y="840" text-anchor="middle" font-size="11" font-weight="600" fill="#3730a3">Bubble Renderer</text>
+    <text x="190" y="855" text-anchor="middle" font-size="9" fill="#6366f1">speech · emoji · status (above avatars)</text>
+
+    <rect x="330" y="822" width="240" height="50" rx="6" fill="#c7d2fe" stroke="#6366f1" stroke-width="1"/>
+    <text x="450" y="840" text-anchor="middle" font-size="11" font-weight="600" fill="#3730a3">UI Overlay</text>
+    <text x="450" y="855" text-anchor="middle" font-size="9" fill="#6366f1">chat · knock popup · interaction menu · status</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- LAYER 6b: EXTENSION COMPONENT RENDERERS -->
+  <!-- ========================================== -->
+  <g>
+    <rect x="620" y="670" width="220" height="220" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="2" stroke-dasharray="6 3"/>
+    <text x="730" y="692" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">🔌 Extension Renderers</text>
+    <text x="730" y="710" text-anchor="middle" font-size="10" fill="#b45309">Custom component renderers</text>
+    <text x="730" y="724" text-anchor="middle" font-size="10" fill="#b45309">loaded dynamically</text>
+
+    <rect x="640" y="738" width="180" height="36" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+    <text x="730" y="755" text-anchor="middle" font-size="10" font-weight="500" fill="#92400e">Protobuf decoder</text>
+    <text x="730" y="768" text-anchor="middle" font-size="9" fill="#b45309">extension .proto schemas</text>
+
+    <rect x="640" y="784" width="180" height="36" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+    <text x="730" y="801" text-anchor="middle" font-size="10" font-weight="500" fill="#92400e">Phaser plugin / renderer</text>
+    <text x="730" y="814" text-anchor="middle" font-size="9" fill="#b45309">custom sprites · VFX · UI</text>
+
+    <rect x="640" y="830" width="180" height="36" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+    <text x="730" y="847" text-anchor="middle" font-size="10" font-weight="500" fill="#92400e">Asset fetcher</text>
+    <text x="730" y="860" text-anchor="middle" font-size="9" fill="#b45309">extension sprite sheets</text>
+
+    <text x="730" y="882" text-anchor="middle" font-size="9" fill="#d97706" font-style="italic">[OPEN] delivery mechanism</text>
+  </g>
+
+  <!-- ========================================== -->
+  <!-- COMMUNICATION ARROWS -->
+  <!-- ========================================== -->
+
+  <!-- Auth → Dex (OIDC redirect) -->
+  <line x1="430" y1="137" x2="928" y2="130" stroke="#ea580c" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arr-orange)"/>
+  <text x="680" y="125" text-anchor="middle" font-size="10" font-weight="500" fill="#ea580c">OIDC redirect → JWT</text>
+
+  <!-- Asset Loader → SeaweedFS -->
+  <line x1="840" y1="137" x2="928" y2="220" stroke="#0891b2" stroke-width="2" marker-end="url(#arr-cyan)"/>
+  <text x="890" y="175" text-anchor="middle" font-size="10" font-weight="500" fill="#0891b2">HTTPS fetch</text>
+
+  <!-- WS Transport → Pusher (bidirectional) -->
+  <line x1="430" y1="240" x2="928" y2="415" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arr-blue)"/>
+  <line x1="928" y1="405" x2="430" y2="255" stroke="#2563eb" stroke-width="2.5" marker-end="url(#arr-blue)"/>
+  <text x="680" y="320" text-anchor="middle" font-size="10" font-weight="600" fill="#2563eb">WebSocket (protobuf)</text>
+  <text x="680" y="334" text-anchor="middle" font-size="10" fill="#3b82f6">input ↑ · replication ↓</text>
+
+  <!-- WebRTC Transport → LiveKit SFU (bidirectional) -->
+  <line x1="840" y1="240" x2="928" y2="595" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arr-purple)"/>
+  <line x1="928" y1="585" x2="840" y2="255" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arr-purple)"/>
+  <text x="880" y="420" text-anchor="middle" font-size="10" font-weight="600" fill="#7c3aed">WebRTC</text>
+  <text x="880" y="434" text-anchor="middle" font-size="10" fill="#8b5cf6">publish ↑ · subscribe ↓</text>
+
+  <!-- WS Transport → Replication Decoder (downstream) -->
+  <line x1="240" y1="280" x2="240" y2="308" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="255" y="298" font-size="9" fill="#16a34a">ReplicationBatch</text>
+
+  <!-- Replication Decoder → Local Entity Store -->
+  <line x1="240" y1="410" x2="240" y2="438" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="255" y="428" font-size="9" fill="#16a34a">entity updates</text>
+
+  <!-- Netcode → Local Entity Store (prediction writes) -->
+  <line x1="650" y1="410" x2="650" y2="438" stroke="#d97706" stroke-width="2" marker-end="url(#arr-amber)"/>
+  <text x="665" y="428" font-size="9" fill="#d97706">predicted position</text>
+
+  <!-- Netcode ← WS Transport (seq reconciliation) -->
+  <line x1="430" y1="260" x2="460" y2="310" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 2" marker-end="url(#arr-amber)"/>
+  <text x="430" y="290" text-anchor="middle" font-size="9" fill="#d97706">last_acked_seq</text>
+
+  <!-- Input Capture → WS Transport (upstream) -->
+  <line x1="240" y1="558" x2="240" y2="282" stroke="#059669" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="255" y="420" font-size="9" fill="#059669">InputFrame</text>
+
+  <!-- Input Capture → Netcode (local prediction) -->
+  <line x1="380" y1="600" x2="460" y2="395" stroke="#059669" stroke-width="1.5" stroke-dasharray="4 2" marker-end="url(#arr-green)"/>
+  <text x="410" y="500" text-anchor="middle" font-size="9" fill="#059669">input → predict</text>
+
+  <!-- Interaction → WS Transport (upstream) -->
+  <line x1="650" y1="558" x2="650" y2="282" stroke="#059669" stroke-width="2" marker-end="url(#arr-green)"/>
+  <text x="665" y="420" font-size="9" fill="#059669">InteractFrame</text>
+
+  <!-- Local Entity Store → Phaser Renderer -->
+  <line x1="320" y1="530" x2="320" y2="668" stroke="#4338ca" stroke-width="2.5" marker-end="url(#arr-indigo)"/>
+  <text x="335" y="600" font-size="10" font-weight="500" fill="#4338ca">entity state → render</text>
+
+  <!-- Local Entity Store → Extension Renderers (custom components) -->
+  <line x1="600" y1="530" x2="730" y2="668" stroke="#d97706" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arr-amber)"/>
+  <text x="665" y="600" text-anchor="middle" font-size="10" font-weight="500" fill="#d97706">custom components</text>
+
+  <!-- Phaser Renderer → screen (implicit, shown as label) -->
+  <text x="320" y="905" text-anchor="middle" font-size="10" fill="#6366f1" font-style="italic">↓ GPU render to canvas ↓</text>
+
+  <!-- ========================================== -->
+  <!-- LEGEND -->
+  <!-- ========================================== -->
+  <g transform="translate(930, 670)">
+    <rect x="0" y="0" width="250" height="240" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="125" y="22" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Legend</text>
+
+    <text x="15" y="42" font-size="10" font-weight="600" fill="#334155">Layers:</text>
+
+    <rect x="15" y="50" width="12" height="12" rx="2" fill="#fff7ed" stroke="#ea580c" stroke-width="1"/>
+    <text x="32" y="60" font-size="9" fill="#334155">Auth / Bootstrap</text>
+
+    <rect x="15" y="68" width="12" height="12" rx="2" fill="#e0f2fe" stroke="#0ea5e9" stroke-width="1"/>
+    <text x="32" y="78" font-size="9" fill="#334155">Asset Loader</text>
+
+    <rect x="15" y="86" width="12" height="12" rx="2" fill="#eff6ff" stroke="#2563eb" stroke-width="1"/>
+    <text x="32" y="96" font-size="9" fill="#334155">WebSocket Transport</text>
+
+    <rect x="15" y="104" width="12" height="12" rx="2" fill="#faf5ff" stroke="#7c3aed" stroke-width="1"/>
+    <text x="32" y="114" font-size="9" fill="#334155">WebRTC Transport</text>
+
+    <rect x="15" y="122" width="12" height="12" rx="2" fill="#f0fdf4" stroke="#16a34a" stroke-width="1"/>
+    <text x="32" y="132" font-size="9" fill="#334155">Replication Decoder</text>
+
+    <rect x="15" y="140" width="12" height="12" rx="2" fill="#fffbeb" stroke="#d97706" stroke-width="1"/>
+    <text x="32" y="150" font-size="9" fill="#334155">Netcode</text>
+
+    <rect x="15" y="158" width="12" height="12" rx="2" fill="#f1f5f9" stroke="#475569" stroke-width="1"/>
+    <text x="32" y="168" font-size="9" fill="#334155">Local Entity Store</text>
+
+    <rect x="15" y="176" width="12" height="12" rx="2" fill="#ecfdf5" stroke="#059669" stroke-width="1"/>
+    <text x="32" y="186" font-size="9" fill="#334155">Input / Interaction</text>
+
+    <rect x="15" y="194" width="12" height="12" rx="2" fill="#eef2ff" stroke="#4338ca" stroke-width="1"/>
+    <text x="32" y="204" font-size="9" fill="#334155">Phaser 4 Renderer</text>
+
+    <rect x="15" y="212" width="12" height="12" rx="2" fill="#fffbeb" stroke="#d97706" stroke-width="1" stroke-dasharray="2 1"/>
+    <text x="32" y="222" font-size="9" fill="#334155">Extension Renderers</text>
+
+    <text x="15" y="236" font-size="8" fill="#64748b" font-style="italic">Dashed = optional / [OPEN]</text>
+  </g>
+</svg>

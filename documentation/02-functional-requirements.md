@@ -1,12 +1,8 @@
----
-creation date: 2026-06-26 08:37
-modification date: 2026-06-27 18:00
----
 # Functional Requirements
 
 This document lists what the system must **do**. Non-functional targets
 (scale, latency budgets, browser support) will be captured separately in
-`03-non-functional-requirements.md` (to be created).
+`03-non-functional-requirements.md`.
 
 ## 1. Zones and interactions
 
@@ -38,7 +34,7 @@ This document lists what the system must **do**. Non-functional targets
 ### 1.5 Interaction routing
 - Routing of interactions between triggers and other components (zones, doors,
   audio bridges, etc.) is done via **NATS pub/sub topics**, including wildcard
-  topics. See `07-network-protocol.md` (to be created) for the subject naming
+  topics. See `07-network-protocol.md` for the subject naming
   convention.
 
 ## 2. Zone of Interest
@@ -47,9 +43,13 @@ This document lists what the system must **do**. Non-functional targets
   defined so that each client only receives state for entities/events within
   its area of interest.
 - Algorithm (grid / quadtree / distance-based) is to be specified in
-  `09-zones-and-interactions.md` (to be created).
+  `14-zones-and-interactions.md`.
 
-## 3. Maps
+## 3. Maps and objects
+
+Maps and their objects are the building blocks of the game world. The two are
+specified together because they share the same placement, layering, and
+traversal rules.
 
 - Maps are designed in **Tiled**.
 - Tile size: **32×32**.
@@ -61,9 +61,12 @@ This document lists what the system must **do**. Non-functional targets
 - **Object placement relative to a tile**: objects must be placeable relative
   to a tile, not only in the centre. Front/back positions must be supported so
   that visual draw order can be determined. **This is important and needs more
-  detail** — see `10-maps-and-tiled.md` (to be created).
-- **Multi-layer** support: a single tile can carry multiple characteristics
-  (block, trigger, etc.) via stacked layers.
+  detail** — see `15-maps-and-tiled.md`.
+- **Multi-layer** support: a single tile can carry multiple objects, each with
+  its own characteristics (block, trigger, etc.), via stacked layers.
+- **Interactable objects**: an object can be interactable. When a user clicks
+  an interactable object, a popup lists the possible actions (derived from the
+  object's characteristics).
 - **Sit / sleep interactions**: sitting on a chair changes the avatar's status
   and sprite; sleeping in a bed is supported, etc.
 - **Avatar movement sprites**: idle sprites with respiration animation; walking
@@ -79,14 +82,15 @@ This document lists what the system must **do**. Non-functional targets
 - Each user (and each NPC) is represented by an avatar.
 - The avatar is visually composed of **composable elements**: body shape,
   colour, hairs, clothes.
+- A system of **bubbles** to show messages, status, etc. like if the user was talking, but visual.
 - Wire format for describing an avatar to the server is to be specified in
-  `11-avatars.md` (to be created).
+  `16-avatars.md`.
 
 ## 5. Chat
 
 - A chat is integrated so users can interact.
 - Candidate backend: **Matrix Synapse** (undecided — "maybe").
-- Open questions to resolve in `14-chat.md` (to be created):
+- Open questions to resolve in `17-chat.md`:
   - Spatial chat vs. global rooms vs. direct messages.
   - How chat integrates with zones (e.g. a zone-scoped channel per meeting
     room).
@@ -104,15 +108,19 @@ A complete latency-compensation netcode protocol is required:
 
 Detailed spec (tick rate, input sequence numbers, snapshot frequency,
 reconciliation algorithm, extrapolation timeout thresholds) will live in
-`08-netcode.md` (to be created).
+`12-netcode.md`.
 
 ## 7. Authentication and identity
 
-- A **generic auth** layer is created first.
-- Later, an **OIDC provider** is plugged in (Dex IDP, Keycloak, or simpler).
+- **Dex** is the OIDC provider from the start; it is deployed as part of the
+  MVP so the auth model is consistent from day one.
+- The MVP enables only Dex's **local-password connector** (simple username/
+  password). Enterprise connectors (LDAP, Microsoft OIDC, SAML, GitHub) are
+  enabled later by changing Dex's config at deploy time — no application code
+  changes.
 - Details (token validation on the WS upgrade, identity → avatar/entity
   mapping, NPC/service-account auth, session lifecycle vs. Traefik sticky
-  sessions) will be specified in `12-auth-and-identity.md` (to be created).
+  sessions) are specified in `08-auth-and-identity.md`.
 
 ## 8. Extra features (not MVP)
 

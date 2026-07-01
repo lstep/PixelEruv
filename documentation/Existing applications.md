@@ -1,9 +1,0 @@
----
-creation date: 2026-06-27 11:42
-modification date: 2026-06-27 11:45
----
-- [ZEP](https://zep.us)
-- [Gather \| Virtual Workspace for Remote Teams](https://www.gather.town)
-- [Virtual Office & Remote Event App \| WorkAdventure](https://workadventu.re)
-- [GitHub - eliautobot/my-virtual-office: A self-hosted 2D AI workspace for AI Agents · GitHub](https://github.com/eliautobot/my-virtual-office)
-- [Webinti Town \| Le bureau virtuel de votre équipe](https://town.webinti.com) ([GitHub - webinti/webinti-town: Le Multiverse de Webinti · GitHub](https://github.com/webinti/webinti-town))
