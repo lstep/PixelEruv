@@ -220,10 +220,11 @@ entities.
 
 - Register with the World Sim via NATS, spawn entities in the ECS (no type
   restrictions).
-- Register triggers (access: block/allow/ask; event: notify; action: click)
-  on tiles and entities. The kernel caches block/allow triggers locally,
-  routes ask triggers to the extension at runtime, and validates range/LOS
-  for action triggers before dispatching.
+- Register triggers (access: block/allow/ask; event: notify
+  tile-bound/entity-bound/proximity-bound; action: click) on tiles and
+  entities. The kernel caches block/allow triggers locally, routes ask
+  triggers to the extension at runtime, validates range/LOS for action
+  triggers before dispatching, and evaluates proximity triggers per-tick.
 - Register zones (polygon regions with associated triggers). Zone boundaries
   are stored in the kernel; zone behavior is implemented by the extension via
   triggers.

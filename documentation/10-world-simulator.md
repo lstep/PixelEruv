@@ -105,7 +105,8 @@ does not implement trigger behavior itself.
 5. **Event trigger dispatch** — after a move succeeds, the kernel fires event
    triggers (`notify`) on the entered/exited tile. Entity-bound `notify`
    triggers are sent to the owning extension (point-to-point). Tile-bound
-   `notify` triggers are broadcast to all extensions. See §5d.
+   `notify` triggers are broadcast to all extensions. Proximity-bound `notify`
+   triggers are evaluated per-tick (see §5d). See §5d.
 6. **Action trigger evaluation** — when a player clicks a tile (via
    `ActionFrame`), the kernel validates range and line-of-sight, then
    dispatches to action triggers on the clicked tile. If no action trigger
@@ -159,9 +160,10 @@ World Simulator process
 ├── Trigger registry      (trigger_id → owner_extension, category, behavior, tiles/entities)
 ├── Zone registry         (zone_id → boundaries, owner_extension)
 ├── Player movement       (input → target tile → trigger evaluation → Position update)
-├── Trigger evaluator     (access: block/allow/ask; event: notify; action: click)
+├── Trigger evaluator     (access: block/allow/ask; event: notify tile/entity/proximity; action: click)
 ├── Action handler        (ActionFrame → range/LOS validation → action trigger dispatch or entity interaction fallback)
 ├── LOS raycaster         (Bresenham line through tiles; checks walls, block triggers, Traversable=false)
+├── Proximity evaluator   (per-tick: range query around each proximity trigger entity → enter/exit transitions)
 ├── Replication encoder   (component-based, per-client batches)
 ├── AOI manager           (per-client area-of-interest filter)
 ├── NATS subscriber       (client input, connect/disconnect, extension updates, trigger replies)
@@ -236,13 +238,20 @@ Each tick (fixed interval, e.g. 50 ms for 20 Hz):
         - Tile-bound notify triggers → broadcast to all extensions
      b. For each entity that exited a tile:
         - Same for exit events
-  10. Replication system:
-     a. Collect dirty components
-     b. Apply AOI filter per client
-     c. Encode per-client replication batches
-     d. Publish batches to NATS Core (client.<id>.replication)
-  10. Clear dirty flags
-  11. Persist changed player positions to JetStream KV (if any changed)
+  10. Evaluate proximity triggers (see §5d):
+      a. For each proximity-bound trigger:
+         - Get the bound entity's current Position
+         - Find all players within `radius` tiles (spatial index range query)
+         - Compare with previous tick's set
+         - For each new entry → publish proximity_enter to owning extension
+         - For each departure → publish proximity_exit to owning extension
+  11. Replication system:
+      a. Collect dirty components
+      b. Apply AOI filter per client
+      c. Encode per-client replication batches
+      d. Publish batches to NATS Core (client.<id>.replication)
+  12. Clear dirty flags
+  13. Persist changed player positions to JetStream KV (if any changed)
 ```
 
 The tick rate is a trade-off:
@@ -284,10 +293,12 @@ A trigger registration declares:
   "trigger_id": "wall-lobby-north",
   "owner_extension": "walls-v1",
   "category": "access" | "event" | "action",
-  "binding": "tile" | "entity",
+  "binding": "tile" | "entity" | "proximity",
   "tiles": [...],           // if tile-bound
-  "entity_id": "...",       // if entity-bound
-  "event": "enter" | "exit" | "interact",  // for event triggers
+  "entity_id": "...",       // if entity-bound or proximity-bound
+  "event": "enter" | "exit" | "interact",  // for event triggers (tile/entity)
+  "events": ["proximity_enter", "proximity_exit"],  // for proximity-bound
+  "radius": 3,                            // for proximity-bound (tiles)
   "behavior": "block" | "allow" | "ask",   // for access triggers
   "default_on_timeout": "block",           // for ask
   "ttl_ms": 500,                           // for ask
@@ -300,7 +311,7 @@ A trigger registration declares:
 | Category | Types | Gates movement? | Kernel waits? |
 |---|---|---|---|
 | **Access** | `block`, `allow`, `ask` | Yes | `block`/`allow`: no (cached in spatial index). `ask`: yes (pending, async) |
-| **Event** | `notify` | No | No (fire and forget) |
+| **Event** | `notify` (tile-bound, entity-bound, proximity-bound) | No | No (fire and forget). Proximity triggers are evaluated per-tick by the kernel. |
 | **Action** | `click` | No (player-initiated) | Range/LOS validated locally; dispatch to extension is async |
 
 ### Spatial index
@@ -316,6 +327,13 @@ The spatial index maps each tile to:
 This allows O(1) lookup during movement validation: "what triggers are on the
 target tile?" and "what entities are on the target tile?" The same lookup is
 used for action trigger evaluation when a player clicks a tile.
+
+The kernel also maintains a **proximity trigger list** — all registered
+proximity-bound triggers with their bound entity ID, radius, and events. This
+is separate from the tile-based spatial index because proximity triggers are
+entity-centric, not tile-centric. The kernel evaluates them per-tick by
+querying the spatial index for players within each trigger's radius (a range
+query over (2×radius+1)² tiles around the bound entity's current position).
 
 ### Zone registry
 
@@ -423,14 +441,17 @@ movement — they are notifications, fire-and-forget.
 |---|---|---|
 | **Entity-bound** | Kernel sends to the extension that owns the entity (point-to-point, via `ExtensionOwner` or trigger owner) | When the registered event involves that entity |
 | **Tile-bound** | Kernel publishes to a broadcast subject; all extensions receive it and self-filter | When the registered event happens on that tile |
+| **Proximity-bound** | Kernel sends to the extension that owns the entity (point-to-point) | When a player enters or leaves the radius around the bound entity (evaluated per-tick) |
 
 ### Events
 
-| Event | Fires when | Entity-bound example | Tile-bound example |
-|---|---|---|---|
-| `enter` | Entity arrived at a tile | NPC notices a player approached | Welcome mat plays a sound |
-| `exit` | Entity left a tile | NPC stops following | Meeting room decrements occupancy |
-| `interact` | Client clicked a tile with an entity (via `ActionFrame`) | NPC starts dialogue | Floor switch activates |
+| Event | Fires when | Entity-bound example | Tile-bound example | Proximity-bound example |
+|---|---|---|---|---|
+| `enter` | Entity arrived at a tile | NPC notices a player approached | Welcome mat plays a sound | — |
+| `exit` | Entity left a tile | NPC stops following | Meeting room decrements occupancy | — |
+| `interact` | Client clicked a tile with an entity (via `ActionFrame`) | NPC starts dialogue | Floor switch activates | — |
+| `proximity_enter` | Player entered the radius around the bound entity | — | — | Proximity alarm starts ringing; guard enters ALERT |
+| `proximity_exit` | Player left the radius around the bound entity | — | — | Proximity alarm stops (if no other players in radius); guard returns to IDLE |
 
 The `interact` event for entity-bound triggers unifies with the action trigger
 fallback to entity interaction routing (see `18-extensions.md` §6). When a
@@ -438,6 +459,31 @@ client clicks a tile with an entity and no action trigger is registered on
 that tile, the kernel checks for entity-bound `notify` triggers with event
 `interact` and forwards the interaction to the owning extension. This is the
 same mechanism, named consistently.
+
+### Proximity evaluation
+
+Proximity-bound triggers are evaluated once per tick (step 10 of the tick
+loop), after all movement has been processed. The kernel maintains the
+previous tick's player set for each proximity trigger. For each trigger:
+
+1. Get the bound entity's current `Position` from the ECS.
+2. Query the spatial index for all player entities within `radius` tiles
+   (Chebyshev distance: (2×radius+1)² tile lookups).
+3. Compare with the previous tick's set.
+4. For each player that is in the new set but not the old set → fire
+   `proximity_enter` (point-to-point to the owning extension).
+5. For each player that is in the old set but not the new set → fire
+   `proximity_exit` (point-to-point to the owning extension).
+
+If the bound entity itself moves (e.g. a patrolling guard), the radius moves
+with it — the kernel re-evaluates from the entity's new position each tick.
+
+**Performance:** each proximity trigger costs (2×radius+1)² spatial index
+lookups per tick. For radius=3, that's 49 lookups. With a small number of
+proximity triggers (typical: a few per map), this is negligible. If proximity
+triggers become numerous, the kernel can optimize by maintaining a separate
+entity-centric spatial structure (e.g. a uniform grid with cell size = max
+radius) for O(1) range queries.
 
 ### Broadcast scaling note
 
@@ -690,6 +736,7 @@ shared memory.
 | `world_sim.restarted` | Extensions | `{shard_id, timestamp}` | On restart |
 | `extension.<ext_id>.registered` | Extension | Registration response | On registration |
 | `entity.<entity_id>.interact` | Extension (owning the entity) | Forwarded client interaction | Event-driven |
+| `entity.<entity_id>.notify.<event>` | Extension (owning the entity) | Entity-bound and proximity-bound notify dispatch (enter/exit/interact/proximity_enter/proximity_exit) | Event-driven / per-tick |
 | `entity.<entity_id>.arrived` | Extension | Reached movement target | On arrival |
 | `entity.<entity_id>.despawned` | Extension | Entity removed | Event-driven |
 | `trigger.<trigger_id>.query` | Extension (owning the trigger) | Access trigger query (for `ask`) | On move attempt |
@@ -721,13 +768,15 @@ previously overloaded (see `09-pusher.md` §1 for the history).
 - ❌ Does not run gameplay systems for non-player entities (NPC movement, AI,
   trigger logic, zone behavior, custom game mechanics, inventory, equipment,
   item effects). These are extension responsibilities, communicated via NATS.
-  The kernel's only gameplay systems are player avatar movement and action
-  trigger spatial validation (range/LOS) — both latency-critical and
-  deployment-invariant.
+  The kernel's only gameplay systems are player avatar movement, action
+  trigger spatial validation (range/LOS), and proximity trigger evaluation —
+  all latency-critical and deployment-invariant.
 - ❌ Does not decide what a trigger does — it routes trigger queries to the
   owning extension and caches the result for `block`/`allow` triggers. For
   action triggers, it validates range/LOS and dispatches to the owning
-  extension with an equipment snapshot; the extension decides what happens.
+  extension with an equipment snapshot. For proximity triggers, it detects
+  enter/exit transitions and notifies the owning extension. The extension
+  decides what happens in all cases.
 - ❌ Does not decide zone behavior (exclusivity, knock-to-join, timers) — it
   stores zone boundaries and routes zone-entry triggers to the owning
   extension.

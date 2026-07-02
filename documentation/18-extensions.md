@@ -354,6 +354,17 @@ them in the spatial index. There are three categories:
 |---|---|---|
 | **Entity-bound** | Point-to-point to the extension that owns the entity | NPC notices a player approached; NPC starts dialogue on interact |
 | **Tile-bound** | Broadcast to all extensions (self-filtered) | Welcome mat, floor switch, meeting room occupancy counter |
+| **Proximity-bound** | Point-to-point to the extension that owns the entity | Proximity alarm that rings while a player is within N tiles of an entity; NPC aggro radius |
+
+Proximity-bound triggers fire when a player enters or leaves a radius around
+the bound entity. Unlike tile-bound triggers (which require one trigger per
+tile in the area), a proximity trigger is a single registration with a
+`radius` in tiles. The kernel evaluates proximity every tick after movement:
+it checks all players against all proximity triggers using the spatial index,
+fires `proximity_enter` for new entries and `proximity_exit` for departures,
+and sends point-to-point notifications to the owning extension. The extension
+does not need to track a presence counter — the kernel handles enter/exit
+transitions.
 
 ### Action triggers (player-initiated, range/LOS validated)
 
@@ -412,6 +423,14 @@ Payload:
       "event": "interact"
     },
     {
+      "trigger_id": "alarm-1-proximity",
+      "category": "event",
+      "binding": "proximity",
+      "entity_id": "alarm-1",
+      "radius": 3,
+      "events": ["proximity_enter", "proximity_exit"]
+    },
+    {
       "trigger_id": "bow-shot-zone",
       "category": "action",
       "binding": "tile",
@@ -432,7 +451,7 @@ responds with a confirmation:
 ```
 {
   "status": "registered",
-  "trigger_ids": ["wall-lobby-north", "meeting-room-1-entrance", "welcome-mat-lobby", "waitress-1-interact", "bow-shot-zone"]
+  "trigger_ids": ["wall-lobby-north", "meeting-room-1-entrance", "welcome-mat-lobby", "waitress-1-interact", "alarm-1-proximity", "bow-shot-zone"]
 }
 ```
 
@@ -484,7 +503,8 @@ trigger refuses (`block` or `ask` reply with `block`), the move is blocked.
 ### Event trigger dispatch
 
 After a move succeeds, the kernel fires event triggers on the entered and
-exited tiles:
+exited tiles. Proximity-bound triggers are evaluated separately, once per
+tick after all movement is processed (see below).
 
 - **Entity-bound `notify`**: the kernel publishes to the owning extension
   (point-to-point):
@@ -516,6 +536,25 @@ exited tiles:
   ```
   Extensions self-filter: they receive the broadcast and ignore it if they
   don't care about that tile/event. This is fire-and-forget — no reply expected.
+
+- **Proximity-bound `notify`**: the kernel evaluates proximity triggers once
+  per tick, after all movement has been processed. For each proximity trigger,
+  it computes the set of players within `radius` tiles of the bound entity
+  (using the spatial index) and compares with the previous tick's set. For
+  each transition, it publishes to the owning extension (point-to-point):
+  ```
+  Subject: entity.<entity_id>.notify.proximity_enter
+  Payload:
+  {
+    "entity_id": "alarm-1",
+    "event": "proximity_enter",
+    "player_entity_id": "user-42",
+    "distance": 2
+  }
+  ```
+  Same for `proximity_exit`. This is fire-and-forget — no reply expected. The
+  kernel handles enter/exit transition detection; the extension does not need
+  to track a presence counter.
 
 ### Action trigger dispatch
 
@@ -588,8 +627,10 @@ When an extension crashes:
   to function without the extension being alive (the decision was pre-declared).
 - **`ask` triggers** will time out and fail closed (`default_on_timeout: block`).
   The extension is unreachable, so no reply arrives.
-- **`notify` triggers** are silently dropped (no one is listening on the
-  extension's subscriber).
+- **`notify` triggers** (tile-bound, entity-bound, proximity-bound) are
+  silently dropped (no one is listening on the extension's subscriber). The
+  kernel stops firing proximity evaluations for triggers owned by the crashed
+  extension.
 - **`action` triggers** are silently dropped (clicks on tiles with action
   triggers from the crashed extension will receive
   `ActionResultFrame{ ok: false, reason: "no_trigger" }`).
@@ -1065,7 +1106,7 @@ The client needs to know how to render custom components. The mechanism:
 |---|---|---|
 | `extension.<ext_id>.registered` | Registration response (with existing entities) | On registration |
 | `entity.<entity_id>.interact` | Forward client interaction (ExtensionOwner routing) | Event-driven |
-| `entity.<entity_id>.notify.<event>` | Entity-bound `notify` trigger dispatch (enter/exit/interact) | Event-driven |
+| `entity.<entity_id>.notify.<event>` | Entity-bound `notify` trigger dispatch (enter/exit/interact) and proximity-bound `notify` dispatch (proximity_enter/proximity_exit) | Event-driven |
 | `entity.<entity_id>.arrived` | Entity reached movement target | On arrival |
 | `entity.<entity_id>.despawned` | Entity was despawned (by World Sim or admin) | Event-driven |
 | `trigger.<trigger_id>.query` | `ask` access trigger query (does the kernel allow this move?) | On move attempt to a tile with an `ask` trigger |
@@ -1104,7 +1145,7 @@ an error on `extension.<ext_id>.error` and does not apply the command.
 | `batch_update` | All updates must pass validation. If any fails, the entire batch is rejected. |
 | `move` | Entity must exist and be owned by this extension. Target position must be reachable (access triggers on the target tile must allow). Speed must be within configured bounds. |
 | `register_components` | Component IDs must not collide with existing IDs. Protobuf schema must be valid. |
-| `register_triggers` | `trigger_id` must not already exist. Tiles must be on a valid map. Entity-bound triggers must reference an existing entity. `behavior` must be `block`, `allow`, `ask` (for access), `notify` (for event), or `click` (for action). Action triggers must specify `max_range` and `require_los`. |
+| `register_triggers` | `trigger_id` must not already exist. Tiles must be on a valid map. Entity-bound and proximity-bound triggers must reference an existing entity. `behavior` must be `block`, `allow`, `ask` (for access), `notify` (for event), or `click` (for action). Action triggers must specify `max_range` and `require_los`. Proximity-bound triggers must specify `radius` (in tiles, ≥ 1) and `events` (a list of `proximity_enter` and/or `proximity_exit`). |
 | `unregister_triggers` | `trigger_id` must exist and be owned by this extension. |
 | `register_zone` | `zone_id` must not already exist. Boundary tiles must be on a valid map. |
 
@@ -1266,15 +1307,20 @@ Extension: patrol-guard-v1
   ├── On startup:
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Spawn guard-1 at security desk
-  │     └── Register trigger: entity-bound notify (interact) on guard-1
+  │     └── Register triggers:
+  │           ├── entity-bound notify (interact) on guard-1
+  │           └── proximity-bound notify on guard-1 (radius: 4,
+  │               events: proximity_enter, proximity_exit)
   ├── Own pathfinding AI computes per-tick positions
   │     └── Direct update: entity.guard-1.update → Position (every tick)
   │         (kernel validates each position against trigger registry)
+  ├── On proximity_enter (player entered 4-tile radius):
+  │     └── If player is not on guard's guest list → ALERT
   ├── State machine:
   │     ├── IDLE → wait 30s → PATROL
   │     ├── PATROL → path to waypoint A → arrived → path to waypoint B
   │     │            → arrived → path to waypoint C → arrived → IDLE
-  │     └── ALERT (on interact with "report" type)
+  │     └── ALERT (on interact with "report" type, or proximity_enter)
   │           → path to reporting client → talk → IDLE
   ├── Watch KV: zones.<zone_id>.properties
   │     └── If zone becomes exclusive unexpectedly → ALERT

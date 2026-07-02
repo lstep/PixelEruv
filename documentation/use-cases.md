@@ -27,22 +27,29 @@ camera), an alarm rings. It keeps ringing as long as any player is within the
 
 ```
 1. Claim the alarm entity from Tiled (or spawn it).
-2. Compute all tiles within distance ≤ 3 of (10, 5):
-   - Chebyshev distance → 7×7 square = 49 tiles.
-   - Euclidean distance → ~25 tiles (tighter circle).
-3. Register tile-bound notify triggers for "enter" on all those tiles.
-4. Register tile-bound notify triggers for "exit" on the same tiles.
-5. Maintain an in-memory presence counter (entity_id → bool, or a set).
+2. Register a proximity-bound notify trigger:
+   - trigger_id: "alarm-1-proximity"
+   - category: "event", binding: "proximity"
+   - entity_id: "alarm-1"
+   - radius: 3 (tiles)
+   - events: ["proximity_enter", "proximity_exit"]
+3. Maintain an in-memory presence set (players currently in radius).
 ```
+
+That's it — one trigger registration. The kernel handles the per-tick
+proximity evaluation and fires `proximity_enter`/`proximity_exit` events.
 
 ### Runtime sequence
 
 ```
-Player A moves to tile (8, 4) — within 3 tiles of (10, 5)
-  → Kernel fires tile-bound notify enter on (8, 4)
-  → Broadcast: trigger.notify.tile.lobby.8.4
-      { event: "enter", entity_id: "A", tile: {x: 8, y: 4} }
-  → security-ext receives (self-filters — it cares about these tiles)
+Player A moves to tile (8, 4) — within 3 tiles of alarm at (10, 5)
+  → Tick 10: kernel evaluates proximity triggers (step 10 of tick loop)
+  → Kernel: range query around (10, 5) with radius 3 → finds A at (8, 4)
+  → Compare with previous tick's set (empty) → A is new
+  → Kernel publishes: entity.alarm-1.notify.proximity_enter
+      { entity_id: "alarm-1", event: "proximity_enter",
+        player_entity_id: "A", distance: 2 }
+  → security-ext receives proximity_enter
   → Extension: add A to presence set → set is non-empty
   → Extension sends UpdateComponent on alarm entity:
       AlarmBell { ringing: true }
@@ -50,14 +57,20 @@ Player A moves to tile (8, 4) — within 3 tiles of (10, 5)
   → All clients in AOI see the alarm start ringing
 
 Player A moves from (8, 4) to (8, 5) — still within radius
-  → Kernel fires exit on (8, 4), enter on (8, 5)
-  → security-ext receives both
-  → Presence set: A removed then re-added → still non-empty
+  → Tick 11: kernel re-evaluates proximity
+  → Range query finds A at (8, 5) → still in set (was in set last tick)
+  → No transition → no event fired
   → Alarm continues (no component update needed — already ringing)
 
 Player A moves from (7, 5) to (6, 5) — leaves the 3-tile radius
-  → Kernel fires exit on (7, 5)
-  → security-ext: remove A from presence set → set is empty
+  → Tick 12: kernel re-evaluates proximity
+  → Range query around (10, 5) with radius 3 → A at (6, 5) is NOT in range
+  → Compare with previous tick's set (contained A) → A departed
+  → Kernel publishes: entity.alarm-1.notify.proximity_exit
+      { entity_id: "alarm-1", event: "proximity_exit",
+        player_entity_id: "A", distance: 4 }
+  → security-ext receives proximity_exit
+  → Extension: remove A from presence set → set is empty
   → Extension sends UpdateComponent:
       AlarmBell { ringing: false }
   → All clients see the alarm stop
@@ -65,37 +78,23 @@ Player A moves from (7, 5) to (6, 5) — leaves the 3-tile radius
 
 ### Multiple players
 
-The presence set handles multiple players naturally. The alarm rings while
-the set is non-empty and stops when the last player leaves.
+The kernel fires `proximity_enter`/`proximity_exit` for each player
+transition independently. The extension maintains a presence set: the alarm
+rings while the set is non-empty and stops when the last player leaves.
 
-### Gap: no native proximity trigger
+### Moving alarm entity
 
-The current trigger system has no "proximity" trigger type. The extension
-must enumerate every tile in the radius and register a notify trigger on
-each. This works but has costs:
-
-- **49 triggers per alarm entity** (for a 3-tile Chebyshev radius). One
-  registration message can batch all tiles, but the spatial index holds 49
-  entries.
-- **Moving alarm entities** require unregistering all old tiles and
-  re-registering on new tiles on every move. Expensive if the entity moves
-  frequently.
-- **Presence tracking is extension-side.** The extension must maintain a
-  counter and handle enter/exit pairs correctly (a player moving within the
-  radius generates both an exit and an enter in the same tick).
-
-**Possible improvement (post-MVP):** A "proximity" trigger type that fires
-when a player enters/leaves a radius around an entity. The kernel already has
-the spatial index and all entity positions, so it can evaluate this in O(1)
-per entity per tick. This would reduce 49 triggers to 1 and move the
-proximity logic to the kernel. Not required for the MVP, but worth noting if
-proximity-based gameplay becomes common.
+If the alarm entity itself moves (e.g. a patrol drone with an alarm), the
+radius moves with it. The kernel re-evaluates from the entity's new position
+each tick. No trigger re-registration needed — the trigger is bound to the
+entity, not to fixed tiles.
 
 ### Verdict
 
-**Feasible with the current architecture.** Verbose but correct. The
-extension owns the proximity logic via tile-bound notify triggers and a
-presence counter.
+**Feasible with the current architecture.** The proximity-bound trigger type
+handles this cleanly: one trigger registration, no tile enumeration, no
+extension-side enter/exit pairing. The kernel evaluates proximity per-tick
+and fires transitions only on enter/exit.
 
 ---
 
@@ -393,6 +392,6 @@ approach.
 
 | Use case | Feasible? | Gap | Fix location |
 |---|---|---|---|
-| 1. Proximity alarm | Yes | No native proximity trigger — extension enumerates tiles + tracks presence | Post-MVP: consider adding a proximity trigger type |
+| 1. Proximity alarm | Yes | None — proximity-bound trigger handles it natively | — |
 | 2. Full isolation room | Partial | Visual isolation is soft only — AOI filter doesn't exclude entities in exclusive zones from non-members | `11-replication.md` §3.3 — add zone-aware AOI filter |
 | 3. Knock-to-join | Yes | Popup response wire protocol is open | `14-zones-and-interactions.md` §2 — resolve with transient entity + ActionFrame |

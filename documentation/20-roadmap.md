@@ -19,11 +19,13 @@ positional audio/video.
   extensions.
 - ECS core (`13-ecs-design.md`), component-based replication
   (`11-replication.md`), netcode (`12-netcode.md`).
-- Trigger system (access: block/allow/ask; event: notify; action: click with
-  range/LOS validation) — the mechanism by which extensions declare spatial
-  rules on tiles and entities (`18-extensions.md` §3a). Action triggers enable
-  click-based interactions (shooting, throwing, remote object interaction)
-  with kernel-validated range and line-of-sight.
+- Trigger system (access: block/allow/ask; event: notify tile-bound/entity-
+  bound/proximity-bound; action: click with range/LOS validation) — the
+  mechanism by which extensions declare spatial rules on tiles and entities
+  (`18-extensions.md` §3a). Action triggers enable click-based interactions
+  (shooting, throwing, remote object interaction) with kernel-validated range
+  and line-of-sight. Proximity-bound triggers enable radius-based detection
+  (alarms, NPC aggro) with a single registration per entity.
 - `ActionFrame` protocol — replaces `InteractFrame` with a unified frame for
   all player-initiated spatial actions (tile clicks and keypress interactions)
   (`07-network-protocol.md` §1.5).

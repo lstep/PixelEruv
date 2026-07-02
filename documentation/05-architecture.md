@@ -585,8 +585,9 @@ flowchart LR
   that own all gameplay behavior for non-player entities. Extensions can
   spawn entities (no type restrictions), update any component directly
   (per-tick or event-driven), register custom component types, register
-  triggers (access: block/allow/ask; event: notify; action: click) on tiles
-  and entities,
+  triggers (access: block/allow/ask; event: notify
+  tile-bound/entity-bound/proximity-bound; action: click) on tiles and
+  entities,
   register zones, handle client interactions, and read/write JetStream KV.
   The World Sim's role is spatial authority (ECS, spatial index, trigger
   registry, zone boundaries) and replication gateway (AOI, replication

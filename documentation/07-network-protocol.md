@@ -201,7 +201,7 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 | `entity.<entity_id>.interact.reply.<req_id>` | Extension | World Sim | Interaction response |
 | `entity.<entity_id>.arrived` | World Sim | Extension | Reached movement target |
 | `entity.<entity_id>.despawned` | World Sim | Extension | Entity removed |
-| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound notify trigger dispatch (enter/exit/interact) |
+| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound and proximity-bound notify dispatch (enter/exit/interact/proximity_enter/proximity_exit) |
 | `trigger.<trigger_id>.query` | World Sim | Extension (owning the trigger) | Access trigger query (for ask) |
 | `trigger.<trigger_id>.reply` | Extension | World Sim | Access trigger reply (for ask) |
 | `trigger.<trigger_id>.action` | World Sim | Extension (owning the trigger) | Action trigger dispatch (player clicked a tile) |
