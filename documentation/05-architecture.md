@@ -218,7 +218,8 @@ flowchart LR
       TriggerReg["Trigger registry<br/>(trigger_id → owner, behavior)"]
       ZoneReg["Zone registry<br/>(zone_id → boundaries)"]
       PlayerMove["Player movement<br/>(input → position, in-kernel)"]
-      TriggerEval["Trigger evaluator<br/>(block/allow cached, ask routed<br/>action: range/LOS validated)"]
+      TriggerEval["Trigger evaluator<br/>(access: block/allow cached, ask routed<br/>event: notify dispatch)"]
+      InputHandler["Input handler<br/>(ActionFrame → compute range/LOS/entities → broadcast)"]
     end
 
     subgraph WSRep["Replication layer"]
