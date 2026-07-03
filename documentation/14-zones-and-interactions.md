@@ -72,18 +72,82 @@ subsequent entrants must be admitted.
 
 > **[OPEN]** Exact wire messages for knock / allow / deny / invite — to be
 > added to `07-network-protocol.md` once the popup UX is settled. Likely a
-> `ControlFrame` variant server→client and an `InteractFrame` client→server.
+> `ControlFrame` variant server→client and an `ActionFrame` client→server
+> (the client sends an `ActionFrame` with `input_type: "click:left"` on the
+> popup entity's tile; the meeting extension self-filters based on
+> `entities_on_tile`).
 
 ---
 
 ## 3. Interaction routing
 
-Interactions are routed via NATS subjects (see `07-network-protocol.md` § 2).
-Client interactions arrive as `InteractFrame` and are routed to the owning
-extension based on the `ExtensionOwner` component or entity-bound notify
-triggers (see `18-extensions.md` § 6). The kernel does not have a
-`TriggerSystem` or `ZoneSystem` — all trigger and zone behavior is implemented
-by extensions.
+Interactions are handled by the input handler model (see `18-extensions.md`
+§3a). Client interactions arrive as `ActionFrame` (tile clicks and key presses
+— `InteractFrame` has been deprecated and replaced by `ActionFrame`). The
+kernel broadcasts each input event to all extensions that registered for that
+input type. There is no fallback routing:
+
+1. **Extensions registered for the input type?** → broadcast to all of them.
+   Each extension self-filters based on the payload (entities on tile,
+   adjacent entities, range, LOS, equipment) and replies asynchronously. All
+   replies are applied.
+2. **No extension registered?** → `ActionResultFrame{ ok: false, reason: "no_handler" }`.
+
+The kernel does not have a `TriggerSystem` or `ZoneSystem` — all trigger and
+zone behavior is implemented by extensions. The kernel only computes spatial
+data (range, LOS, entities) and broadcasts.
+
+## 3a. Input handlers
+
+Input handlers are a third trigger category (alongside access and event
+triggers). They are registered by extensions for specific input types
+(`click:left`, `click:right`, `key:E`, etc.) and fire when a player triggers
+that input. Unlike access triggers (which gate movement) and event triggers
+(which notify on enter/exit), input handlers are **player-initiated** and
+**broadcast-based** — the kernel does not gate, it provides data (range, LOS,
+entities, equipment) and lets each extension decide.
+
+### Use cases
+
+- **Ranged actions**: shooting a bow, throwing an object at a distant tile.
+  The extension checks `range` and `has_los` from the payload.
+- **Adjacent interactions**: clicking a tile next to the player to interact
+  with whatever is on it. The extension checks `entities_on_tile`.
+- **Key-based interactions**: pressing E to interact with adjacent entities.
+  The extension checks `adjacent_entities`.
+- **Equipment-dependent actions**: the action depends on what the player is
+  holding (e.g. bow → spawn arrow, empty-handed → no action). The kernel
+  includes an equipment snapshot in the dispatch payload.
+
+### Registration
+
+See `18-extensions.md` §3a for the full registration protocol. An input
+handler declares:
+
+```
+{
+  "trigger_id": "combat-click-left",
+  "category": "action",
+  "binding": "input",
+  "input": "click:left",
+  "owner_extension_id": "combat-ext"
+}
+```
+
+### Kernel dispatch
+
+When a player triggers an input event:
+
+1. **Compute contextual data**: for clicks — `target_tile`, `entities_on_tile`,
+   `range` (tile distance), `has_los` (Bresenham raycast). For key presses —
+   `adjacent_entities`. Always — `equipment` snapshot.
+2. **Broadcast** to all extensions registered for that input type.
+3. **Collect replies** within a timeout. All replies are applied (updates +
+   `consume_items`). Single `ActionResultFrame` sent to the client.
+4. **No extension registered** → `ActionResultFrame{ ok: false, reason: "no_handler" }`.
+5. **No reply within timeout** → `ActionResultFrame{ ok: false, reason: "timeout" }`.
+
+See `18-extensions.md` §3a and `10-world-simulator.md` §5f for details.
 
 ---
 

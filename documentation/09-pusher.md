@@ -86,6 +86,7 @@ via NATS. See `10-world-simulator.md` and `18-extensions.md`.
 | Subscribe client input from NATS | ❌ | ✅ | ❌ |
 | Player avatar movement (input → position, in-kernel) | ❌ | ✅ | ❌ |
 | Access trigger evaluation (block/allow cached, ask routed) | ❌ | ✅ | ❌ |
+| Input handler dispatch (range/LOS computed, broadcast to extensions) | ❌ | ✅ | ❌ |
 | Event trigger dispatch (notify to extensions) | ❌ | ✅ | ❌ |
 | Neutral validation (collision, zone access, bounds, schema) | ❌ | ✅ | ❌ |
 | Read / write JetStream KV (player positions; reads zone state) | ❌ | ✅ | ❌ (kernel-owned keys) |
@@ -102,7 +103,7 @@ via NATS. See `10-world-simulator.md` and `18-extensions.md`.
 | Zone behavior (exclusivity, knock-to-join, timers) | ❌ | ❌ | ✅ |
 | AI / behavior trees / LLM calls | ❌ | ❌ | ✅ |
 | Custom game mechanics | ❌ | ❌ | ✅ |
-| Register triggers (access + event) on tiles/entities | ❌ | ❌ | ✅ |
+| Register triggers (access + event + action) on tiles/entities | ❌ | ❌ | ✅ |
 | Register zones (boundaries + properties) | ❌ | ❌ | ✅ |
 | Spawn/despawn extension entities | ❌ | ❌ | ✅ |
 | Read / write JetStream KV (extension-private + shared keys) | ❌ | ❌ | ✅ |

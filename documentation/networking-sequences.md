@@ -108,12 +108,14 @@ sequenceDiagram
 
 ---
 
-## 3. Interaction with extension routing
+## 3. Interaction with input handler broadcast
 
-An `InteractFrame` targets an entity the client learned from a prior
-`SpawnEntity`. The World Simulator validates proximity, then routes the
-interaction to the owning extension based on the `ExtensionOwner` component
-or entity-bound `notify` triggers. The kernel has no TriggerSystem — all
+An `ActionFrame` carries an `input_type` (e.g. `click:left`, `key:E`) and
+optional target tile coordinates (for clicks). The World Simulator computes
+contextual data (range, LOS, entities on tile / adjacent entities, equipment
+snapshot) and broadcasts to all extensions that registered for that input
+type. Each extension self-filters and replies asynchronously. All replies
+within the timeout are applied. The kernel has no TriggerSystem — all
 interaction behavior is in extensions.
 
 ```mermaid
@@ -123,28 +125,34 @@ sequenceDiagram
     participant P as Pusher
     participant N as NATS
     participant W as WorldSim
-    participant E as Extension
+    participant E as Extension(s)
 
-    B->>P: InteractFrame { target_entity_id, interaction_type, params }
+    B->>P: ActionFrame { seq, input_type: "click:left", target_map_id, target_x, target_y, params }
     P->>N: publish client.<client_id>.input
-    N->>W: deliver InteractFrame
+    N->>W: deliver ActionFrame
 
-    W->>W: validate proximity (AOI radius)
+    W->>W: look up extensions registered for "click:left"
 
-    alt validation fails
-        W-->>N: no reply on hot path — client sees no effect
-        Note over B: server is authoritative — ignored input is silent
-    else validation passes
-        alt entity has ExtensionOwner or notify trigger
-            W->>N: publish entity.<entity_id>.interact { req_id, params }
-            N->>E: deliver interaction
-            E->>E: run custom logic
-            E->>N: publish entity.<entity_id>.interact.reply.<req_id>
+    alt no extension registered
+        W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: false, reason: "no_handler" })
+        N->>P: deliver batch
+        P-->>B: ServerFrame.action_result
+    else extensions registered
+        W->>W: compute range, LOS, entities_on_tile, equipment snapshot
+        W->>N: publish input.click.left { request_id, source_entity_id, target_tile, entities_on_tile, has_los, range, equipment, reply_to }
+        N->>E: deliver to all registered extensions
+
+        par Each extension self-filters and replies
+            E->>E: self-filter (check entities_on_tile, equipment, has_los, etc.)
+            E->>N: publish input.click.left.reply.<req_id> { extension_id, updates, consume_items }
             N->>W: deliver reply
-            Note over W: apply reply → dirty flags
-        else no ExtensionOwner and no notify trigger
-            Note over W: non-interactive entity — interaction dropped
         end
+
+        Note over W: collect all replies within timeout
+        W->>W: apply all updates + consume_items → dirty flags
+        W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: true })
+        N->>P: deliver batch
+        P-->>B: ServerFrame.action_result
     end
 
     Note over W: result flows back to client via the §2 replication loop

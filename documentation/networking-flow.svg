@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 1280 830" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
   <title>Pixel Eruv — Networking Flow (WebSocket + Protobuf + ECS Replication)</title>
-  <desc>End-to-end networking flow. Forward lane (client to server): Browser sends ClientFrame protobuf over WSS via Traefik to the Pusher, which validates the token, assigns a client_id, and forwards Input/Interact frames to NATS Core; the World Simulator applies them authoritatively in its tick loop. Return lane (server to client): the World Simulator replication pipeline (dirty flags, per-tick scheduler, AOI filter, delta encoder, protobuf component serializer) emits a per-client ReplicationBatch of SpawnEntity/UpdateComponent/DestroyEntity/PlayAnimation, published to NATS, forwarded by the Pusher as a single WebSocket frame, decoded by the Browser into its local entity store.</desc>
+  <desc>End-to-end networking flow. Forward lane (client to server): Browser sends ClientFrame protobuf over WSS via Traefik to the Pusher, which validates the token, assigns a client_id, and forwards Input/ActionFrame frames to NATS Core; the World Simulator applies them authoritatively in its tick loop. Return lane (server to client): the World Simulator replication pipeline (dirty flags, per-tick scheduler, AOI filter, delta encoder, protobuf component serializer) emits a per-client ReplicationBatch of SpawnEntity/UpdateComponent/DestroyEntity/PlayAnimation, published to NATS, forwarded by the Pusher as a single WebSocket frame, decoded by the Browser into its local entity store.</desc>
 
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -58,14 +58,14 @@
     <rect x="30" y="68" width="330" height="56" rx="6" fill="#fde68a" stroke="#d97706" stroke-width="1.2"/>
     <text x="44" y="86" font-size="11" font-weight="700" fill="#92400e">ClientFrame  (client → server)</text>
     <text x="44" y="103" font-size="10" fill="#b45309" font-family="ui-monospace, 'SF Mono', Menlo, monospace">oneof payload {</text>
-    <text x="60" y="117" font-size="10" fill="#b45309" font-family="ui-monospace, 'SF Mono', Menlo, monospace">auth · input · interact · token_refresh · ping</text>
+    <text x="60" y="117" font-size="10" fill="#b45309" font-family="ui-monospace, 'SF Mono', Menlo, monospace">auth · input · action · token_refresh · ping</text>
   </g>
 
   <g>
     <rect x="920" y="68" width="330" height="56" rx="6" fill="#fde68a" stroke="#d97706" stroke-width="1.2"/>
     <text x="934" y="86" font-size="11" font-weight="700" fill="#92400e">ServerFrame  (server → client)</text>
     <text x="934" y="103" font-size="10" fill="#b45309" font-family="ui-monospace, 'SF Mono', Menlo, monospace">oneof payload {</text>
-    <text x="950" y="117" font-size="10" fill="#b45309" font-family="ui-monospace, 'SF Mono', Menlo, monospace">replication · auth_result · error · pong · control</text>
+    <text x="950" y="117" font-size="10" fill="#b45309" font-family="ui-monospace, 'SF Mono', Menlo, monospace">replication · auth_result · action_result · error · pong · control</text>
   </g>
 
   <!-- ==========================================
@@ -174,7 +174,7 @@
     <rect x="694" y="252" width="102" height="44" rx="5" fill="#f1f5f9" stroke="#64748b" stroke-width="1"/>
     <text x="745" y="268" text-anchor="middle" font-size="9" font-family="ui-monospace, monospace" fill="#334155">client.&lt;id&gt;.input</text>
     <text x="745" y="282" text-anchor="middle" font-size="9" font-family="ui-monospace, monospace" fill="#334155">client.connected</text>
-    <text x="745" y="294" text-anchor="middle" font-size="9" fill="#64748b">InputFrame / Interact / triggers</text>
+    <text x="745" y="294" text-anchor="middle" font-size="9" fill="#64748b">InputFrame / ActionFrame / triggers</text>
 
     <line x1="690" y1="325" x2="800" y2="325" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
     <text x="745" y="338" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">no direct RPC</text>
@@ -205,7 +205,7 @@
     <text x="864" y="241" font-size="10" fill="#312e81">• apply in tick loop</text>
     <text x="864" y="256" font-size="10" fill="#312e81">• PlayerMovement</text>
     <text x="864" y="271" font-size="10" fill="#312e81">  + trigger eval</text>
-    <text x="864" y="286" font-size="10" fill="#312e81">• InteractFrame →</text>
+    <text x="864" y="286" font-size="10" fill="#312e81">• ActionFrame →</text>
     <text x="876" y="300" font-size="10" fill="#312e81">  route to extension</text>
     <rect x="864" y="310" width="168" height="34" rx="5" fill="#ddd6fe" stroke="#7c3aed" stroke-width="1"/>
     <text x="948" y="326" text-anchor="middle" font-size="10" font-weight="600" fill="#312e81">echo seq in replication</text>
@@ -284,7 +284,7 @@
     <!-- arrows -->
     <text x="16" y="66" font-size="11" font-weight="600" fill="#334155">Flows:</text>
     <line x1="86" y1="62" x2="126" y2="62" stroke="#4338ca" stroke-width="2.5" marker-end="url(#arr-indigo)"/>
-    <text x="134" y="66" font-size="10" fill="#334155">forward: ClientFrame (auth · input · interact · ping)</text>
+    <text x="134" y="66" font-size="10" fill="#334155">forward: ClientFrame (auth · input · action · ping)</text>
     <line x1="560" y1="62" x2="600" y2="62" stroke="#16a34a" stroke-width="2.5" marker-end="url(#arr-green)"/>
     <text x="608" y="66" font-size="10" fill="#334155">return: ServerFrame → ReplicationBatch (spawn · update · destroy · animation)</text>
   </g>

@@ -1,0 +1,193 @@
+<svg width="100%" viewBox="0 0 980 760" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Pixel Eruv — Trigger System</title>
+  <desc>The three trigger categories: access (block/allow/ask, gates movement), event (tile/entity/proximity notify, fire-and-forget), and action (input handlers for click/key types, broadcast to all registered extensions with range/LOS data). Each column shows what the kernel evaluates and what the extension handles, plus NATS round-trip and crash behavior.</desc>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#475569"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="980" height="760" fill="#fafaf9"/>
+
+  <!-- Title -->
+  <text x="490" y="28" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">Trigger System</text>
+  <text x="490" y="46" text-anchor="middle" font-size="13" fill="#64748b">Three categories · kernel evaluates · extensions decide behavior</text>
+
+  <!-- ============================================ -->
+  <!-- Row labels (left margin) -->
+  <!-- ============================================ -->
+  <text x="15" y="100" font-size="11" font-weight="700" fill="#64748b" letter-spacing="0.05em">CATEGORY</text>
+  <text x="15" y="240" font-size="11" font-weight="700" fill="#64748b" letter-spacing="0.05em">KERNEL</text>
+  <text x="15" y="470" font-size="11" font-weight="700" fill="#64748b" letter-spacing="0.05em">EXTENSION</text>
+
+  <!-- ============================================ -->
+  <!-- Column 1: ACCESS (red/risk) -->
+  <!-- ============================================ -->
+
+  <!-- Category header -->
+  <rect x="100" y="62" width="260" height="80" rx="8" fill="#fecaca" stroke="#475569" stroke-width="1"/>
+  <text x="230" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Access Triggers</text>
+  <text x="230" y="98" text-anchor="middle" font-size="12" fill="#64748b">Gate movement · on move attempt</text>
+  <text x="230" y="118" text-anchor="middle" font-size="12" font-weight="600" fill="#0f172a">block · allow · ask</text>
+  <text x="230" y="134" text-anchor="middle" font-size="12" fill="#64748b">binding: tile</text>
+
+  <!-- Kernel box -->
+  <rect x="100" y="200" width="260" height="210" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1"/>
+  <text x="230" y="220" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Kernel evaluates</text>
+  <line x1="115" y1="228" x2="345" y2="228" stroke="#475569" stroke-width="0.5" opacity="0.4"/>
+  <text x="115" y="245" font-size="12" font-weight="600" fill="#0f172a">block</text>
+  <text x="115" y="260" font-size="12" fill="#64748b">Cache in spatial index</text>
+  <text x="115" y="274" font-size="12" fill="#64748b">Refuse move locally</text>
+  <text x="115" y="288" font-size="12" fill="#64748b">No NATS round-trip</text>
+  <line x1="115" y1="298" x2="345" y2="298" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="115" y="313" font-size="12" font-weight="600" fill="#0f172a">allow</text>
+  <text x="115" y="328" font-size="12" fill="#64748b">Cache in spatial index</text>
+  <text x="115" y="342" font-size="12" fill="#64748b">Permit move locally</text>
+  <text x="115" y="356" font-size="12" fill="#64748b">No NATS round-trip</text>
+  <line x1="115" y1="366" x2="345" y2="366" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="115" y="381" font-size="12" font-weight="600" fill="#0f172a">ask</text>
+  <text x="115" y="396" font-size="12" fill="#64748b">Publish query to extension</text>
+  <text x="115" y="410" font-size="12" fill="#64748b">Defer move · wait for reply</text>
+
+  <!-- Extension box -->
+  <rect x="100" y="450" width="260" height="130" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1"/>
+  <text x="230" y="470" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Extension handles</text>
+  <line x1="115" y1="478" x2="345" y2="478" stroke="#475569" stroke-width="0.5" opacity="0.4"/>
+  <text x="115" y="495" font-size="12" font-weight="600" fill="#0f172a">block / allow</text>
+  <text x="115" y="510" font-size="12" fill="#64748b">Not contacted — pre-declared</text>
+  <text x="115" y="524" font-size="12" fill="#64748b">at registration time</text>
+  <line x1="115" y1="534" x2="345" y2="534" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="115" y="549" font-size="12" font-weight="600" fill="#0f172a">ask</text>
+  <text x="115" y="564" font-size="12" fill="#64748b">Reply: allow or block</text>
+  <text x="115" y="578" font-size="12" fill="#64748b">(within ttl_ms, else fail closed)</text>
+
+  <!-- Arrows: col 1 -->
+  <line x1="230" y1="142" x2="230" y2="196" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <line x1="230" y1="410" x2="230" y2="446" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+
+  <!-- ============================================ -->
+  <!-- Column 2: EVENT (teal/storage) -->
+  <!-- ============================================ -->
+
+  <!-- Category header -->
+  <rect x="390" y="62" width="260" height="80" rx="8" fill="#99f6e4" stroke="#475569" stroke-width="1"/>
+  <text x="520" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Event Triggers</text>
+  <text x="520" y="98" text-anchor="middle" font-size="12" fill="#64748b">Notifications · fire-and-forget</text>
+  <text x="520" y="118" text-anchor="middle" font-size="12" font-weight="600" fill="#0f172a">tile · entity · proximity</text>
+  <text x="520" y="134" text-anchor="middle" font-size="12" fill="#64748b">events: enter / exit / proximity_*</text>
+
+  <!-- Kernel box -->
+  <rect x="390" y="200" width="260" height="210" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1"/>
+  <text x="520" y="220" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Kernel dispatches</text>
+  <line x1="405" y1="228" x2="635" y2="228" stroke="#475569" stroke-width="0.5" opacity="0.4"/>
+  <text x="405" y="245" font-size="12" font-weight="600" fill="#0f172a">tile-bound</text>
+  <text x="405" y="260" font-size="12" fill="#64748b">On enter/exit of a tile</text>
+  <text x="405" y="274" font-size="12" fill="#64748b">Broadcast to all extensions</text>
+  <text x="405" y="288" font-size="12" fill="#64748b">(self-filtered)</text>
+  <line x1="405" y1="298" x2="635" y2="298" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="405" y="313" font-size="12" font-weight="600" fill="#0f172a">entity-bound</text>
+  <text x="405" y="328" font-size="12" fill="#64748b">On enter/exit</text>
+  <text x="405" y="342" font-size="12" fill="#64748b">Point-to-point to owner</text>
+  <line x1="405" y1="352" x2="635" y2="352" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="405" y="367" font-size="12" font-weight="600" fill="#0f172a">proximity-bound</text>
+  <text x="405" y="382" font-size="12" fill="#64748b">Per-tick: range query</text>
+  <text x="405" y="396" font-size="12" fill="#64748b">around entity (radius N)</text>
+
+  <!-- Extension box -->
+  <rect x="390" y="450" width="260" height="130" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1"/>
+  <text x="520" y="470" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Extension handles</text>
+  <line x1="405" y1="478" x2="635" y2="478" stroke="#475569" stroke-width="0.5" opacity="0.4"/>
+  <text x="405" y="495" font-size="12" font-weight="600" fill="#0f172a">All bindings</text>
+  <text x="405" y="510" font-size="12" fill="#64748b">Receive notification</text>
+  <text x="405" y="524" font-size="12" fill="#64748b">No reply expected</text>
+  <text x="405" y="538" font-size="12" fill="#64748b">(fire-and-forget)</text>
+  <line x1="405" y1="548" x2="635" y2="548" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="405" y="563" font-size="12" fill="#64748b">Self-filter tile-bound broadcasts</text>
+  <text x="405" y="577" font-size="12" fill="#64748b">Track presence for proximity (optional)</text>
+
+  <!-- Arrows: col 2 -->
+  <line x1="520" y1="142" x2="520" y2="196" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <line x1="520" y1="410" x2="520" y2="446" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+
+  <!-- ============================================ -->
+  <!-- Column 3: ACTION (blue/input) -->
+  <!-- ============================================ -->
+
+  <!-- Category header -->
+  <rect x="680" y="62" width="260" height="80" rx="8" fill="#bfdbfe" stroke="#475569" stroke-width="1"/>
+  <text x="810" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Input Handlers</text>
+  <text x="810" y="98" text-anchor="middle" font-size="12" fill="#64748b">Player-initiated · broadcast to all registered</text>
+  <text x="810" y="118" text-anchor="middle" font-size="12" font-weight="600" fill="#0f172a">click:left · click:right · key:E · ...</text>
+  <text x="810" y="134" text-anchor="middle" font-size="12" fill="#64748b">binding: input · via ActionFrame</text>
+
+  <!-- Kernel box -->
+  <rect x="680" y="200" width="260" height="210" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1"/>
+  <text x="810" y="220" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Kernel computes + broadcasts</text>
+  <line x1="695" y1="228" x2="925" y2="228" stroke="#475569" stroke-width="0.5" opacity="0.4"/>
+  <text x="695" y="245" font-size="12" font-weight="600" fill="#0f172a">Compute data</text>
+  <text x="695" y="260" font-size="12" fill="#64748b">range (clicks), has_los (clicks)</text>
+  <text x="695" y="274" font-size="12" fill="#64748b">entities_on_tile (clicks)</text>
+  <text x="695" y="288" font-size="12" fill="#64748b">adjacent_entities (keys)</text>
+  <line x1="695" y1="298" x2="925" y2="298" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="695" y="313" font-size="12" font-weight="600" fill="#0f172a">No gating</text>
+  <text x="695" y="328" font-size="12" fill="#64748b">Kernel provides data,</text>
+  <text x="695" y="342" font-size="12" fill="#64748b">extensions self-filter</text>
+  <line x1="695" y1="352" x2="925" y2="352" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="695" y="367" font-size="12" font-weight="600" fill="#0f172a">Broadcast</text>
+  <text x="695" y="382" font-size="12" fill="#64748b">To all registered extensions</text>
+  <text x="695" y="396" font-size="12" fill="#64748b">+ equipment snapshot</text>
+
+  <!-- Extension box -->
+  <rect x="680" y="450" width="260" height="130" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1"/>
+  <text x="810" y="470" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Extension handles</text>
+  <line x1="695" y1="478" x2="925" y2="478" stroke="#475569" stroke-width="0.5" opacity="0.4"/>
+  <text x="695" y="495" font-size="12" font-weight="600" fill="#0f172a">Self-filter</text>
+  <text x="695" y="510" font-size="12" fill="#64748b">Check entities_on_tile,</text>
+  <text x="695" y="524" font-size="12" fill="#64748b">equipment, has_los, range</text>
+  <text x="695" y="538" font-size="12" fill="#64748b">Ignore if not relevant</text>
+  <line x1="695" y1="548" x2="925" y2="548" stroke="#475569" stroke-width="0.5" opacity="0.3"/>
+  <text x="695" y="563" font-size="12" font-weight="600" fill="#0f172a">Reply (async)</text>
+  <text x="695" y="578" font-size="12" fill="#64748b">updates + consume_items</text>
+  <text x="695" y="592" font-size="12" fill="#64748b">All replies applied</text>
+
+  <!-- Arrows: col 3 -->
+  <line x1="810" y1="142" x2="810" y2="196" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <line x1="810" y1="410" x2="810" y2="446" stroke="#475569" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+
+  <!-- ============================================ -->
+  <!-- NATS round-trip panel -->
+  <!-- ============================================ -->
+  <rect x="100" y="610" width="840" height="120" rx="8" fill="none" stroke="#475569" stroke-width="1" stroke-dasharray="6 5" opacity="0.5"/>
+  <text x="520" y="632" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">NATS round-trip?</text>
+
+  <text x="115" y="655" font-size="12" font-weight="600" fill="#0f172a">Access</text>
+  <text x="115" y="670" font-size="12" fill="#64748b">block / allow: No (cached locally)</text>
+  <text x="115" y="684" font-size="12" fill="#64748b">ask: Yes (query → reply, within ttl_ms)</text>
+  <text x="115" y="698" font-size="12" fill="#64748b">Crash: block cached · ask fails closed</text>
+  <text x="115" y="712" font-size="12" fill="#64748b">→ movement still works for block/allow</text>
+
+  <text x="405" y="655" font-size="12" font-weight="600" fill="#0f172a">Event</text>
+  <text x="405" y="670" font-size="12" fill="#64748b">tile: broadcast (1 msg, no reply)</text>
+  <text x="405" y="684" font-size="12" fill="#64748b">entity: point-to-point (1 msg, no reply)</text>
+  <text x="405" y="698" font-size="12" fill="#64748b">proximity: point-to-point (per-tick eval)</text>
+  <text x="405" y="712" font-size="12" fill="#64748b">Crash: silently dropped</text>
+
+  <text x="695" y="655" font-size="12" font-weight="600" fill="#0f172a">Action</text>
+  <text x="695" y="670" font-size="12" fill="#64748b">No handler: No (local reject)</text>
+  <text x="695" y="684" font-size="12" fill="#64748b">Handler exists: Yes (broadcast → replies)</text>
+  <text x="695" y="698" font-size="12" fill="#64748b">Crash: no_handler (if no other ext)</text>
+  <text x="695" y="712" font-size="12" fill="#64748b">→ all replies applied, no conflict</text>
+
+  <!-- ============================================ -->
+  <!-- Legend -->
+  <!-- ============================================ -->
+  <rect x="100" y="62" width="14" height="14" rx="3" fill="#fecaca" stroke="#475569" stroke-width="1"/>
+  <text x="120" y="73" font-size="12" fill="#64748b">Access</text>
+  <rect x="390" y="62" width="14" height="14" rx="3" fill="#99f6e4" stroke="#475569" stroke-width="1"/>
+  <text x="410" y="73" font-size="12" fill="#64748b">Event</text>
+  <rect x="680" y="62" width="14" height="14" rx="3" fill="#bfdbfe" stroke="#475569" stroke-width="1"/>
+  <text x="700" y="73" font-size="12" fill="#64748b">Input</text>
+
+</svg>

@@ -113,7 +113,7 @@ flowchart TB
   %% =========================
   %% Extensions (peer simulators)
   %% =========================
-  Extensions <==>|register · spawn ·<br/>update · interact ·<br/>KV watch/write| NATS
+  Extensions <==>|register · spawn ·<br/>update · triggers · input ·<br/>KV watch/write| NATS
 
   %% =========================
   %% Media wiring
@@ -220,9 +220,12 @@ entities.
 
 - Register with the World Sim via NATS, spawn entities in the ECS (no type
   restrictions).
-- Register triggers (access: block/allow/ask; event: notify) on tiles and
-  entities. The kernel caches block/allow triggers locally and routes ask
-  triggers to the extension at runtime.
+- Register triggers (access: block/allow/ask; event: notify
+  tile-bound/entity-bound/proximity-bound; action: input handlers for
+  click/key types) on tiles, entities, or input types. The kernel caches
+  block/allow triggers locally, routes ask triggers to the extension at
+  runtime, broadcasts input events to all registered extensions with range/LOS
+  data and an equipment snapshot, and evaluates proximity triggers per-tick.
 - Register zones (polygon regions with associated triggers). Zone boundaries
   are stored in the kernel; zone behavior is implemented by the extension via
   triggers.
@@ -321,10 +324,12 @@ Browser → Traefik → Pusher (WebSocket)
 ### B. A user closes a door (activates an exclusive zone)
 
 ```
-Browser → Pusher: "close door"
+Browser → Pusher: ActionFrame (click door tile, input_type: "click:left")
          ↳ Pusher forwards input to NATS
-         ↳ World Simulator receives input:
-            • forwards interaction to the owning extension (e.g. doors extension). The extension updates the door component, writes zone state to KV, and may register/unregister block triggers on the zone boundary tiles.
+         ↳ World Simulator receives ActionFrame:
+            • broadcasts to all extensions registered for "click:left"
+            • doors extension self-filters: sees door entity in entities_on_tile
+            • doors extension updates the door component, writes zone state to KV, and may register/unregister block triggers on the zone boundary tiles.
             • encodes replication batch (zone state change)
             • publishes batch to NATS → Pusher → clients (visual filter)
          ↳ NATS kv.Watch fires:

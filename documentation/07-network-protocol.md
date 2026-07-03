@@ -31,7 +31,7 @@ message ClientFrame {        // client → server
   oneof payload {
     AuthFrame auth = 1;
     InputFrame input = 2;
-    InteractFrame interact = 3;
+    ActionFrame action = 3;             // clicks + key presses (replaces InteractFrame)
     TokenRefreshFrame token_refresh = 4;
     PingFrame ping = 5;
   }
@@ -44,6 +44,7 @@ message ServerFrame {        // server → client
     ErrorFrame error = 3;
     PongFrame pong = 4;
     ControlFrame control = 5;           // LiveKit token, kick, etc.
+    ActionResultFrame action_result = 6; // action validation result (range/LOS/no-target)
   }
 }
 ```
@@ -59,8 +60,8 @@ message ServerFrame {        // server → client
      and sends AuthResultFrame { client_id, ok: true }.
 4. World Simulator provisions the entity and sends the initial snapshot
    (ReplicationBatch of SpawnEntity messages) via NATS → Pusher → client.
-5. Steady state: client sends InputFrame / InteractFrame; server sends
-   ReplicationBatch per tick.
+5. Steady state: client sends InputFrame / ActionFrame; server sends
+   ReplicationBatch (and occasionally ActionResultFrame) per tick.
 ```
 
 If no `AuthFrame` arrives within **5 seconds** of the WebSocket upgrade, the
@@ -94,10 +95,19 @@ message InputState {
   // action keys, etc.
 }
 
-message InteractFrame {
-  string target_entity_id = 1;     // the entity being interacted with
-  string interaction_type = 2;     // "talk", "sit", "open", "use", ...
-  bytes params = 3;                // optional interaction-specific payload (e.g. chat text)
+message ActionFrame {
+  uint32 seq = 1;                  // client action sequence number (for reconciliation)
+  string input_type = 2;           // "click:left", "click:right", "click:double", "key:E", etc.
+  string target_map_id = 3;        // the map the clicked tile is on (empty for key presses)
+  uint32 target_x = 4;             // x coordinate of the clicked tile (0 for key presses)
+  uint32 target_y = 5;             // y coordinate of the clicked tile (0 for key presses)
+  bytes params = 6;                // optional action-specific payload (e.g. interaction_type override)
+}
+
+message ActionResultFrame {
+  uint32 seq = 1;                  // matches the ActionFrame seq
+  bool ok = 2;                     // whether the action was accepted
+  string reason = 3;               // "no_handler", "timeout", "rejected"
 }
 
 message TokenRefreshFrame {
@@ -128,15 +138,26 @@ message ControlFrame {
   echoes the processed `seq` back in replication so the client can reconcile
   its prediction (see `12-netcode.md`).
 
-### 1.5 Interaction model
+### 1.5 Action model (replaces InteractFrame)
 
-- A client interacts with an entity by sending `InteractFrame` with the
-  `target_entity_id` it learned from a prior `SpawnEntity` message.
-- The Pusher forwards it to NATS. The World Simulator validates the
-  interaction (proximity) and routes it to the owning extension based on the
-  `ExtensionOwner` component or entity-bound notify triggers (see
-  `18-extensions.md` § 6). The kernel does not have a `TriggerSystem` — all
-  trigger and interaction behavior is implemented by extensions.
+- A client sends `ActionFrame` whenever the player clicks a tile or presses an
+  input key. The `input_type` field identifies the input (`click:left`,
+  `click:right`, `click:double`, `key:E`, etc.). For key presses, the target
+  tile fields are empty — the kernel computes adjacent entities from the
+  player's position.
+- The Pusher forwards it to NATS (pass-through). The World Simulator computes
+  contextual data (range, LOS, entities on tile / adjacent entities, equipment
+  snapshot) and broadcasts to all extensions that registered for that input
+  type:
+  1. **No extension registered?** → `ActionResultFrame{ ok: false, reason: "no_handler" }`.
+  2. **Extensions registered** → broadcast to all of them. Each extension
+     self-filters and replies asynchronously. The kernel collects all replies
+     within a timeout, applies them all, and sends a single
+     `ActionResultFrame{ ok: true }` to the client.
+  3. **No reply within timeout** → `ActionResultFrame{ ok: false, reason: "timeout" }`.
+- The kernel does not have a `TriggerSystem` — all trigger and interaction
+  behavior is implemented by extensions. The kernel only computes spatial data
+  (range, LOS, entities) and broadcasts.
 
 ### 1.6 WebSocket close codes
 
@@ -158,7 +179,7 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 
 | Subject | Publisher | Subscriber | Payload |
 |---|---|---|---|
-| `client.<client_id>.input` | Pusher | World Sim (owning shard) | `InputFrame` / `InteractFrame` |
+| `client.<client_id>.input` | Pusher | World Sim (owning shard) | `InputFrame` / `ActionFrame` |
 | `client.<client_id>.replication` | World Sim | Pusher (owning the client) | `ReplicationBatch` |
 | `client.<client_id>.control` | LiveKit Bridge | Pusher | `ControlFrame` (LiveKit token) |
 | `client.connected` | Pusher | World Sim | `{client_id, sub, pusher_instance}` |
@@ -177,13 +198,13 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 |---|---|---|---|
 | `entity.<entity_id>.update` | Extension | World Sim | Direct component update |
 | `entity.<entity_id>.move` | Extension | World Sim | Movement target |
-| `entity.<entity_id>.interact` | World Sim | Extension | Forwarded client interaction |
-| `entity.<entity_id>.interact.reply.<req_id>` | Extension | World Sim | Interaction response |
 | `entity.<entity_id>.arrived` | World Sim | Extension | Reached movement target |
 | `entity.<entity_id>.despawned` | World Sim | Extension | Entity removed |
-| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound notify trigger dispatch (enter/exit/interact) |
+| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound and proximity-bound notify dispatch (enter/exit/proximity_enter/proximity_exit) |
 | `trigger.<trigger_id>.query` | World Sim | Extension (owning the trigger) | Access trigger query (for ask) |
 | `trigger.<trigger_id>.reply` | Extension | World Sim | Access trigger reply (for ask) |
+| `input.<input_type>` | World Sim | Extensions (registered for that input type) | Input handler dispatch (player clicked or pressed a key; includes range, LOS, entities, equipment) |
+| `input.<input_type>.reply.<req_id>` | Extension | World Sim | Input handler response (updates, consume_items) |
 | `trigger.notify.tile.<map_id>.<x>.<y>` | World Sim | All extensions (broadcast) | Tile-bound notify trigger dispatch |
 
 ### 2.4 Extension lifecycle subjects
@@ -199,7 +220,7 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 | `extension.<ext_id>.despawn` | Extension | World Sim | Despawn entity |
 | `extension.<ext_id>.batch_update` | Extension | World Sim | Batched updates |
 | `extension.<ext_id>.error` | World Sim | Extension | Validation error |
-| `extension.<ext_id>.register_triggers` | Extension | World Sim | Register access/event triggers on tiles/entities |
+| `extension.<ext_id>.register_triggers` | Extension | World Sim | Register access/event triggers on tiles/entities, or input handlers for input types |
 | `extension.<ext_id>.unregister_triggers` | Extension | World Sim | Remove triggers |
 | `extension.<ext_id>.register_zone` | Extension | World Sim | Register a zone (boundary + properties) |
 
@@ -250,3 +271,10 @@ KV keys are **not** NATS subjects but follow a parallel convention. See
   (assumed) and that no JSON is sent on the hot path.
 - **[OPEN] Subject wildcards & sharding** — how `client.*.input` is partitioned
   across World Sim shards; ties into `14-zones-and-interactions.md`.
+- **[OPEN] Knock/invite wire protocol** — the knock-to-join flow
+  (`14-zones-and-interactions.md` §2) currently references `InteractFrame` for
+  the allow/deny popup. This should be updated to use `ActionFrame` (the
+  client sends an `ActionFrame` with `input_type: "click:left"` on the popup
+  entity's tile, the kernel broadcasts to extensions registered for
+  `click:left`, and the meeting extension self-filters based on
+  `entities_on_tile`).

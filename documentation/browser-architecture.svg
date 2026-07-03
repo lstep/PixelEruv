@@ -103,8 +103,8 @@
     <rect x="50" y="200" width="380" height="80" rx="8" fill="#eff6ff" stroke="#2563eb" stroke-width="1.5"/>
     <text x="240" y="222" text-anchor="middle" font-size="13" font-weight="700" fill="#1e3a8a">🔌 WebSocket Transport</text>
     <text x="240" y="240" text-anchor="middle" font-size="10" fill="#2563eb">• Protobuf frame envelope (ClientFrame / ServerFrame)</text>
-    <text x="240" y="254" text-anchor="middle" font-size="10" fill="#2563eb">• AuthFrame → InputFrame → InteractFrame → TokenRefresh</text>
-    <text x="240" y="268" text-anchor="middle" font-size="10" fill="#3b82f6">• Receives: ReplicationBatch, AuthResult, ControlFrame, Error</text>
+    <text x="240" y="254" text-anchor="middle" font-size="10" fill="#2563eb">• AuthFrame → InputFrame → ActionFrame → TokenRefresh</text>
+    <text x="240" y="268" text-anchor="middle" font-size="10" fill="#3b82f6">• Receives: ReplicationBatch, AuthResult, ActionResult, ControlFrame, Error</text>
   </g>
 
   <g>
@@ -161,7 +161,7 @@
   <g>
     <rect x="460" y="560" width="380" height="80" rx="8" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
     <text x="650" y="582" text-anchor="middle" font-size="13" font-weight="700" fill="#064e3b">🖱️ Interaction System</text>
-    <text x="650" y="600" text-anchor="middle" font-size="10" fill="#059669">• Click entity → InteractFrame {target_entity_id, type, params}</text>
+    <text x="650" y="600" text-anchor="middle" font-size="10" fill="#059669">• Click tile → ActionFrame {target_x, target_y, params}</text>
     <text x="650" y="614" text-anchor="middle" font-size="10" fill="#059669">• Popup UI for interactable objects (actions from components)</text>
     <text x="650" y="628" text-anchor="middle" font-size="10" fill="#10b981">• Knock-to-join · sit/sleep · open URL · talk to NPC</text>
   </g>
@@ -275,7 +275,7 @@
 
   <!-- Interaction → WS Transport (upstream) -->
   <line x1="650" y1="558" x2="650" y2="282" stroke="#059669" stroke-width="2" marker-end="url(#arr-green)"/>
-  <text x="665" y="420" font-size="9" fill="#059669">InteractFrame</text>
+  <text x="665" y="420" font-size="9" fill="#059669">ActionFrame</text>
 
   <!-- Local Entity Store → Phaser Renderer -->
   <line x1="320" y1="530" x2="320" y2="668" stroke="#4338ca" stroke-width="2.5" marker-end="url(#arr-indigo)"/>
