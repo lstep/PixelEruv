@@ -234,6 +234,7 @@ flowchart LR
 
     PlayerMove -->|"validate move"| TriggerEval
     TriggerEval -->|"lookup"| Spatial
+    InputHandler -->|"query entities, LOS raycast"| Spatial
     Spatial --> TriggerReg
     Spatial --> ZoneReg
     ECS -->|"dirty components"| Rep
