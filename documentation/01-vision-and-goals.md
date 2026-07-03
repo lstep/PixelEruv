@@ -43,3 +43,10 @@ architecture does not preclude them:
 - Map-wide / zone-wide audio-video broadcast via object triggers
 
 A phased roadmap will be defined separately (`20-roadmap.md`).
+
+## Success criteria
+
+A company can docker compose up and have a working spatial office with positional A/V.
+100 concurrent users on one modest host at ≤150ms p95 input round-trip, ≤40 KB/s downstream.
+The extension system works well enough that walls/doors/zones are extension-driven (not kernel).
+It is credibly "the open-source alternative" to Gather/ZEP/Workadventure.
