@@ -136,9 +136,9 @@ Players inside the room can still see and hear each other normally.
 ### Door close sequence
 
 ```
-Player A (inside the room) clicks the door tile → ActionFrame
-  → No action trigger on door tile → fallback to entity interaction routing
-  → doors-ext receives interact (entity.<door_id>.interact)
+Player A (inside the room) clicks the door tile → ActionFrame (input_type: "click:left")
+  → Kernel broadcasts to all extensions registered for "click:left"
+  → doors-ext self-filters: sees door entity in entities_on_tile
   → doors-ext: door state = closed
      a. Update internal state: reply "block" to future ask queries on the
         door tile.
@@ -288,9 +288,10 @@ Step 3: Extension sends knock notification to owner A
       b. Shows popup: "B wants to enter. [Allow] [Deny]"
 
 Step 4: A clicks "Allow" on the popup
-  → A's client sends ActionFrame targeting the popup entity's tile
-  → Kernel: no action trigger on tile → fallback to entity interaction
-  → meeting-ext receives: entity.<popup_id>.interact
+  → A's client sends ActionFrame (input_type: "click:left") targeting the popup entity's tile
+  → Kernel broadcasts to all extensions registered for "click:left"
+  → meeting-ext self-filters: sees popup entity in entities_on_tile
+  → meeting-ext receives the input event with entities_on_tile: [popup_id]
       { interaction_type: "knock_response",
         params: { popup_id: "knock-123", response: "allow" } }
   → meeting-ext:
@@ -318,9 +319,10 @@ Step 6: B leaves the zone (later)
 Step 1: A opens the zone menu
   → A clicks a UI element associated with the zone (e.g. a "manage zone"
     button rendered from the ZoneAccess component on A's entity)
-  → A's client sends ActionFrame targeting A's own tile (or a nearby
+  → A's client sends ActionFrame (input_type: "click:left") targeting A's own tile (or a nearby
     "zone-control" entity spawned by the extension)
-  → meeting-ext receives the interaction
+  → Kernel broadcasts to extensions registered for "click:left"
+  → meeting-ext self-filters: sees zone-control entity in entities_on_tile
   → A selects "Invite B" from the menu
   → A's client sends another ActionFrame with params:
       { action: "invite", target: "B" }
@@ -341,25 +343,27 @@ Step 3: B walks toward the boundary
 
 The knock-to-join flow is designed in `14-zones-and-interactions.md` §2, but
 the wire protocol for the popup response is an open question. The approach
-above uses **transient entities + ActionFrame**:
+above uses **transient entities + ActionFrame (input handler)**:
 
 1. The extension spawns a transient "knock-popup" entity on the owner's tile.
-2. The owner clicks it → `ActionFrame` → entity interaction routing →
-   extension processes the response.
+2. The owner clicks it → `ActionFrame` (`input_type: "click:left"`) → kernel
+   broadcasts to extensions registered for `click:left` → meeting extension
+   self-filters based on `entities_on_tile` and processes the response.
 3. The extension despawns the popup entity after the response or a timeout.
 
-This requires no new frame types. The existing `ActionFrame` → entity
-interaction fallback handles it. The popup entity is a regular ECS entity
-with an `Interactable` component and a custom `KnockPopup` component — the
-client renders it as a popup UI element.
+This requires no new frame types. The existing `ActionFrame` → input handler
+broadcast handles it. The popup entity is a regular ECS entity with an
+`Interactable` component and a custom `KnockPopup` component — the client
+renders it as a popup UI element.
 
 **Alternative considered: dedicated ControlResponseFrame.** A new
 client→server frame type that carries a popup ID + response. This is cleaner
 conceptually (popups are not tiles) but adds a new frame type and a new
 routing path in the kernel. Not worth the complexity for the MVP.
 
-**Recommendation:** use transient entities + ActionFrame. Document this in
-`14-zones-and-interactions.md` §2 as the resolution of the open question.
+**Recommendation:** use transient entities + ActionFrame (input handler).
+Document this in `14-zones-and-interactions.md` §2 as the resolution of the
+open question.
 
 ### Edge cases
 
@@ -382,9 +386,112 @@ routing path in the kernel. Not worth the complexity for the MVP.
 
 **Feasible with the current architecture.** The knock-to-join flow is
 already designed. The popup response wire protocol has a viable solution
-(transient entity + ActionFrame) that requires no new frame types. The open
+(transient entity + ActionFrame input handler) that requires no new frame
+types. The open
 question in `14-zones-and-interactions.md` §2 should be resolved with this
 approach.
+
+---
+
+## 4. Pickup Item
+
+### Requirement
+
+A player clicks an item lying on the ground. The item moves from the ground
+into the player's inventory. Other players stop seeing it; the picking player
+sees it appear in their inventory.
+
+### Map setup (Tiled)
+
+- Place a sword item entity at tile `(30, 12)` with `Item` and `Position`
+  components.
+- No zone, no special tiles — the item is a regular entity in the spatial
+  index.
+
+### Extension setup (`inventory-ext`)
+
+```
+1. Register an input handler for click:left:
+   - trigger_id: "inventory-click-left"
+   - category: "action", binding: "input"
+   - input: "click:left"
+   - owner_extension_id: "inventory-ext"
+2. Maintain item state in memory (or read from ECS on each event).
+3. Persist inventory changes to PocketBase after each successful pickup.
+```
+
+No `max_range`, `require_los`, or tile binding at registration. The kernel
+provides `range`, `has_los`, and `entities_on_tile` in the dispatch payload;
+the extension self-filters.
+
+### Runtime sequence
+
+```
+Player A clicks tile (30, 12) where the sword lies
+  → A's client sends ActionFrame (input_type: "click:left", target: 30,12)
+  → Pusher forwards to NATS: client.<id>.input
+  → World Sim receives ActionFrame in tick loop (step 6: input handler dispatch)
+  → Kernel looks up extensions registered for "click:left" → inventory-ext
+  → Kernel computes contextual data:
+      target_tile: { map_id, x: 30, y: 12 }
+      entities_on_tile: [sword-1]
+      range: 3 (tile distance from A at (27,12) to (30,12))
+      has_los: true (Bresenham raycast, no walls in between)
+      equipment: [ { slot: "main_hand", item_entity_id: null } ]
+  → Kernel broadcasts: input.click.left
+      { request_id, source_entity_id: "A", client_id, input: "click:left",
+        target_tile, player_position, entities_on_tile: [sword-1],
+        has_los: true, range: 3, equipment, reply_to }
+
+inventory-ext receives the broadcast
+  → Self-filter:
+      a. entities_on_tile contains sword-1 with an Item component → candidate
+      b. range = 3 → within pickup range (extension policy: ≤ 5 tiles) → ok
+      c. has_los = true → ok
+  → Extension replies: input.click.left.reply.<request_id>
+      { request_id, extension_id: "inventory-ext",
+        updates: [
+          { entity_id: "sword-1", component: "Position", data: null },
+          { entity_id: "sword-1", component: "InventorySlot",
+            data: { owner_entity_id: "A" } }
+        ],
+        consume_items: [] }
+
+Kernel collects replies within timeout (500 ms)
+  → Applies updates:
+      a. sword-1 loses Position → leaves spatial index
+      b. sword-1 gains InventorySlot{owner: A} → owner-only replication
+  → Replication encoder (next tick):
+      a. All clients in AOI who had sword-1: DestroyEntity (no Position)
+      b. Player A: SpawnEntity for sword-1 (InventorySlot owner matches A)
+  → Kernel sends ActionResultFrame{ ok: true } to A
+  → inventory-ext persists: PocketBase inventory.A += sword-1
+```
+
+### Out of range or no LOS
+
+If the player clicks an item tile from too far away or behind a wall, the
+extension self-filters and does not reply. The kernel timeout expires with no
+reply → `ActionResultFrame{ ok: false, reason: "timeout" }`. The item stays on
+the ground.
+
+### Two players click the same item in the same tick
+
+Each click is a separate broadcast with its own `request_id`. The extension
+processes them sequentially. On the first reply, it removes `Position` from
+the item. On the second broadcast, `entities_on_tile` no longer contains the
+item (it has no `Position`), so the extension self-filters it out and does not
+reply. The second player gets `ActionResultFrame{ ok: false, reason: "timeout"
+}`. This is extension-side logic — the kernel applies all replies but does not
+resolve conflicts.
+
+### Verdict
+
+**Feasible with the current architecture.** The input handler broadcast model
+handles pickup cleanly: one registration, no tile binding, no kernel gating.
+The extension self-filters on `entities_on_tile`, `range`, and `has_los`. The
+replication encoder's owner-only filter (for `InventorySlot`) handles the
+visibility transition automatically.
 
 ---
 
@@ -394,4 +501,5 @@ approach.
 |---|---|---|---|
 | 1. Proximity alarm | Yes | None — proximity-bound trigger handles it natively | — |
 | 2. Full isolation room | Partial | Visual isolation is soft only — AOI filter doesn't exclude entities in exclusive zones from non-members | `11-replication.md` §3.3 — add zone-aware AOI filter |
-| 3. Knock-to-join | Yes | Popup response wire protocol is open | `14-zones-and-interactions.md` §2 — resolve with transient entity + ActionFrame |
+| 3. Knock-to-join | Yes | Popup response wire protocol is open | `14-zones-and-interactions.md` §2 — resolve with transient entity + ActionFrame (input handler) |
+| 4. Pickup item | Yes | None — input handler broadcast + owner-only replication handles it natively | — |

@@ -302,8 +302,8 @@ flowchart LR
     ExtLogic["Entity logic<br/>Trigger logic<br/>Zone behavior<br/>NPC AI / LLM<br/>Inventory & equipment"]
   end
 
-  Extensions -- "register, spawn, update,<br/>register_triggers (access/event/action), register_zone,<br/>trigger replies, action replies, KV watch/write" --> NATSCore
-  NATSCore -- "trigger queries, notify broadcasts,<br/>action dispatches, interactions, arrived, errors" --> Extensions
+  Extensions -- "register, spawn, update,<br/>register_triggers (access/event/action), register_zone,<br/>trigger replies, input handler replies, KV watch/write" --> NATSCore
+  NATSCore -- "trigger queries, notify broadcasts,<br/>input handler dispatches, arrived, errors" --> Extensions
 
   %% ===========================
   %% World Sim ↔ Bridge (via NATS)
@@ -346,7 +346,7 @@ flowchart LR
 | **World Sim** | NATS Core | pub/sub | Publish `client.provisioned` (for LiveKit Bridge token issuance) | On connect |
 | **World Sim** | NATS JetStream KV | KV read/write | Player positions, player status; reads zone state (written by extensions) | Per change |
 | **World Sim** | PocketBase | HTTP | User lookup/create, world config, audit log writes | On login / rare |
-| **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones (access/event/action), reply to trigger queries and action dispatches, handle interactions | Per tick / event-driven |
+| **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones (access/event/action), reply to trigger queries and input handler dispatches | Per tick / event-driven |
 | **Extension** | NATS JetStream KV | KV read/write | Extension-private state, shared world state (e.g. zone properties) | Event-driven |
 | **Bridge** | NATS JetStream KV | `kv.Watch` | React to zone-state changes | Event-driven |
 | **Bridge** | NATS Core | subscribe | Receive `client.provisioned` for token issuance | Event-driven |
@@ -499,21 +499,19 @@ flowchart LR
    video.
 
 ### 2. A user toggles a zone to exclusive (e.g. closes a door)
-1. Client sends an `ActionFrame` (clicking the door tile) over the WebSocket.
+1. Client sends an `ActionFrame` (clicking the door tile, `input_type: "click:left"`) over the WebSocket.
 2. **Pusher** publishes the input to NATS Core.
-3. **World Simulator** receives the `ActionFrame`. No action trigger on the
-   tile → fallback to entity interaction routing. The door entity is
-   extension-owned (or has a `notify` trigger for `interact`). The World Sim
-   forwards the interaction to the owning extension (e.g. the "doors"
-   extension).
-4. The **doors extension** processes the interaction, updates the door
-   component (via `entity.<entity_id>.update`), and writes the new zone state
-   to JetStream KV (`zones.<zone_id>.properties`). It may also register/unregister
-   `block` triggers on the zone boundary tiles (via `register_triggers` /
+3. **World Simulator** receives the `ActionFrame`. Broadcasts to all
+   extensions registered for `click:left`. The doors extension self-filters:
+   sees the door entity in `entities_on_tile` and processes the click. The
+   doors extension updates the door component (via
+   `entity.<entity_id>.update`), and writes the new zone state to JetStream KV
+   (`zones.<zone_id>.properties`). It may also register/unregister `block`
+   triggers on the zone boundary tiles (via `register_triggers` /
    `unregister_triggers`).
-5. The **World Sim** applies the door component update (marks it dirty for
+4. The **World Sim** applies the door component update (marks it dirty for
    replication) and updates the spatial index with any trigger changes.
-6. NATS `kv.Watch` fires:
+5. NATS `kv.Watch` fires:
    - The **World Simulator** pushes the new zone state to all interested
      clients via replication batches (NATS Core → Pusher → clients), which
      apply the visual filter (darken, halo, etc.).
@@ -586,8 +584,8 @@ flowchart LR
   spawn entities (no type restrictions), update any component directly
   (per-tick or event-driven), register custom component types, register
   triggers (access: block/allow/ask; event: notify
-  tile-bound/entity-bound/proximity-bound; action: click) on tiles and
-  entities,
+  tile-bound/entity-bound/proximity-bound; action: input handlers for
+  click/key types) on tiles, entities, or input types,
   register zones, handle client interactions, and read/write JetStream KV.
   The World Sim's role is spatial authority (ECS, spatial index, trigger
   registry, zone boundaries) and replication gateway (AOI, replication

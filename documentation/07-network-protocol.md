@@ -31,7 +31,7 @@ message ClientFrame {        // client → server
   oneof payload {
     AuthFrame auth = 1;
     InputFrame input = 2;
-    ActionFrame action = 3;             // tile clicks + entity interactions (replaces InteractFrame)
+    ActionFrame action = 3;             // clicks + key presses (replaces InteractFrame)
     TokenRefreshFrame token_refresh = 4;
     PingFrame ping = 5;
   }
@@ -97,16 +97,17 @@ message InputState {
 
 message ActionFrame {
   uint32 seq = 1;                  // client action sequence number (for reconciliation)
-  string target_map_id = 2;        // the map the clicked tile is on
-  uint32 target_x = 3;             // x coordinate of the clicked tile
-  uint32 target_y = 4;             // y coordinate of the clicked tile
-  bytes params = 5;                // optional action-specific payload (e.g. interaction_type override)
+  string input_type = 2;           // "click:left", "click:right", "click:double", "key:E", etc.
+  string target_map_id = 3;        // the map the clicked tile is on (empty for key presses)
+  uint32 target_x = 4;             // x coordinate of the clicked tile (0 for key presses)
+  uint32 target_y = 5;             // y coordinate of the clicked tile (0 for key presses)
+  bytes params = 6;                // optional action-specific payload (e.g. interaction_type override)
 }
 
 message ActionResultFrame {
   uint32 seq = 1;                  // matches the ActionFrame seq
   bool ok = 2;                     // whether the action was accepted
-  string reason = 3;               // "out_of_range", "no_los", "no_target", "no_trigger", "rejected"
+  string reason = 3;               // "no_handler", "timeout", "rejected"
 }
 
 message TokenRefreshFrame {
@@ -139,24 +140,24 @@ message ControlFrame {
 
 ### 1.5 Action model (replaces InteractFrame)
 
-- A client sends `ActionFrame` whenever the player clicks a tile or presses the
-  interact key. For keypress interactions, the client computes the facing tile
-  from `Position{dir}` and sends `ActionFrame{target_x, target_y}`.
-- The Pusher forwards it to NATS (pass-through). The World Simulator validates
-  range and line-of-sight (if the tile has action triggers requiring them),
-  then routes:
-  1. **Action triggers on the clicked tile?** → dispatch to the owning
-     extension with an equipment snapshot (see `18-extensions.md` §3a).
-  2. **Entity on the clicked tile?** → fallback to interaction routing
-     (`ExtensionOwner` or entity-bound `notify` trigger, see
-     `18-extensions.md` §6).
-  3. **No trigger, no entity** → `ActionResultFrame{ ok: false, reason: "no_target" }`.
-- If range or LOS validation fails, the kernel sends
-  `ActionResultFrame{ ok: false, reason: "out_of_range" | "no_los" }` back to
-  the client immediately (no NATS round-trip to an extension).
+- A client sends `ActionFrame` whenever the player clicks a tile or presses an
+  input key. The `input_type` field identifies the input (`click:left`,
+  `click:right`, `click:double`, `key:E`, etc.). For key presses, the target
+  tile fields are empty — the kernel computes adjacent entities from the
+  player's position.
+- The Pusher forwards it to NATS (pass-through). The World Simulator computes
+  contextual data (range, LOS, entities on tile / adjacent entities, equipment
+  snapshot) and broadcasts to all extensions that registered for that input
+  type:
+  1. **No extension registered?** → `ActionResultFrame{ ok: false, reason: "no_handler" }`.
+  2. **Extensions registered** → broadcast to all of them. Each extension
+     self-filters and replies asynchronously. The kernel collects all replies
+     within a timeout, applies them all, and sends a single
+     `ActionResultFrame{ ok: true }` to the client.
+  3. **No reply within timeout** → `ActionResultFrame{ ok: false, reason: "timeout" }`.
 - The kernel does not have a `TriggerSystem` — all trigger and interaction
-  behavior is implemented by extensions. The kernel only validates spatial
-  reachability (range, LOS) and routes.
+  behavior is implemented by extensions. The kernel only computes spatial data
+  (range, LOS, entities) and broadcasts.
 
 ### 1.6 WebSocket close codes
 
@@ -197,15 +198,13 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 |---|---|---|---|
 | `entity.<entity_id>.update` | Extension | World Sim | Direct component update |
 | `entity.<entity_id>.move` | Extension | World Sim | Movement target |
-| `entity.<entity_id>.interact` | World Sim | Extension | Forwarded client interaction |
-| `entity.<entity_id>.interact.reply.<req_id>` | Extension | World Sim | Interaction response |
 | `entity.<entity_id>.arrived` | World Sim | Extension | Reached movement target |
 | `entity.<entity_id>.despawned` | World Sim | Extension | Entity removed |
-| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound and proximity-bound notify dispatch (enter/exit/interact/proximity_enter/proximity_exit) |
+| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound and proximity-bound notify dispatch (enter/exit/proximity_enter/proximity_exit) |
 | `trigger.<trigger_id>.query` | World Sim | Extension (owning the trigger) | Access trigger query (for ask) |
 | `trigger.<trigger_id>.reply` | Extension | World Sim | Access trigger reply (for ask) |
-| `trigger.<trigger_id>.action` | World Sim | Extension (owning the trigger) | Action trigger dispatch (player clicked a tile) |
-| `trigger.<trigger_id>.action.reply.<req_id>` | Extension | World Sim | Action trigger response (updates, consume_items) |
+| `input.<input_type>` | World Sim | Extensions (registered for that input type) | Input handler dispatch (player clicked or pressed a key; includes range, LOS, entities, equipment) |
+| `input.<input_type>.reply.<req_id>` | Extension | World Sim | Input handler response (updates, consume_items) |
 | `trigger.notify.tile.<map_id>.<x>.<y>` | World Sim | All extensions (broadcast) | Tile-bound notify trigger dispatch |
 
 ### 2.4 Extension lifecycle subjects
@@ -221,7 +220,7 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 | `extension.<ext_id>.despawn` | Extension | World Sim | Despawn entity |
 | `extension.<ext_id>.batch_update` | Extension | World Sim | Batched updates |
 | `extension.<ext_id>.error` | World Sim | Extension | Validation error |
-| `extension.<ext_id>.register_triggers` | Extension | World Sim | Register access/event/action triggers on tiles/entities |
+| `extension.<ext_id>.register_triggers` | Extension | World Sim | Register access/event triggers on tiles/entities, or input handlers for input types |
 | `extension.<ext_id>.unregister_triggers` | Extension | World Sim | Remove triggers |
 | `extension.<ext_id>.register_zone` | Extension | World Sim | Register a zone (boundary + properties) |
 
@@ -275,6 +274,7 @@ KV keys are **not** NATS subjects but follow a parallel convention. See
 - **[OPEN] Knock/invite wire protocol** — the knock-to-join flow
   (`14-zones-and-interactions.md` §2) currently references `InteractFrame` for
   the allow/deny popup. This should be updated to use `ActionFrame` (the
-  client sends an `ActionFrame` on the meeting room door tile, the kernel
-  routes it to the meeting extension via an action trigger or entity
-  interaction fallback).
+  client sends an `ActionFrame` with `input_type: "click:left"` on the popup
+  entity's tile, the kernel broadcasts to extensions registered for
+  `click:left`, and the meeting extension self-filters based on
+  `entities_on_tile`).

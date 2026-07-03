@@ -76,7 +76,7 @@
   <line x1="640" y1="530" x2="540" y2="556" stroke="#d97706" stroke-width="2" stroke-dasharray="6 3" marker-end="url(#arr)"/>
   <text x="430" y="548" text-anchor="middle" font-size="10" font-weight="500" fill="#d97706">register · spawn · update · triggers · zones · KV</text>
 
-  <!-- NATS → Extensions (trigger queries, notify, interactions) -->
+  <!-- NATS → Extensions (trigger queries, notify, input handler broadcasts) -->
   <line x1="380" y1="556" x2="460" y2="530" stroke="#d97706" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arr-amber)"/>
 
   <!-- Bridge → JetStream KV (kv.Watch zone state) -->

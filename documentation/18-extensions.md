@@ -96,7 +96,7 @@ through NATS — the same bus the World Sim, Pusher, and Bridge already use.
           │  (spatial       │              │  (any language)│
           │   authority +   │◄── updates ──┤  Entity logic  │
           │   replication   │              │  Trigger logic │
-          │   gateway)      ├── interact ─►│  Zone behavior │
+          │   gateway)      ├── input ────►│  Zone behavior │
           │                  ├── trigger ──►│  KV read/write │
           │  ECS + spatial  │              │  Heartbeat     │
           │  index + AOI +  │              │                │
@@ -147,17 +147,20 @@ single point that:
 - Request interpolated movement (target-based) or publish positions directly.
 - Register custom component types with new protobuf schemas.
 - **Register triggers** (access: `block`/`allow`/`ask`; event: `notify`;
-  action: `click`) on tiles or entities. The kernel caches `block`/`allow`
-  triggers locally, routes `ask` triggers to the extension at runtime, and
-  validates range/LOS for action triggers before dispatching. See §3a.
+  action: input handlers) on tiles, entities, or input types. The kernel caches
+  `block`/`allow` triggers locally, routes `ask` triggers to the extension at
+  runtime, broadcasts input events to all registered extensions with range/LOS
+  data and an equipment snapshot, and evaluates proximity triggers per-tick. See
+  §3a.
 - **Register zones** (polygon regions with associated triggers). Zone
   boundaries are stored in the kernel; zone behavior is implemented by the
   extension via triggers. See §3b.
 - **Claim base entities** from the Tiled map. Base entities exist in the ECS
   without an `ExtensionOwner`; an extension can claim them by registering
   triggers on them or updating their components.
-- Handle client interactions asynchronously (via entity-bound `notify` triggers
-  with event `interact`, or via `ExtensionOwner` routing).
+- Handle client interactions asynchronously (via input handlers — register for
+  input types like `click:left` or `key:E` and self-filter based on the
+  payload).
 - Read and write any JetStream KV key.
 - Watch KV keys for reactive behavior.
 
@@ -284,7 +287,7 @@ The World Sim:
 1. Validates the position is valid (on the map, not inside a wall).
 2. Creates the entity in the ECS with the requested components.
 3. Marks the entity with a server-only `ExtensionOwner` component (containing
-   the `extension_id`) for interaction routing and cleanup.
+   the `extension_id`) for cleanup.
 4. The entity is now in the ECS and will be replicated to clients whose AOI
    includes it — exactly like any other entity.
 
@@ -352,7 +355,7 @@ them in the spatial index. There are three categories:
 
 | Binding | Routing | Use case |
 |---|---|---|
-| **Entity-bound** | Point-to-point to the extension that owns the entity | NPC notices a player approached; NPC starts dialogue on interact |
+| **Entity-bound** | Point-to-point to the extension that owns the entity | NPC notices a player approached |
 | **Tile-bound** | Broadcast to all extensions (self-filtered) | Welcome mat, floor switch, meeting room occupancy counter |
 | **Proximity-bound** | Point-to-point to the extension that owns the entity | Proximity alarm that rings while a player is within N tiles of an entity; NPC aggro radius |
 
@@ -366,21 +369,30 @@ and sends point-to-point notifications to the owning extension. The extension
 does not need to track a presence counter — the kernel handles enter/exit
 transitions.
 
-### Action triggers (player-initiated, range/LOS validated)
+### Input handlers (player-initiated, broadcast to all registered extensions)
 
-| Behavior | Kernel action | NATS round-trip? | Use case |
+| Binding | Kernel action | NATS round-trip? | Use case |
 |---|---|---|---|
-| `click` | Validate range + line-of-sight, then dispatch to owning extension with equipment snapshot | Yes (to extension) — but range/LOS rejection is local | Shooting a bow, throwing an object, clicking a remote object |
+| `input` | Compute range + LOS + entities on tile, then broadcast to all extensions that registered for that input type | Yes (broadcast to all registered) | Shooting a bow, pressing E to interact, clicking a button, throwing an object |
 
-Action triggers fire when a player clicks a tile (via `ActionFrame`). The
-kernel validates that the player can spatially reach the clicked tile (range
-≤ `max_range`, line-of-sight not blocked by walls or non-traversable entities)
-before dispatching to the extension. If validation fails, the kernel sends an
-`ActionResultFrame` back to the client immediately — no NATS round-trip.
+Input handlers fire when a player triggers an input event (a click or a key
+press, via `ActionFrame`). Unlike access and event triggers (which are bound to
+tiles or entities), input handlers are bound to an **input type** — a string
+like `click:left`, `click:right`, `click:double`, `key:E`, etc. Extensions
+register for the input types they care about; the kernel broadcasts each input
+event to **all** extensions that registered for that type.
 
-The dispatch payload includes a **snapshot of the player's `Equipment`
-component** so the extension knows what the player is holding and can decide
-the action accordingly (e.g. bow → spawn arrow, empty-handed → no action).
+The kernel does **not** validate range or LOS as a gate — instead, it includes
+`range` and `has_los` in the dispatch payload so each extension can decide for
+itself whether the action is valid. This keeps the kernel as a data provider,
+not a gatekeeper. The dispatch payload also includes a **snapshot of the
+player's `Equipment` component**, the entities on the clicked tile (for clicks)
+or adjacent to the player (for key presses), and the player's position.
+
+All replies within the timeout window are **applied** — there is no conflict
+resolution. If two extensions respond to the same click, both replies are
+applied. The kernel collects all replies, applies the updates and
+`consume_items`, and sends a single `ActionResultFrame` to the client.
 
 ### Registration message
 
@@ -417,10 +429,10 @@ Payload:
     },
     {
       "trigger_id": "waitress-1-interact",
-      "category": "event",
-      "binding": "entity",
-      "entity_id": "waitress-1",
-      "event": "interact"
+      "category": "action",
+      "binding": "input",
+      "input": "key:E",
+      "owner_extension_id": "waitress-npc-v1"
     },
     {
       "trigger_id": "alarm-1-proximity",
@@ -431,15 +443,18 @@ Payload:
       "events": ["proximity_enter", "proximity_exit"]
     },
     {
-      "trigger_id": "bow-shot-zone",
+      "trigger_id": "combat-click-left",
       "category": "action",
-      "binding": "tile",
-      "tiles": [{"map_id": "arena", "x": 10, "y": 5}],
-      "event": "click",
-      "max_range": 8,
-      "require_los": true,
-      "los_through_walls": false,
-      "default_on_timeout": "drop"
+      "binding": "input",
+      "input": "click:left",
+      "owner_extension_id": "combat-ext"
+    },
+    {
+      "trigger_id": "interact-key-e",
+      "category": "action",
+      "binding": "input",
+      "input": "key:E",
+      "owner_extension_id": "office-ext"
     }
   ]
 }
@@ -451,7 +466,7 @@ responds with a confirmation:
 ```
 {
   "status": "registered",
-  "trigger_ids": ["wall-lobby-north", "meeting-room-1-entrance", "welcome-mat-lobby", "waitress-1-interact", "alarm-1-proximity", "bow-shot-zone"]
+  "trigger_ids": ["wall-lobby-north", "meeting-room-1-entrance", "welcome-mat-lobby", "waitress-1-interact", "alarm-1-proximity", "combat-click-left", "interact-key-e"]
 }
 ```
 
@@ -513,16 +528,13 @@ tick after all movement is processed (see below).
   Payload:
   {
     "entity_id": "waitress-1",
-    "event": "interact",
-    "client_id": "abc123",
-    "client_entity_id": "user-42",
-    "params": { "message": "Hello!" },
-    "reply_to": "entity.waitress-1.interact.reply.<request_id>"
+    "event": "enter",
+    "player_entity_id": "user-42"
   }
   ```
-  For `interact` events, this is the same mechanism as the existing interaction
-  routing (see §6). The `reply_to` subject allows the extension to respond
-  asynchronously with component updates.
+  Events are `enter` and `exit` (fired after movement). This is fire-and-forget
+  — no reply expected. (Player-initiated interactions like clicking or pressing
+  E are handled by input handlers, not by entity-bound notify triggers.)
 
 - **Tile-bound `notify`**: the kernel broadcasts to all extensions:
   ```
@@ -556,41 +568,54 @@ tick after all movement is processed (see below).
   kernel handles enter/exit transition detection; the extension does not need
   to track a presence counter.
 
-### Action trigger dispatch
+### Input handler dispatch
 
-When a player clicks a tile (via `ActionFrame`), the kernel:
+When a player triggers an input event (via `ActionFrame`), the kernel:
 
-1. Looks up action triggers on the clicked tile.
-2. Validates range (player `Position` vs. clicked tile ≤ `max_range`).
-3. Validates line-of-sight (Bresenham raycast through the tile grid, checking
-   walls, `block` access triggers, and `Traversable=false` entities).
-4. If validation fails → `ActionResultFrame{ ok: false, reason: "out_of_range" | "no_los" }`
+1. Determines the input type from the `ActionFrame`.
+2. Looks up all extensions that registered for that input type.
+3. If no extension registered → `ActionResultFrame{ ok: false, reason: "no_handler" }`
    sent to the client immediately (no NATS round-trip).
-5. If validation passes → dispatch to the owning extension:
+4. Computes contextual data from the spatial index:
+   - For **clicks**: `target_tile`, `entities_on_tile`, `range` (distance from
+     player to clicked tile), `has_los` (Bresenham raycast).
+   - For **key presses**: `adjacent_entities` (entities on tiles adjacent to
+     the player). No target tile, no range, no LOS.
+5. Gathers the player's `Equipment` snapshot.
+6. Broadcasts the input event to all registered extensions:
 
 ```
-Subject: trigger.<trigger_id>.action
+Subject: input.<input_type_with_dots>
+  (e.g. input.click.left, input.click.right, input.key.e)
 Payload:
 {
-  "trigger_id": "bow-shot-zone",
-  "entity_id": "user-42",
+  "request_id": "req-123",
+  "source_entity_id": "user-42",
   "client_id": "abc123",
-  "clicked_tile": {"map_id": "arena", "x": 10, "y": 5},
+  "input": "click:left",
+  "target_tile": {"map_id": "arena", "x": 10, "y": 5},  // null for key presses
+  "player_position": {"map_id": "arena", "x": 2, "y": 5, "dir": "east"},
+  "entities_on_tile": ["door-1"],          // for clicks; null for key presses
+  "adjacent_entities": null,               // for key presses; null for clicks
+  "has_los": true,                         // for clicks; null for key presses
+  "range": 8,                              // for clicks (tile distance); null for key presses
   "equipment": [
     {"slot": "main_hand", "item_entity_id": "bow-7", "item_type": "bow"},
     {"slot": "off_hand", "item_entity_id": null}
   ],
-  "reply_to": "trigger.bow-shot-zone.action.reply.<request_id>"
+  "reply_to": "input.click.left.reply.<request_id>"
 }
 ```
 
-The extension processes the action asynchronously (decides what happens based
-on equipment, spawns projectiles, consumes items, etc.) and replies:
+Each extension processes the input asynchronously (decides what happens based
+on equipment, entities on tile, range, LOS, etc.) and replies:
 
 ```
-Subject: trigger.<trigger_id>.action.reply.<request_id>
+Subject: input.<input_type_with_dots>.reply.<request_id>
 Payload:
 {
+  "request_id": "req-123",
+  "extension_id": "combat-ext",
   "updates": [
     {"entity_id": "arrow-1", "component": "Position", "data": {"x": 10, "y": 5, "map_id": "arena"}},
     {"entity_id": "user-42", "component": "AvatarAppearance", "data": {"animation": "shoot"}}
@@ -599,12 +624,17 @@ Payload:
 }
 ```
 
-The World Sim applies the updates and replicates them. `consume_items` tells
-the kernel to remove the specified items from the player's inventory (the
-inventory extension handles the actual component changes).
+The kernel collects **all** replies within a timeout window (e.g. 500 ms,
+configurable). All replies are applied — updates are applied to the ECS,
+`consume_items` removes items from the player's inventory. The kernel then
+sends a single `ActionResultFrame{ ok: true }` to the client. If no reply
+arrives within the timeout, the kernel sends
+`ActionResultFrame{ ok: false, reason: "timeout" }`.
 
-If no action trigger exists on the clicked tile but there is an entity on the
-tile, the kernel falls back to entity interaction routing (see §6).
+Extensions self-filter: they receive every input event of their registered type
+and ignore events they don't care about (e.g. an extension that handles bow
+shooting ignores clicks where the player isn't holding a bow, or where
+`has_los` is false).
 
 ### Unregistering triggers
 
@@ -631,9 +661,10 @@ When an extension crashes:
   silently dropped (no one is listening on the extension's subscriber). The
   kernel stops firing proximity evaluations for triggers owned by the crashed
   extension.
-- **`action` triggers** are silently dropped (clicks on tiles with action
-  triggers from the crashed extension will receive
-  `ActionResultFrame{ ok: false, reason: "no_trigger" }`).
+- **`input` handlers** from the crashed extension are removed from the input
+  registry. Input events of that type are no longer broadcast to the crashed
+  extension. If no other extension registered for that input type, the kernel
+  sends `ActionResultFrame{ ok: false, reason: "no_handler" }`.
 
 When the extension reconnects and re-registers, it re-registers its triggers.
 If the `freeze` policy was used, the kernel may have retained the old trigger
@@ -693,16 +724,16 @@ entities driven by the kernel's player movement system.
 | Components | Any in the registry | Any in the registry (including custom-registered) |
 | KV access | Kernel reads/writes player position and status | Read/write any key |
 | Triggers | Can be on tiles the player enters | Can register triggers on tiles/entities |
-| `ExtensionOwner` component | Absent | Present (for interaction routing + cleanup) |
+| `ExtensionOwner` component | Absent | Present (for cleanup) |
 
 The `ExtensionOwner` component is server-only (never replicated). Its sole
-purposes are:
+purpose is:
 
-1. **Interaction routing** — when a client interacts with an entity, the
-   World Sim checks for `ExtensionOwner` and forwards the interaction to the
-   owning extension instead of processing it locally.
-2. **Cleanup** — when an extension dies, the World Sim knows which entities
+1. **Cleanup** — when an extension dies, the World Sim knows which entities
    to freeze or despawn.
+
+(Interaction routing is no longer based on `ExtensionOwner` — extensions
+register for input types and self-filter. See §6.)
 
 ### What the World Sim validates (for all entities, equally)
 
@@ -816,59 +847,80 @@ fails validation, the entire batch is rejected.
 
 ## 6. Interactions
 
-Interactions are unified with the `notify` trigger model (see §3a). The client
-sends `ActionFrame` for all tile clicks and keypress interactions
-(`InteractFrame` has been deprecated — `ActionFrame` replaces it for all
-player-initiated spatial actions). The kernel routes as follows:
+Interactions are handled by the input handler model (see §3a). The client
+sends `ActionFrame` for all tile clicks and key presses (`InteractFrame` has
+been deprecated — `ActionFrame` replaces it for all player-initiated input).
+The kernel broadcasts each input event to all extensions that registered for
+that input type. There is no fallback routing — extensions must explicitly
+register for the input types they want to handle.
 
-1. **Action triggers on the clicked tile?** → dispatch to the owning extension
-   with equipment snapshot (see §3a, action trigger dispatch).
-2. **No action trigger, but entity on the clicked tile?** → fallback to entity
-   interaction routing:
-   a. The kernel looks up the entity in the ECS (via the spatial index).
-   b. **If the entity has an `ExtensionOwner` component** → forward the
-      interaction to the owning extension (subject `entity.<entity_id>.interact`).
-   c. **If the entity does not have an `ExtensionOwner`** → check for
-      entity-bound `notify` triggers with event `interact` on that entity. If
-      found, forward the interaction to the trigger's owning extension (subject
-      `entity.<entity_id>.notify.interact`).
-   d. **If no `ExtensionOwner` and no `notify` trigger** → the interaction is
-      dropped (`ActionResultFrame{ ok: false, reason: "no_target" }`).
-3. **No action trigger, no entity** → `ActionResultFrame{ ok: false, reason: "no_target" }`.
+### Routing flow
 
-Cases 2b and 2c are the same mechanism: "find the extension responsible for this
-entity's interactions and forward." The difference is how the mapping is
-determined: `ExtensionOwner` component (extension spawned the entity) vs.
-trigger registry (extension claimed a base entity from Tiled).
+When a client sends an `ActionFrame`:
+
+1. The kernel determines the input type (e.g. `click:left`, `key:E`).
+2. The kernel looks up all extensions that registered for that input type.
+3. If no extension registered → `ActionResultFrame{ ok: false, reason: "no_handler" }`.
+4. The kernel computes contextual data (target tile, entities on tile, adjacent
+   entities, range, LOS, equipment snapshot) and broadcasts to all registered
+   extensions.
+5. Each extension self-filters: it decides whether to act based on the payload
+   (e.g. "is there an entity I own on the clicked tile?", "is the player holding
+   a bow?", "is `has_los` true?").
+6. All replies within the timeout are applied. The kernel sends a single
+   `ActionResultFrame` to the client.
+
+### What replaced entity interaction routing
+
+Previously, the kernel had a fallback path: if no action trigger was registered
+on a clicked tile but an entity was present, the kernel would forward the
+interaction to the entity's owning extension via `entity.<entity_id>.interact`.
+This is no longer needed. In the input handler model:
+
+- An extension that owns an NPC and wants to handle clicks on it registers for
+  `click:left`. When a player clicks the NPC's tile, the extension receives the
+  broadcast, checks `entities_on_tile` for its NPC, and responds.
+- An extension that wants to handle the interact key (`E`) registers for
+  `key:E`. When a player presses E, the extension receives the broadcast,
+  checks `adjacent_entities` for entities it owns, and responds.
+- The `entity.<entity_id>.interact` subject is no longer used. All interaction
+  routing goes through the input handler broadcast.
 
 ### Interaction flow
 
 ```
 Client → Pusher → NATS → World Sim (ActionFrame: click tile where waitress-1 is)
                                     │
-                                    │  No action trigger on tile → entity interaction routing
-                                    │  World Sim checks ExtensionOwner or notify trigger
+                                    │  Kernel broadcasts to all extensions
+                                    │  registered for "click:left"
                                     ▼
-entity.<entity_id>.interact → Extension (via NATS)
+input.click.left → All registered extensions (via NATS)
   {
-    "entity_id": "waitress-1",
-    "client_id": "abc123",
-    "client_entity_id": "user-42",
-    "interaction_type": "talk",
-    "params": { "message": "Hello, what can you do here?" },
-    "reply_to": "entity.waitress-1.interact.reply.<request_id>"
+    "request_id": "req-125",
+    "source_entity_id": "user-42",
+    "input": "click:left",
+    "target_tile": {"map_id": "lobby", "x": 42, "y": 17},
+    "entities_on_tile": ["waitress-1"],
+    "has_los": true,
+    "range": 1,
+    "equipment": [...],
+    "reply_to": "input.click.left.reply.req-125"
   }
                                     │
-                            Extension processes:
+                            npc-ext (registered for click:left):
+                            • Checks entities_on_tile → sees waitress-1 (owns it)
                             • LLM call (or fixed response)
                             • Decides response + animation
+                            • Other extensions self-filter (ignore)
                                     │
                                     ▼
-entity.<entity_id>.interact.reply.<request_id> → World Sim (via NATS)
+input.click.left.reply.req-125 → World Sim (via NATS)
   {
+    "request_id": "req-125",
+    "extension_id": "npc-ext",
     "updates": [
-      { "component": "AvatarAppearance", "data": { "animation": "talk" } },
-      { "component": "SpeechBubble", "data": { "text": "Welcome! I can show you around." } }
+      {"entity_id": "waitress-1", "component": "AvatarAppearance", "data": {"animation": "talk"}},
+      {"entity_id": "waitress-1", "component": "SpeechBubble", "data": {"text": "Welcome!"}}
     ]
   }
                                     │
@@ -880,35 +932,16 @@ entity.<entity_id>.interact.reply.<request_id> → World Sim (via NATS)
                             and displays speech bubble
 ```
 
-### Interaction routing summary
-
-When a client sends an `ActionFrame` targeting a tile:
-
-1. The World Sim checks for action triggers on the clicked tile. If found and
-   range/LOS validation passes, it dispatches to the owning extension (subject
-   `trigger.<trigger_id>.action`).
-2. If no action trigger, the World Sim looks up entities on the clicked tile
-   via the spatial index.
-3. If an entity has an `ExtensionOwner` component, the World Sim forwards the
-   interaction to the extension via NATS (subject
-   `entity.<entity_id>.interact`).
-4. If the entity does not have an `ExtensionOwner` component, the World Sim
-   checks for entity-bound `notify` triggers with event `interact`. If found,
-   it forwards the interaction to the trigger's owning extension.
-5. If no action trigger, no `ExtensionOwner`, and no `notify` trigger, the
-   World Sim sends `ActionResultFrame{ ok: false, reason: "no_target" }`.
-
 ### Async replies
 
-The interaction message includes a `reply_to` subject so the extension can
-respond asynchronously. The World Sim does **not** block the tick loop
-waiting for a reply. The extension responds whenever it's ready (immediately
-for fixed responses, after an LLM call for generated responses). The World
-Sim applies the response updates on the next tick after receiving them.
+The input handler dispatch includes a `reply_to` subject so each extension can
+respond asynchronously. The World Sim does **not** block the tick loop waiting
+for replies. Extensions respond whenever they're ready (immediately for fixed
+responses, after an LLM call for generated responses). The World Sim applies
+all received replies on subsequent ticks after receiving them.
 
-If the extension doesn't reply within a configurable timeout (e.g. 10
-seconds), the World Sim publishes a default "no response" update (e.g. the
-NPC shrugs) and discards the pending interaction.
+If no extension replies within the timeout (e.g. 500 ms), the World Sim sends
+`ActionResultFrame{ ok: false, reason: "timeout" }` to the client.
 
 ---
 
@@ -951,7 +984,7 @@ other clients can render equipped items.
 
 ### Extension's gameplay responsibilities
 
-- **Pickup**: receives an action trigger or entity interaction on an item,
+- **Pickup**: receives an input event (click or key press) on an item tile,
   validates rules, sends component updates (ground → inventory).
 - **Equip/unequip**: receives a client action, validates slot compatibility,
   swaps `InventorySlot` ↔ `Equipped`, updates the player's `Equipment`
@@ -960,8 +993,8 @@ other clients can render equipped items.
   (kernel validates the tile).
 - **Use/consume**: handles item effects and sends `consume_items` in action
   trigger replies.
-- **Equipment in action triggers**: reads the equipment snapshot from the
-  action trigger payload to decide the action.
+- **Equipment in input handlers**: reads the equipment snapshot from the
+  input handler payload to decide the action.
 - **Persistence**: item definitions and player inventory state are persisted by
   the extension to JetStream KV (extensions have unrestricted KV access, see
   §7). For durable relational storage in PocketBase, the extension coordinates
@@ -1086,7 +1119,7 @@ The client needs to know how to render custom components. The mechanism:
 |---|---|---|
 | `extension.register` | Register a new extension | On startup |
 | `extension.<ext_id>.register_components` | Register custom component types | On startup |
-| `extension.<ext_id>.register_triggers` | Register access/event/action triggers on tiles/entities | At init time |
+| `extension.<ext_id>.register_triggers` | Register access/event triggers on tiles/entities, or input handlers for input types | At init time |
 | `extension.<ext_id>.unregister_triggers` | Remove triggers | On demand |
 | `extension.<ext_id>.register_zone` | Register a zone (boundary + properties) | At init time |
 | `extension.<ext_id>.deregister` | Graceful shutdown | On shutdown |
@@ -1096,21 +1129,19 @@ The client needs to know how to render custom components. The mechanism:
 | `extension.<ext_id>.batch_update` | Batch component updates (multiple entities/components) | Per tick or event-driven |
 | `entity.<entity_id>.update` | Direct component update | Per tick or event-driven |
 | `entity.<entity_id>.move` | Request interpolated movement to a target | On demand |
-| `entity.<entity_id>.interact.reply.<req_id>` | Reply to an interaction | Async |
 | `trigger.<trigger_id>.reply` | Reply to an `ask` access trigger query | Async (within `ttl_ms`) |
-| `trigger.<trigger_id>.action.reply.<req_id>` | Reply to an action trigger dispatch (updates, consume_items) | Async |
+| `input.<input_type>.reply.<req_id>` | Reply to an input handler dispatch (updates, consume_items) | Async |
 
 ### World Sim → Extension
 
 | Subject | Purpose | Frequency |
 |---|---|---|
 | `extension.<ext_id>.registered` | Registration response (with existing entities) | On registration |
-| `entity.<entity_id>.interact` | Forward client interaction (ExtensionOwner routing) | Event-driven |
-| `entity.<entity_id>.notify.<event>` | Entity-bound `notify` trigger dispatch (enter/exit/interact) and proximity-bound `notify` dispatch (proximity_enter/proximity_exit) | Event-driven |
+| `entity.<entity_id>.notify.<event>` | Entity-bound `notify` trigger dispatch (enter/exit) and proximity-bound `notify` dispatch (proximity_enter/proximity_exit) | Event-driven |
 | `entity.<entity_id>.arrived` | Entity reached movement target | On arrival |
 | `entity.<entity_id>.despawned` | Entity was despawned (by World Sim or admin) | Event-driven |
 | `trigger.<trigger_id>.query` | `ask` access trigger query (does the kernel allow this move?) | On move attempt to a tile with an `ask` trigger |
-| `trigger.<trigger_id>.action` | Action trigger dispatch (player clicked a tile; includes equipment snapshot) | On ActionFrame with a matching action trigger |
+| `input.<input_type>` | Input handler dispatch (player clicked or pressed a key; includes equipment snapshot, range, LOS, entities on tile) | On ActionFrame with a matching input type |
 | `trigger.notify.tile.<map_id>.<x>.<y>` | Tile-bound `notify` trigger broadcast (all extensions self-filter) | On enter/exit |
 | `world_sim.restarted` | World Sim restarted (extensions should re-register triggers and re-spawn) | On restart |
 | `extension.<ext_id>.error` | Validation error for a command | On error |
@@ -1145,7 +1176,7 @@ an error on `extension.<ext_id>.error` and does not apply the command.
 | `batch_update` | All updates must pass validation. If any fails, the entire batch is rejected. |
 | `move` | Entity must exist and be owned by this extension. Target position must be reachable (access triggers on the target tile must allow). Speed must be within configured bounds. |
 | `register_components` | Component IDs must not collide with existing IDs. Protobuf schema must be valid. |
-| `register_triggers` | `trigger_id` must not already exist. Tiles must be on a valid map. Entity-bound and proximity-bound triggers must reference an existing entity. `behavior` must be `block`, `allow`, `ask` (for access), `notify` (for event), or `click` (for action). Action triggers must specify `max_range` and `require_los`. Proximity-bound triggers must specify `radius` (in tiles, ≥ 1) and `events` (a list of `proximity_enter` and/or `proximity_exit`). |
+| `register_triggers` | `trigger_id` must not already exist. Tiles must be on a valid map. Entity-bound and proximity-bound triggers must reference an existing entity. `behavior` must be `block`, `allow`, `ask` (for access), `notify` (for event), or `input` (for action). Input handlers must specify `input` (a non-empty string, e.g. `click:left`, `key:E`). Proximity-bound triggers must specify `radius` (in tiles, ≥ 1) and `events` (a list of `proximity_enter` and/or `proximity_exit`). |
 | `unregister_triggers` | `trigger_id` must exist and be owned by this extension. |
 | `register_zone` | `zone_id` must not already exist. Boundary tiles must be on a valid map. |
 
@@ -1257,9 +1288,10 @@ Extension: waitress-npc-v1
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Register custom component: SpeechBubble (id: 100)
   │     ├── Spawn waitress-1 at lobby entrance
-  │     └── Register trigger: entity-bound notify (interact) on waitress-1
+  │     └── Register input handler: key:E (to handle interact key)
   ├── Watch KV: world.time → change behavior (greeting vs. closing)
-  ├── On interact (via notify trigger):
+  ├── On key:E (via input handler, self-filter for adjacent_entities):
+  │     ├── Check adjacent_entities for waitress-1
   │     ├── Send message + context to LLM
   │     ├── Receive response
   │     ├── Batch update: AvatarAppearance (animation: "talk") + SpeechBubble (text: LLM response)
@@ -1308,7 +1340,7 @@ Extension: patrol-guard-v1
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Spawn guard-1 at security desk
   │     └── Register triggers:
-  │           ├── entity-bound notify (interact) on guard-1
+  │           ├── input handler for key:E (to handle interact key)
   │           └── proximity-bound notify on guard-1 (radius: 4,
   │               events: proximity_enter, proximity_exit)
   ├── Own pathfinding AI computes per-tick positions
@@ -1320,7 +1352,7 @@ Extension: patrol-guard-v1
   │     ├── IDLE → wait 30s → PATROL
   │     ├── PATROL → path to waypoint A → arrived → path to waypoint B
   │     │            → arrived → path to waypoint C → arrived → IDLE
-  │     └── ALERT (on interact with "report" type, or proximity_enter)
+  │     └── ALERT (on key:E interact with "report" type, or proximity_enter)
   │           → path to reporting client → talk → IDLE
   ├── Watch KV: zones.<zone_id>.properties
   │     └── If zone becomes exclusive unexpectedly → ALERT
@@ -1359,7 +1391,8 @@ Extension: npc-system-v1
   │     ├── Spawn 10 NPCs across the map
   │     └── Write KV: ext.npc-system-v1.population (NPC roster)
   ├── Each NPC has its own DialogueState (conversation history)
-  ├── On interact with any NPC:
+  ├── On key:E or click:left (via input handler, self-filter for adjacent_entities / entities_on_tile):
+  │     ├── Check if an NPC the extension owns is adjacent / on the clicked tile
   │     ├── Route to shared LLM with NPC-specific personality prompt
   │     ├── Update DialogueState (append to history)
   │     └── Update SpeechBubble + AvatarAppearance

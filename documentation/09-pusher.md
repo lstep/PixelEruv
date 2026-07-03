@@ -86,7 +86,7 @@ via NATS. See `10-world-simulator.md` and `18-extensions.md`.
 | Subscribe client input from NATS | ❌ | ✅ | ❌ |
 | Player avatar movement (input → position, in-kernel) | ❌ | ✅ | ❌ |
 | Access trigger evaluation (block/allow cached, ask routed) | ❌ | ✅ | ❌ |
-| Action trigger evaluation (range/LOS validated, dispatch to extension) | ❌ | ✅ | ❌ |
+| Input handler dispatch (range/LOS computed, broadcast to extensions) | ❌ | ✅ | ❌ |
 | Event trigger dispatch (notify to extensions) | ❌ | ✅ | ❌ |
 | Neutral validation (collision, zone access, bounds, schema) | ❌ | ✅ | ❌ |
 | Read / write JetStream KV (player positions; reads zone state) | ❌ | ✅ | ❌ (kernel-owned keys) |

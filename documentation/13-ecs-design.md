@@ -85,9 +85,9 @@ The full set will be finalised in `13-ecs-design.md`.
 | System | Queries | Responsibility | Runs in |
 |---|---|---|---|
 | `PlayerMovementSystem` | `Position` + `NetworkSession` + `InputState` | Authoritative player avatar position update per tick. Computes target tile from input, evaluates access triggers (block/allow cached, ask routed to extension via NATS), updates Position if allowed. This is the only gameplay movement system in the kernel. | World Simulator (kernel) |
-| `ActionTriggerSystem` | `Position` + `NetworkSession` + `Equipment` | Evaluates `ActionFrame` input: validates range and line-of-sight (Bresenham raycast through the tile grid), then routes to action triggers on the clicked tile or falls back to entity interaction routing. Spatial validation only — does not decide what the action does. | World Simulator (kernel) |
+| `InputHandlerSystem` | `Position` + `NetworkSession` + `Equipment` | Evaluates `ActionFrame` input: computes range, line-of-sight (Bresenham raycast), entities on clicked tile / adjacent entities, and equipment snapshot. Broadcasts to all extensions registered for that input type. Collects all replies within a timeout and applies them. Spatial data computation only — does not decide what the action does. | World Simulator (kernel) |
 | `ReplicationSystem` | `NetworkSession` + (changed components) | Encodes dirty components into generic replication messages (`SpawnEntity`, `UpdateComponent`, `DestroyEntity`, `PlayAnimation`) for interested clients. Runs in the World Simulator. See `11-replication.md`. | World Simulator (kernel) |
-| `TriggerSystem` | (deprecated in kernel) | Trigger logic is now implemented by extensions via the trigger registry (see `18-extensions.md` §3a). The kernel evaluates access triggers (block/allow/ask), dispatches event triggers (notify: tile-bound, entity-bound, proximity-bound), and validates range/LOS for action triggers (click) — but does not implement trigger behavior. | Extension |
+| `TriggerSystem` | (deprecated in kernel) | Trigger logic is now implemented by extensions via the trigger registry (see `18-extensions.md` §3a). The kernel evaluates access triggers (block/allow/ask), dispatches event triggers (notify: tile-bound, entity-bound, proximity-bound), and broadcasts input events to registered extensions with range/LOS data — but does not implement trigger behavior. | Extension |
 | `BehaviorTreeSystem` | (deprecated in kernel) | NPC AI is implemented by extensions. The kernel does not run AI systems. | Extension |
 | `ZoneSystem` | (deprecated in kernel) | Zone behavior (exclusivity, knock-to-join, timers) is implemented by extensions via triggers on zone boundary tiles. The kernel stores zone boundaries and routes zone-entry triggers to the owning extension. | Extension |
 
@@ -99,7 +99,7 @@ The full set will be finalised in `13-ecs-design.md`.
 - **[DECISION]** The ECS runs inside the **World Simulator** process (the
   kernel), not the Pusher. The Pusher is a thin WebSocket proxy with no ECS
   knowledge. The kernel's only gameplay systems are PlayerMovementSystem,
-  ActionTriggerSystem (spatial validation + routing), and ReplicationSystem;
+  InputHandlerSystem (input dispatch + spatial data computation), and ReplicationSystem;
   all other gameplay behavior (inventory, equipment, item effects) is delegated
   to extensions via NATS (see `18-extensions.md`). See `10-world-simulator.md`
   for the World Simulator specification and `09-pusher.md` for the Pusher

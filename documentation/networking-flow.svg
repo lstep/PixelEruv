@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 1280 830" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
   <title>Pixel Eruv — Networking Flow (WebSocket + Protobuf + ECS Replication)</title>
-  <desc>End-to-end networking flow. Forward lane (client to server): Browser sends ClientFrame protobuf over WSS via Traefik to the Pusher, which validates the token, assigns a client_id, and forwards Input/Interact frames to NATS Core; the World Simulator applies them authoritatively in its tick loop. Return lane (server to client): the World Simulator replication pipeline (dirty flags, per-tick scheduler, AOI filter, delta encoder, protobuf component serializer) emits a per-client ReplicationBatch of SpawnEntity/UpdateComponent/DestroyEntity/PlayAnimation, published to NATS, forwarded by the Pusher as a single WebSocket frame, decoded by the Browser into its local entity store.</desc>
+  <desc>End-to-end networking flow. Forward lane (client to server): Browser sends ClientFrame protobuf over WSS via Traefik to the Pusher, which validates the token, assigns a client_id, and forwards Input/ActionFrame frames to NATS Core; the World Simulator applies them authoritatively in its tick loop. Return lane (server to client): the World Simulator replication pipeline (dirty flags, per-tick scheduler, AOI filter, delta encoder, protobuf component serializer) emits a per-client ReplicationBatch of SpawnEntity/UpdateComponent/DestroyEntity/PlayAnimation, published to NATS, forwarded by the Pusher as a single WebSocket frame, decoded by the Browser into its local entity store.</desc>
 
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -174,7 +174,7 @@
     <rect x="694" y="252" width="102" height="44" rx="5" fill="#f1f5f9" stroke="#64748b" stroke-width="1"/>
     <text x="745" y="268" text-anchor="middle" font-size="9" font-family="ui-monospace, monospace" fill="#334155">client.&lt;id&gt;.input</text>
     <text x="745" y="282" text-anchor="middle" font-size="9" font-family="ui-monospace, monospace" fill="#334155">client.connected</text>
-    <text x="745" y="294" text-anchor="middle" font-size="9" fill="#64748b">InputFrame / Interact / triggers</text>
+    <text x="745" y="294" text-anchor="middle" font-size="9" fill="#64748b">InputFrame / ActionFrame / triggers</text>
 
     <line x1="690" y1="325" x2="800" y2="325" stroke="#cbd5e1" stroke-width="1" stroke-dasharray="3 3"/>
     <text x="745" y="338" text-anchor="middle" font-size="9" fill="#475569" font-style="italic">no direct RPC</text>

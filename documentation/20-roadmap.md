@@ -20,15 +20,18 @@ positional audio/video.
 - ECS core (`13-ecs-design.md`), component-based replication
   (`11-replication.md`), netcode (`12-netcode.md`).
 - Trigger system (access: block/allow/ask; event: notify tile-bound/entity-
-  bound/proximity-bound; action: click with range/LOS validation) — the
-  mechanism by which extensions declare spatial rules on tiles and entities
-  (`18-extensions.md` §3a). Action triggers enable click-based interactions
-  (shooting, throwing, remote object interaction) with kernel-validated range
-  and line-of-sight. Proximity-bound triggers enable radius-based detection
-  (alarms, NPC aggro) with a single registration per entity.
+  bound/proximity-bound; action: input handlers for click/key types) — the
+  mechanism by which extensions declare spatial rules on tiles and entities,
+  or register for player input events (`18-extensions.md` §3a). Input handlers
+  enable click-based and key-based interactions (shooting, throwing, pressing
+  E to interact) — the kernel broadcasts each input event to all registered
+  extensions with range, LOS, entities on tile, and an equipment snapshot;
+  extensions self-filter and all replies are applied. Proximity-bound triggers
+  enable radius-based detection (alarms, NPC aggro) with a single registration
+  per entity.
 - `ActionFrame` protocol — replaces `InteractFrame` with a unified frame for
-  all player-initiated spatial actions (tile clicks and keypress interactions)
-  (`07-network-protocol.md` §1.5).
+  all player-initiated input (tile clicks and key presses, identified by
+  `input_type`) (`07-network-protocol.md` §1.5).
 - Zones incl. exclusive zones and knock-to-join meeting rooms
   (`14-zones-and-interactions.md`) — implemented as extension-owned triggers
   on zone boundary tiles.
@@ -66,7 +69,7 @@ From `01-vision-and-goals.md` and `02-functional-requirements.md` § 8:
   `18-extensions.md` §6a). The kernel handles spatial transitions (items on
   ground have `Position`, picking up removes it); the inventory extension
   handles all gameplay semantics (equipment slots, item effects, use actions,
-  persistence). Action triggers use the equipment snapshot to enable
+  persistence). Input handlers use the equipment snapshot to enable
   equipment-dependent actions (e.g. bow → shoot, empty-handed → no action).
 - **Plant growth**, **owned workplaces with
   leave-a-message**, **whiteboard objects**.

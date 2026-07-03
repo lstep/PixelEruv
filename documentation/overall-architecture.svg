@@ -84,7 +84,7 @@
   <!-- Extensions ↔ NATS (bold, bidirectional) -->
   <line x1="700" y1="375" x2="650" y2="478" stroke="#d97706" stroke-width="2.5" marker-end="url(#arr-amber)"/>
   <line x1="780" y1="478" x2="800" y2="375" stroke="#d97706" stroke-width="2.5" marker-end="url(#arr-amber)"/>
-  <text x="760" y="425" text-anchor="middle" font-size="10" font-weight="600" fill="#d97706">register · spawn · update · triggers · zones · interact · KV</text>
+  <text x="760" y="425" text-anchor="middle" font-size="10" font-weight="600" fill="#d97706">register · spawn · update · triggers · zones · input · KV</text>
 
   <!-- Bridge ↔ NATS (kv.Watch + client.provisioned) -->
   <line x1="320" y1="620" x2="480" y2="560" stroke="#7c3aed" stroke-width="2" marker-end="url(#arr-purple)"/>
