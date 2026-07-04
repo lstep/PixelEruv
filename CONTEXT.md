@@ -84,4 +84,4 @@ A gate-mode zone trigger that fires when a player attempts to cross into the zon
 A notify-mode zone trigger that fires on enter/exit transitions as players cross the zone boundary. Used by extensions to track occupancy and ownership.
 
 **Interaction mechanism (door / button / lever):**
-An entity with an input trigger that a player clicks/activates to mutate zone state. May be located on the zone boundary, inside the zone, or elsewhere on the map. The extension wires the input handler (mutates zone state) to the gate trigger (reads zone state and replies allow/block). The kernel does not know they are related.
+An entity with an input trigger that a player clicks/activates to mutate zone state. May be located on the zone boundary, inside the zone, or elsewhere on the map. The extension wires the input trigger (mutates zone state) to the gate trigger (reads zone state and replies allow/block). The kernel does not know they are related.
