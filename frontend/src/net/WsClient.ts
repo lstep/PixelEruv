@@ -1,6 +1,7 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
+import { tracer } from "../otel";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
@@ -37,13 +38,19 @@ export class WsClient {
   }
 
   connect(onReady: () => void, onReplication: ReplicationHandler): void {
+    const connectSpan = tracer.startSpan("ws.connect");
     this.ws = new WebSocket(this.url);
     this.ws.binaryType = "arraybuffer";
 
     this.ws.onopen = () => {
-      const auth = create(AuthFrameSchema, { idToken: "dev" });
-      const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
-      this.ws!.send(toBinary(ClientFrameSchema, frame));
+      const authSpan = tracer.startSpan("ws.send_auth");
+      try {
+        const auth = create(AuthFrameSchema, { idToken: "dev" });
+        const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
+        this.ws!.send(toBinary(ClientFrameSchema, frame));
+      } finally {
+        authSpan.end();
+      }
     };
 
     this.ws.onmessage = (event) => {
@@ -55,30 +62,48 @@ export class WsClient {
           const ar = serverFrame.payload.value;
           if (ar.ok) {
             this.clientId = ar.clientId;
+            connectSpan.setAttribute("client.id", ar.clientId);
+            connectSpan.end();
             console.log(`authenticated: client=${this.clientId}`);
             onReady();
           } else {
+            connectSpan.recordException(new Error("auth failed"));
+            connectSpan.setStatus({ code: 2, message: "auth failed" });
+            connectSpan.end();
             console.error("auth failed");
           }
           break;
         }
         case "replication": {
           const batch = serverFrame.payload.value;
-          onReplication({
-            lastInputSeq: Number(batch.lastInputSeq),
-            spawns: batch.spawns.map((s: any) => ({
-              entityId: s.entityId,
-              components: s.components.map((c: any) => ({ componentId: c.componentId, data: c.data })),
-            })),
-            updates: batch.updates.map((u: any) => ({
-              entityId: u.entityId,
-              componentId: u.componentId,
-              data: u.data,
-            })),
-            destroys: batch.destroys.map((d: any) => ({
-              entityId: d.entityId,
-            })),
+          const span = tracer.startSpan("ws.on_replication", {
+            attributes: {
+              "client.id": this.clientId ?? "",
+              "batch.spawns": batch.spawns.length,
+              "batch.updates": batch.updates.length,
+              "batch.destroys": batch.destroys.length,
+              "batch.last_input_seq": Number(batch.lastInputSeq),
+            },
           });
+          try {
+            onReplication({
+              lastInputSeq: Number(batch.lastInputSeq),
+              spawns: batch.spawns.map((s: any) => ({
+                entityId: s.entityId,
+                components: s.components.map((c: any) => ({ componentId: c.componentId, data: c.data })),
+              })),
+              updates: batch.updates.map((u: any) => ({
+                entityId: u.entityId,
+                componentId: u.componentId,
+                data: u.data,
+              })),
+              destroys: batch.destroys.map((d: any) => ({
+                entityId: d.entityId,
+              })),
+            });
+          } finally {
+            span.end();
+          }
           break;
         }
         case "pong":
@@ -89,17 +114,41 @@ export class WsClient {
       }
     };
 
-    this.ws.onclose = () => console.log("websocket closed");
-    this.ws.onerror = (err) => console.error("websocket error:", err);
+    this.ws.onclose = () => {
+      const span = tracer.startSpan("ws.close");
+      span.setAttribute("client.id", this.clientId ?? "");
+      span.end();
+      console.log("websocket closed");
+    };
+    this.ws.onerror = (err) => {
+      connectSpan.recordException(new Error("websocket error"));
+      connectSpan.setStatus({ code: 2, message: "websocket error" });
+      console.error("websocket error:", err);
+    };
   }
 
   sendInput(state: { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     this.seq++;
-    const inputState = create(InputStateSchema, state);
-    const input = create(InputFrameSchema, { seq: this.seq, clientTick: 0, state: inputState });
-    const frame = create(ClientFrameSchema, { payload: { case: "input", value: input } });
-    this.ws.send(toBinary(ClientFrameSchema, frame));
+    const span = tracer.startSpan("ws.send_input", {
+      attributes: {
+        "client.id": this.clientId ?? "",
+        "input.seq": this.seq,
+        "input.up": state.up,
+        "input.down": state.down,
+        "input.left": state.left,
+        "input.right": state.right,
+        "input.run": state.run,
+      },
+    });
+    try {
+      const inputState = create(InputStateSchema, state);
+      const input = create(InputFrameSchema, { seq: this.seq, clientTick: 0, state: inputState });
+      const frame = create(ClientFrameSchema, { payload: { case: "input", value: input } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
   }
 
   getClientId(): string | null {

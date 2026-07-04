@@ -6,13 +6,18 @@ package worldsim
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
+	otelinternal "github.com/lstep/pixeleruv/backend/internal/otel"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 )
 
@@ -48,6 +53,8 @@ type Simulator struct {
 	mapID   string
 	tickHz  int
 	tickDur time.Duration
+	logger  *slog.Logger
+	tracer  trace.Tracer
 
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
@@ -56,7 +63,7 @@ type Simulator struct {
 	snapshotSeq uint32
 }
 
-func New(natsURL, mapID string, tickHz int) (*Simulator, error) {
+func New(natsURL, mapID string, tickHz int, logger *slog.Logger) (*Simulator, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("worldsim"),
 		nats.ReconnectWait(2*time.Second),
@@ -71,6 +78,8 @@ func New(natsURL, mapID string, tickHz int) (*Simulator, error) {
 		mapID:    mapID,
 		tickHz:   tickHz,
 		tickDur:  time.Second / time.Duration(tickHz),
+		logger:   logger,
+		tracer:   otel.Tracer("worldsim"),
 		entities: make(map[string]*Entity),
 		clients:  make(map[string]*Entity),
 	}
@@ -85,35 +94,49 @@ func New(natsURL, mapID string, tickHz int) (*Simulator, error) {
 func (s *Simulator) subscribe() error {
 	// client.connected — provision a new player entity
 	if _, err := s.nc.Subscribe("client.connected", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.client.connected")
+		defer span.End()
 		var ar pb.AuthResultFrame
 		if err := proto.Unmarshal(m.Data, &ar); err != nil {
-			log.Printf("client.connected unmarshal: %v", err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			s.logger.Warn("client.connected unmarshal", "err", err)
 			return
 		}
-		s.provisionClient(ar.ClientId)
+		span.SetAttributes(attribute.String("client.id", ar.ClientId))
+		s.provisionClient(ctx, ar.ClientId)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.connected: %w", err)
 	}
 
 	// client.disconnected — despawn entity
 	if _, err := s.nc.Subscribe("client.disconnected", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.client.disconnected")
+		defer span.End()
 		var ar pb.AuthResultFrame
 		if err := proto.Unmarshal(m.Data, &ar); err != nil {
 			return
 		}
-		s.despawnClient(ar.ClientId)
+		span.SetAttributes(attribute.String("client.id", ar.ClientId))
+		s.despawnClient(ctx, ar.ClientId)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.disconnected: %w", err)
 	}
 
 	// client.<id>.input — queue input for the tick loop
 	if _, err := s.nc.Subscribe("client.*.input", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.apply_input")
+		defer span.End()
 		clientID := subjectClientID(m.Subject, "input")
+		span.SetAttributes(attribute.String("client.id", clientID))
 		var input pb.InputFrame
 		if err := proto.Unmarshal(m.Data, &input); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
 			return
 		}
-		s.applyInput(clientID, &input)
+		span.SetAttributes(attribute.Int("input.seq", int(input.GetSeq())))
+		s.applyInput(ctx, clientID, &input)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.input: %w", err)
 	}
@@ -137,7 +160,7 @@ func (s *Simulator) Run(ctx context.Context) error {
 }
 
 // provisionClient creates a player avatar entity for the given client.
-func (s *Simulator) provisionClient(clientID string) {
+func (s *Simulator) provisionClient(ctx context.Context, clientID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -158,11 +181,12 @@ func (s *Simulator) provisionClient(clientID string) {
 	s.entities[entityID] = e
 	s.clients[clientID] = e
 
-	log.Printf("provisioned entity %s for client %s at (%.1f, %.1f)",
-		entityID, clientID, e.Position.X, e.Position.Y)
+	s.logger.InfoContext(ctx, "provisioned entity",
+		"entity", entityID, "client", clientID,
+		"x", e.Position.X, "y", e.Position.Y)
 }
 
-func (s *Simulator) despawnClient(clientID string) {
+func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -172,10 +196,10 @@ func (s *Simulator) despawnClient(clientID string) {
 	}
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
-	log.Printf("despawned entity %s (client %s)", e.ID, clientID)
+	s.logger.InfoContext(ctx, "despawned entity", "entity", e.ID, "client", clientID)
 }
 
-func (s *Simulator) applyInput(clientID string, input *pb.InputFrame) {
+func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -189,6 +213,10 @@ func (s *Simulator) applyInput(clientID string, input *pb.InputFrame) {
 
 // tick runs the game loop: movement system + replication.
 func (s *Simulator) tick() {
+	ctx, span := s.tracer.Start(context.Background(), "worldsim.tick")
+	defer span.End()
+	start := time.Now()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -260,21 +288,49 @@ func (s *Simulator) tick() {
 
 	// --- Replication ---
 	// Lite MVP: replicate everything to everyone (no AOI filter).
+	replicated := 0
 	for _, e := range s.entities {
 		if e.NetworkSession == nil {
 			continue
 		}
-		s.replicateToClient(e)
+		if s.replicateToClient(ctx, e) {
+			replicated++
+		}
 	}
 
 	// Clear dirty flags
 	for _, e := range s.entities {
 		e.dirtyPosition = false
 	}
+
+	// Metric-as-log-attrs: tick duration, entity count, replication batches.
+	// motel has no /v1/metrics endpoint, so we emit these as span attributes +
+	// a structured log so they're queryable via log search.
+	durMs := time.Since(start).Milliseconds()
+	span.SetAttributes(
+		attribute.Int("tick.duration_ms", int(durMs)),
+		attribute.Int("tick.entity_count", len(s.entities)),
+		attribute.Int("tick.replicated_clients", replicated),
+		attribute.Int("tick.snapshot_seq", int(s.snapshotSeq)),
+	)
+	s.logger.InfoContext(ctx, "tick",
+		"duration_ms", durMs,
+		"entity_count", len(s.entities),
+		"replicated_clients", replicated,
+		"snapshot_seq", s.snapshotSeq,
+	)
 }
 
-func (s *Simulator) replicateToClient(clientEntity *Entity) {
+// replicateToClient builds and publishes a replication batch for one client.
+// Returns true if a batch was published. The published NATS message carries
+// this span's context so pusher's ws.write_replication span parents here.
+func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity) bool {
+	rctx, span := s.tracer.Start(ctx, "worldsim.replicate")
+	defer span.End()
+
 	clientID := clientEntity.NetworkSession.ClientID
+	span.SetAttributes(attribute.String("client.id", clientID))
+
 	batch := &pb.ReplicationBatch{
 		LastInputSeq: clientEntity.NetworkSession.Seq,
 	}
@@ -323,8 +379,14 @@ func (s *Simulator) replicateToClient(clientEntity *Entity) {
 
 	// Only publish if there's something to send
 	if len(batch.Spawns) == 0 && len(batch.Updates) == 0 && len(batch.Destroys) == 0 {
-		return
+		return false
 	}
+
+	span.SetAttributes(
+		attribute.Int("batch.spawns", len(batch.Spawns)),
+		attribute.Int("batch.updates", len(batch.Updates)),
+		attribute.Int("batch.destroys", len(batch.Destroys)),
+	)
 
 	// Wrap in a ServerFrame so the pusher can forward bytes unchanged to the
 	// client (the pusher is a pure WS<->NATS passthrough; it must not know the
@@ -332,14 +394,22 @@ func (s *Simulator) replicateToClient(clientEntity *Entity) {
 	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_Replication{Replication: batch}}
 	frameBytes, err := proto.Marshal(frame)
 	if err != nil {
-		log.Printf("replication marshal: %v", err)
-		return
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "marshal")
+		s.logger.WarnContext(rctx, "replication marshal", "client", clientID, "err", err)
+		return false
 	}
 
 	subject := fmt.Sprintf("client.%s.replication", clientID)
-	if err := s.nc.Publish(subject, frameBytes); err != nil {
-		log.Printf("replication publish [%s]: %v", clientID, err)
+	msg := &nats.Msg{Subject: subject, Data: frameBytes}
+	otelinternal.Inject(rctx, msg) // pusher's forward span will parent here
+	if err := s.nc.PublishMsg(msg); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "publish")
+		s.logger.WarnContext(rctx, "replication publish", "client", clientID, "err", err)
+		return false
 	}
+	return true
 }
 
 // subjectClientID extracts the client_id from a subject like "client.<id>.input".

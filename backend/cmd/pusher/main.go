@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/lstep/pixeleruv/backend/internal/otel"
 	"github.com/lstep/pixeleruv/backend/internal/pusher"
 )
 
@@ -17,14 +18,24 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	srv, err := pusher.New(wsAddr, natsURL)
+	logger, shutdown, err := otel.Init(ctx, "pusher")
+	if err != nil {
+		log.Fatalf("otel init: %v", err)
+	}
+	defer func() {
+		sctx, scancel := context.WithTimeout(context.Background(), otel.FlushTimeout)
+		defer scancel()
+		shutdown(sctx)
+	}()
+
+	srv, err := pusher.New(wsAddr, natsURL, logger)
 	if err != nil {
 		log.Fatalf("pusher init: %v", err)
 	}
 
-	log.Printf("pusher listening on %s (nats=%s)", wsAddr, natsURL)
+	logger.Info("pusher listening", "ws_addr", wsAddr, "nats", natsURL)
 	if err := srv.Run(ctx); err != nil {
-		log.Printf("pusher stopped: %v", err)
+		logger.Info("pusher stopped", "err", err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/lstep/pixeleruv/backend/internal/otel"
 	"github.com/lstep/pixeleruv/backend/internal/worldsim"
 )
 
@@ -19,14 +20,24 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	sim, err := worldsim.New(natsURL, mapID, tickHz)
+	logger, shutdown, err := otel.Init(ctx, "worldsim")
+	if err != nil {
+		log.Fatalf("otel init: %v", err)
+	}
+	defer func() {
+		sctx, scancel := context.WithTimeout(context.Background(), otel.FlushTimeout)
+		defer scancel()
+		shutdown(sctx)
+	}()
+
+	sim, err := worldsim.New(natsURL, mapID, tickHz, logger)
 	if err != nil {
 		log.Fatalf("worldsim init: %v", err)
 	}
 
-	log.Printf("worldsim starting (nats=%s, tick=%dHz, map=%s)", natsURL, tickHz, mapID)
+	logger.Info("worldsim starting", "nats", natsURL, "tick_hz", tickHz, "map", mapID)
 	if err := sim.Run(ctx); err != nil {
-		log.Printf("worldsim stopped: %v", err)
+		logger.Info("worldsim stopped", "err", err)
 	}
 }
 

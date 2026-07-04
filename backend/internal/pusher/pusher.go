@@ -8,21 +8,28 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/nats-io/nats.go"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
+	otelinternal "github.com/lstep/pixeleruv/backend/internal/otel"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 	"google.golang.org/protobuf/proto"
 )
 
 type Server struct {
-	wsAddr  string
-	nc      *nats.Conn
+	wsAddr   string
+	nc       *nats.Conn
+	logger   *slog.Logger
+	tracer   trace.Tracer
 	sessions sync.Map // client_id -> *session
 }
 
@@ -33,7 +40,7 @@ type session struct {
 	closeOnce sync.Once
 }
 
-func New(wsAddr, natsURL string) (*Server, error) {
+func New(wsAddr, natsURL string, logger *slog.Logger) (*Server, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("pusher"),
 		nats.ReconnectWait(2*time.Second),
@@ -42,7 +49,12 @@ func New(wsAddr, natsURL string) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
-	return &Server{wsAddr: wsAddr, nc: nc}, nil
+	return &Server{
+		wsAddr: wsAddr,
+		nc:     nc,
+		logger: logger,
+		tracer: otel.Tracer("pusher"),
+	}, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -65,49 +77,63 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		InsecureSkipVerify: true, // lite MVP — no origin check
 	})
 	if err != nil {
-		log.Printf("ws accept: %v", err)
+		s.logger.Warn("ws accept", "err", err)
 		return
 	}
 	defer c.Close(websocket.StatusNormalClosure, "")
 
+	ctx, span := s.tracer.Start(r.Context(), "pusher.ws.handle")
+	defer span.End()
+
 	// Read the first frame — must be AuthFrame.
-	ctx := r.Context()
 	typ, data, err := c.Read(ctx)
 	if err != nil {
-		log.Printf("ws read auth: %v", err)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "ws read auth")
+		s.logger.Warn("ws read auth", "err", err)
 		return
 	}
 	if typ != websocket.MessageBinary {
 		c.Close(websocket.StatusPolicyViolation, "expected binary protobuf frame")
+		span.SetStatus(codes.Error, "expected binary frame")
 		return
 	}
 
 	var cf pb.ClientFrame
 	if err := proto.Unmarshal(data, &cf); err != nil {
 		c.Close(websocket.StatusPolicyViolation, "bad protobuf")
+		span.SetStatus(codes.Error, "bad protobuf")
 		return
 	}
 	auth := cf.GetAuth()
 	if auth == nil {
 		c.Close(websocket.StatusPolicyViolation, "first frame must be AuthFrame")
+		span.SetStatus(codes.Error, "missing auth frame")
 		return
 	}
 
 	// Dummy auth — accept any token.
 	clientID := generateClientID()
+	span.SetAttributes(attribute.String("client.id", clientID))
 	sess := &session{clientID: clientID, conn: c}
 
 	// Subscribe to replication + control subjects for this client.
 	repSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.replication", clientID), func(m *nats.Msg) {
-		// Forward raw ServerFrame bytes to the WebSocket.
-		writeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		// Continue the trace started by worldsim's replication publish.
+		rctx, rspan := s.tracer.Start(otelinternal.Extract(ctx, m), "pusher.ws.write_replication")
+		defer rspan.End()
+		rspan.SetAttributes(attribute.String("client.id", clientID), attribute.Int("bytes", len(m.Data)))
+
+		writeCtx, cancel := context.WithTimeout(rctx, 5*time.Second)
 		defer cancel()
 		if err := c.Write(writeCtx, websocket.MessageBinary, m.Data); err != nil {
-			log.Printf("ws write replication [%s]: %v", clientID, err)
+			rspan.RecordError(err)
+			rspan.SetStatus(codes.Error, "ws write replication")
+			s.logger.Warn("ws write replication", "client", clientID, "err", err)
 		}
 	})
 	if err != nil {
-		log.Printf("nats sub replication [%s]: %v", clientID, err)
+		s.logger.Warn("nats sub replication", "client", clientID, "err", err)
 		return
 	}
 	sess.sub = repSub
@@ -115,7 +141,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		sess.sub.Unsubscribe()
 		s.sessions.Delete(clientID)
-		s.publishLifecycle("client.disconnected", clientID)
+		s.publishLifecycle(ctx, "client.disconnected", clientID)
 	}()
 
 	// Send AuthResultFrame.
@@ -130,21 +156,23 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	resultBytes, _ := proto.Marshal(result)
-	if err := c.Write(r.Context(), websocket.MessageBinary, resultBytes); err != nil {
-		log.Printf("ws write auth result [%s]: %v", clientID, err)
+	if err := c.Write(ctx, websocket.MessageBinary, resultBytes); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "ws write auth result")
+		s.logger.Warn("ws write auth result", "client", clientID, "err", err)
 		return
 	}
 
 	// Publish client.connected so World Sim provisions the entity.
-	s.publishLifecycle("client.connected", clientID)
+	s.publishLifecycle(ctx, "client.connected", clientID)
 
-	log.Printf("client connected: %s", clientID)
+	s.logger.Info("client connected", "client", clientID)
 
 	// Main read loop — forward InputFrames to NATS.
 	for {
 		msgType, msgData, err := c.Read(ctx)
 		if err != nil {
-			log.Printf("client %s disconnected: %v", clientID, err)
+			s.logger.Info("client disconnected", "client", clientID, "err", err)
 			return
 		}
 		if msgType != websocket.MessageBinary {
@@ -158,11 +186,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 		switch p := frame.Payload.(type) {
 		case *pb.ClientFrame_Input:
+			pctx, pspan := s.tracer.Start(ctx, "pusher.nats.publish.input")
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.Int("input.seq", int(p.Input.GetSeq())))
 			inputBytes, _ := proto.Marshal(p.Input)
 			subject := fmt.Sprintf("client.%s.input", clientID)
-			if err := s.nc.Publish(subject, inputBytes); err != nil {
-				log.Printf("nats publish input [%s]: %v", clientID, err)
+			msg := &nats.Msg{Subject: subject, Data: inputBytes}
+			otelinternal.Inject(pctx, msg) // worldsim's apply span will parent to this
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish input")
+				s.logger.Warn("nats publish input", "client", clientID, "err", err)
 			}
+			pspan.End()
 		case *pb.ClientFrame_Ping:
 			pong := &pb.ServerFrame{Payload: &pb.ServerFrame_Pong{Pong: &pb.PongFrame{}}}
 			pongBytes, _ := proto.Marshal(pong)
@@ -171,10 +206,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) publishLifecycle(subject, clientID string) {
+// publishLifecycle publishes a client.connected/disconnected event carrying
+// the current span context so worldsim's provision/despawn spans parent here.
+func (s *Server) publishLifecycle(ctx context.Context, subject, clientID string) {
 	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID})
-	if err := s.nc.Publish(subject, msg); err != nil {
-		log.Printf("nats publish %s: %v", subject, err)
+	m := &nats.Msg{Subject: subject, Data: msg}
+	otelinternal.Inject(ctx, m)
+	if err := s.nc.PublishMsg(m); err != nil {
+		s.logger.Warn("nats publish lifecycle", "subject", subject, "err", err)
 	}
 }
 

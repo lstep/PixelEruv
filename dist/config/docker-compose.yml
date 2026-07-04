@@ -19,6 +19,12 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       WS_ADDR: ":8081"
+      # OpenTelemetry — off by default. Set OTEL_ENABLED=true and point
+      # OTEL_EXPORTER_OTLP_ENDPOINT at a reachable collector to enable.
+      # In docker, 127.0.0.1 refers to the container, so use host.docker.internal
+      # (or a motel service) when debugging from the host.
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
     ports:
       - "8081:8081"
     restart: unless-stopped
@@ -34,6 +40,8 @@ services:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"
       MAP_ID: "test-map"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
     restart: unless-stopped
 
   frontend:
