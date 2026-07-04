@@ -24,11 +24,14 @@ movement feel instant despite a server-authoritative, ~150 ms round-trip
   dropped tick is self-correcting (see `11-replication.md` § 3.4).
 - **Local avatar is predicted, not driven by `UpdateComponent`** for its own
   `Position` (see `11-replication.md` § 6).
+- **Remote avatars use exponential smoothing** (`tau = 80 ms`) as an interim
+  step before the buffered snapshot-interpolation scheme below is specified.
 
 ## To be specified
 
-- Reconciliation algorithm (replay un-acked inputs against the authoritative
-  state).
+- ~~Reconciliation algorithm (replay un-acked inputs against the authoritative
+  state).~~ Implemented in `GameScene` (client-side prediction + replay of
+  un-acked inputs against the server position on each replication batch).
 - Snapshot interpolation buffer depth (typically 2–3 ticks).
 - Extrapolation / dead-reckoning timeout thresholds.
 - How `snapshot_seq` and input `seq` are correlated for reconciliation.
