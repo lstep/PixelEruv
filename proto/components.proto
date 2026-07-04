@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package pixeleruv;
+
+option go_package = "github.com/lstep/pixeleruv/backend/internal/pb;pb";
+
+// Component payloads. Each replicated component is encoded as a protobuf
+// message and carried inside ComponentData.data (see replication.proto).
+// The component_id field maps to a registered component type ID.
+
+// Component ID 1 — Position
+// Present on avatars, objects, decorations. The only component we need
+// for the lite MVP.
+message Position {
+  float x = 1;          // tile coordinates (float for sub-tile movement)
+  float y = 2;
+  string map_id = 3;
+  uint32 dir = 4;        // 0=down, 1=left, 2=right, 3=up
+}

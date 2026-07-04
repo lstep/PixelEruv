@@ -1,0 +1,47 @@
+name: pixeleruv
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    restart: unless-stopped
+
+  pusher:
+    build:
+      context: ../..
+      dockerfile: docker/backend.Dockerfile
+      target: pusher
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+      WS_ADDR: ":8081"
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  worldsim:
+    build:
+      context: ../..
+      dockerfile: docker/backend.Dockerfile
+      target: worldsim
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+      TICK_HZ: "20"
+      MAP_ID: "test-map"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../..
+      dockerfile: docker/frontend.Dockerfile
+    depends_on:
+      - pusher
+    ports:
+      - "8080:80"
+    restart: unless-stopped

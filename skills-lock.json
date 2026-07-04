@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "motel-debug": {
+      "source": "kitlangton/motel",
+      "sourceType": "github",
+      "skillPath": "skills/motel-debug/SKILL.md",
+      "computedHash": "5c2d76bf6c6118380750ab4cd91317b16781d39361169dee095a85e057a38d82"
+    }
+  }
+}

@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package pixeleruv;
+
+option go_package = "github.com/lstep/pixeleruv/backend/internal/pb;pb";
+
+// Replication protocol — four message types (see 11-replication.md).
+// For the lite MVP we only use SpawnEntity and UpdateComponent.
+
+message SpawnEntity {
+  string entity_id = 1;
+  repeated ComponentData components = 2;
+  uint32 snapshot_seq = 3;
+}
+
+message UpdateComponent {
+  string entity_id = 1;
+  uint32 component_id = 2;
+  bytes data = 3;                  // protobuf-encoded component payload
+  uint32 snapshot_seq = 4;
+}
+
+message DestroyEntity {
+  string entity_id = 1;
+  uint32 snapshot_seq = 2;
+}
+
+message PlayAnimation {
+  string entity_id = 1;
+  uint32 animation_id = 2;
+}
+
+// A batch of replication messages sent to a client per tick.
+message ReplicationBatch {
+  uint32 last_input_seq = 1;       // last processed input seq (for reconciliation)
+  repeated SpawnEntity spawns = 2;
+  repeated UpdateComponent updates = 3;
+  repeated DestroyEntity destroys = 4;
+  repeated PlayAnimation animations = 5;
+}
+
+message ComponentData {
+  uint32 component_id = 1;
+  bytes data = 2;
+}

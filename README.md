@@ -57,6 +57,63 @@ The virtual office is only one possible client. The same backend can power deskt
 
 By separating simulation, communication and presentation, Pixel Eruv aims to become the open foundation for the next generation of collaborative software.
 
+🛠️ Getting Started
+
+The lite MVP runs a single world: NATS for the bus, a Pusher (WebSocket proxy),
+a World Simulator (authoritative tick loop + replication), and a Phaser
+frontend served by nginx. Two ways to run it:
+
+Prerequisites
+
+* Docker and Docker Compose (for the bundled path), or
+* Go 1.26+, Node 22+, and a NATS server (for the native/dev path)
+
+Bundled (Docker Compose)
+
+    make up
+
+This builds the Pusher and World Sim images, starts NATS, and serves the
+frontend with nginx. Open http://localhost:8080 — you should see a 20×20
+tile world. Move with the arrow keys; each browser tab is a player.
+
+To stop: `make down`. To tail logs: `make logs`.
+
+Native binaries + dev server
+
+Build the backend and frontend:
+
+    make build      # → dist/bin/pusher, dist/bin/worldsim
+    make web        # → dist/web/
+
+Start a NATS server (e.g. `docker run -p 4222:4222 nats:2.10-alpine -js`),
+then run the two binaries against it:
+
+    NATS_URL=nats://localhost:4222 ./dist/bin/worldsim &
+    NATS_URL=nats://localhost:4222 WS_ADDR=:8081 ./dist/bin/pusher &
+
+For frontend development with hot reload, use the Vite dev server (it proxies
+`/ws` to the Pusher on :8081):
+
+    cd frontend && npx vite
+
+Open http://localhost:5173.
+
+To serve the built frontend natively instead, point an nginx instance at
+`dist/web/` with `dist/config/nginx.conf` (change the `proxy_pass` upstream
+from `pusher:8081` to `127.0.0.1:8081` for a non-Docker host).
+
+Project layout
+
+    proto/                  Protobuf definitions (frames, replication, components)
+    backend/cmd/pusher      WebSocket ↔ NATS proxy (no game logic)
+    backend/cmd/worldsim    Authoritative simulation: tick loop, ECS, movement, replication
+    frontend/               Phaser 4 client + generated TS protobuf
+    docker/                 Dockerfiles for pusher, worldsim, frontend
+    dist/
+      bin/                  Native binaries (build output)
+      web/                  Frontend build output + map assets
+      config/               docker-compose.yml, nginx.conf
+
 🌱 Project Status
 
 Pixel Eruv is currently in active design and early development.

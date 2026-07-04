@@ -17,3 +17,17 @@ mono_crash.*.json
 
 # macOS system files
 .DS_Store
+
+# Go
+backend/internal/pb/*.pb.go
+
+# Node
+frontend/node_modules/
+frontend/src/proto/
+
+# Build outputs (binaries + web assets)
+dist/bin/
+dist/web/
+
+# Docker
+.docker/
