@@ -60,8 +60,23 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## 5. Delegation
+
+- Use read-only subagents for broad repo research.
+- Use implementation subagents only for isolated work.
+- Use the review skill before opening a PR.
+
+## 6. Memory
+
+- Save durable facts only: setup, recurring commands, architecture decisions,
+  test accounts, and user preferences.
+- Never store secrets.
+
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+
 
 ## Project-Specific Guidelines
 
 - Use ginkgo for testing
+- Before planning, query memory for stable facts about this repo. At the end, save only durable facts that will help future sessions. Do not save secrets, logs, guesses, or one-off errors.
