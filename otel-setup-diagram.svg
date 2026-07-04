@@ -1,0 +1,192 @@
+<svg viewBox="0 0 1040 720" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style type="text/css">
+      <![CDATA[
+        :root {
+          color-scheme: light dark;
+          --fg: #172033;
+          --muted: #5b6475;
+          --line: #64748b;
+          --neutral: #e2e8f0;
+          --input: #bfdbfe;
+          --process: #c7d2fe;
+          --storage: #99f6e4;
+          --external: #fde68a;
+        }
+        @media (prefers-color-scheme: dark) {
+          :root {
+            --fg: #e5e7eb;
+            --muted: #a3adbd;
+            --line: #94a3b8;
+            --neutral: #334155;
+            --input: #1d4ed8;
+            --process: #4338ca;
+            --storage: #0f766e;
+            --external: #92400e;
+          }
+        }
+        .title { font-size: 20px; font-weight: 650; fill: var(--fg); }
+        .subtitle { font-size: 13px; fill: var(--muted); }
+        .label { font-size: 14px; font-weight: 600; fill: var(--fg); }
+        .small { font-size: 12px; fill: var(--muted); }
+        .spanname { font-size: 12px; font-weight: 600; fill: var(--fg); }
+        .mono { font-size: 11px; fill: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+        .node { stroke: var(--line); stroke-width: 1; }
+        .neutral { fill: var(--neutral); }
+        .input { fill: var(--input); }
+        .process { fill: var(--process); }
+        .storage { fill: var(--storage); }
+        .external { fill: var(--external); }
+        .edge { stroke: var(--line); stroke-width: 1.5; fill: none; }
+        .trace { stroke: #6366f1; stroke-width: 2; fill: none; stroke-dasharray: 7 4; }
+        .tel { stroke: #0d9488; stroke-width: 1.5; fill: none; stroke-dasharray: 3 3; }
+        .zone { fill: none; stroke: var(--line); stroke-width: 1; stroke-dasharray: 6 5; opacity: 0.6; }
+        .zone-label { font-size: 12px; font-weight: 600; fill: var(--muted); letter-spacing: 0.5px; }
+      ]]>
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="var(--line)" />
+    </marker>
+    <marker id="arrow-trace" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6366f1" />
+    </marker>
+    <marker id="arrow-tel" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0d9488" />
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="20" y="30" class="title">OpenTelemetry Setup — Trace Flow to motel</text>
+  <text x="20" y="50" class="subtitle">How a single trace id travels from browser → pusher → worldsim, and how telemetry ships to the local collector.</text>
+
+  <!-- ============ ZONES ============ -->
+  <rect x="20" y="80" width="320" height="540" rx="8" class="zone" />
+  <text x="36" y="104" class="zone-label">BROWSER</text>
+
+  <rect x="370" y="80" width="300" height="540" rx="8" class="zone" />
+  <text x="386" y="104" class="zone-label">PUSHER (Go)</text>
+
+  <rect x="700" y="80" width="300" height="540" rx="8" class="zone" />
+  <text x="716" y="104" class="zone-label">WORLDSIM (Go)</text>
+
+  <!-- ============ BROWSER NODES ============ -->
+  <!-- initOtel -->
+  <rect x="60" y="130" width="240" height="56" rx="6" class="node input" />
+  <text x="180" y="153" text-anchor="middle" class="label">initOtel()</text>
+  <text x="180" y="171" text-anchor="middle" class="small">WebTracerProvider + OTLP exporter</text>
+
+  <!-- ws.send_auth span -->
+  <rect x="60" y="230" width="240" height="56" rx="6" class="node input" />
+  <text x="180" y="253" text-anchor="middle" class="spanname">span: ws.send_auth</text>
+  <text x="180" y="271" text-anchor="middle" class="small">traceparentFor() → AuthFrame.traceparent</text>
+
+  <!-- ws.send_input span -->
+  <rect x="60" y="330" width="240" height="56" rx="6" class="node input" />
+  <text x="180" y="353" text-anchor="middle" class="spanname">span: ws.send_input</text>
+  <text x="180" y="371" text-anchor="middle" class="small">traceparentFor() → InputFrame.traceparent</text>
+
+  <!-- ws.on_replication span -->
+  <rect x="60" y="470" width="240" height="56" rx="6" class="node input" />
+  <text x="180" y="493" text-anchor="middle" class="spanname">span: ws.on_replication</text>
+  <text x="180" y="511" text-anchor="middle" class="small">receives replication batch</text>
+
+  <!-- ============ PUSHER NODES ============ -->
+  <!-- otel.Init -->
+  <rect x="400" y="130" width="240" height="56" rx="6" class="node process" />
+  <text x="520" y="153" text-anchor="middle" class="label">otel.Init("pusher")</text>
+  <text x="520" y="171" text-anchor="middle" class="small">TracerProvider + LoggerProvider</text>
+
+  <!-- pusher.ws.auth span -->
+  <rect x="400" y="230" width="240" height="56" rx="6" class="node process" />
+  <text x="520" y="253" text-anchor="middle" class="spanname">span: pusher.ws.auth</text>
+  <text x="520" y="271" text-anchor="middle" class="small">ContextFromTraceparent(auth.tp)</text>
+
+  <!-- pusher.nats.publish.input span -->
+  <rect x="400" y="330" width="240" height="56" rx="6" class="node process" />
+  <text x="520" y="353" text-anchor="middle" class="spanname">span: pusher.nats.publish.input</text>
+  <text x="520" y="371" text-anchor="middle" class="small">Inject(ctx, msg) → NATS header</text>
+
+  <!-- pusher.ws.write_replication span -->
+  <rect x="400" y="470" width="240" height="56" rx="6" class="node process" />
+  <text x="520" y="493" text-anchor="middle" class="spanname">span: pusher.ws.write_replication</text>
+  <text x="520" y="511" text-anchor="middle" class="small">Extract(ctx, msg) from NATS</text>
+
+  <!-- ============ WORLDSIM NODES ============ -->
+  <!-- otel.Init -->
+  <rect x="730" y="130" width="240" height="56" rx="6" class="node storage" />
+  <text x="850" y="153" text-anchor="middle" class="label">otel.Init("worldsim")</text>
+  <text x="850" y="171" text-anchor="middle" class="small">TracerProvider + LoggerProvider</text>
+
+  <!-- worldsim.client.connected span -->
+  <rect x="730" y="230" width="240" height="56" rx="6" class="node storage" />
+  <text x="850" y="253" text-anchor="middle" class="spanname">span: worldsim.client.connected</text>
+  <text x="850" y="271" text-anchor="middle" class="small">Extract(ctx, msg) from NATS</text>
+
+  <!-- worldsim.apply_input span -->
+  <rect x="730" y="330" width="240" height="56" rx="6" class="node storage" />
+  <text x="850" y="353" text-anchor="middle" class="spanname">span: worldsim.apply_input</text>
+  <text x="850" y="371" text-anchor="middle" class="small">Extract(ctx, msg) from NATS</text>
+
+  <!-- worldsim.tick / replicate -->
+  <rect x="730" y="430" width="240" height="56" rx="6" class="node storage" />
+  <text x="850" y="453" text-anchor="middle" class="spanname">span: worldsim.tick</text>
+  <text x="850" y="471" text-anchor="middle" class="small">→ worldsim.replicate (child)</text>
+
+  <!-- worldsim.replicate span -->
+  <rect x="730" y="510" width="240" height="56" rx="6" class="node storage" />
+  <text x="850" y="533" text-anchor="middle" class="spanname">span: worldsim.replicate</text>
+  <text x="850" y="551" text-anchor="middle" class="small">Inject(ctx, msg) → NATS header</text>
+
+  <!-- ============ TRACE FLOW EDGES (dashed indigo) ============ -->
+  <!-- ws.send_auth → pusher.ws.auth (via protobuf traceparent field) -->
+  <path d="M300,258 L400,258" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="350" y="222" text-anchor="middle" class="mono">traceparent in AuthFrame</text>
+
+  <!-- ws.send_input → pusher.nats.publish.input (via protobuf traceparent field) -->
+  <path d="M300,358 L400,358" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="350" y="322" text-anchor="middle" class="mono">traceparent in InputFrame</text>
+
+  <!-- pusher.ws.auth → worldsim.client.connected (via NATS header inject/extract) -->
+  <path d="M640,258 L730,258" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="685" y="222" text-anchor="middle" class="mono">NATS header</text>
+
+  <!-- pusher.nats.publish.input → worldsim.apply_input (via NATS header inject/extract) -->
+  <path d="M640,358 L730,358" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="685" y="322" text-anchor="middle" class="mono">NATS header</text>
+
+  <!-- worldsim.replicate → pusher.ws.write_replication (via NATS header inject/extract) -->
+  <path d="M730,538 L640,498" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="660" y="535" text-anchor="middle" class="mono">NATS header</text>
+
+  <!-- pusher.ws.write_replication → ws.on_replication (WebSocket frame) -->
+  <path d="M400,498 L300,498" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="350" y="462" text-anchor="middle" class="mono">WebSocket frame</text>
+
+  <!-- worldsim.tick → worldsim.replicate (internal child span) -->
+  <path d="M850,486 L850,510" class="trace" marker-end="url(#arrow-trace)" />
+
+  <!-- ============ TELEMETRY EXPORT EDGES (dotted teal) ============ -->
+  <!-- motel node -->
+  <rect x="340" y="650" width="360" height="50" rx="6" class="node external" />
+  <text x="520" y="672" text-anchor="middle" class="label">motel — local OTLP collector</text>
+  <text x="520" y="690" text-anchor="middle" class="small">http://127.0.0.1:27686  ·  /v1/traces  /v1/logs</text>
+
+  <!-- browser → motel -->
+  <path d="M180,526 L180,640 L400,665" class="tel" marker-end="url(#arrow-tel)" />
+  <text x="210" y="620" class="mono">OTLP/HTTP (spans)</text>
+
+  <!-- pusher → motel -->
+  <path d="M520,526 L520,650" class="tel" marker-end="url(#arrow-tel)" />
+  <text x="535" y="600" class="mono">OTLP/HTTP (spans + logs)</text>
+
+  <!-- worldsim → motel -->
+  <path d="M850,566 L850,640 L640,665" class="tel" marker-end="url(#arrow-tel)" />
+  <text x="780" y="620" class="mono" text-anchor="end">OTLP/HTTP (spans + logs)</text>
+
+  <!-- ============ LEGEND ============ -->
+  <rect x="20" y="650" width="300" height="50" rx="6" class="node neutral" />
+  <line x1="40" y1="668" x2="70" y2="668" class="trace" marker-end="url(#arrow-trace)" />
+  <text x="80" y="672" class="small">trace context propagation</text>
+  <line x1="40" y1="688" x2="70" y2="688" class="tel" marker-end="url(#arrow-tel)" />
+  <text x="80" y="692" class="small">telemetry export (OTLP)</text>
+</svg>
