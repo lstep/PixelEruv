@@ -19,14 +19,14 @@ positional audio/video.
   extensions.
 - ECS core (`13-ecs-design.md`), component-based replication
   (`11-replication.md`), netcode (`12-netcode.md`).
-- Trigger system (access: block/allow/ask; event: notify tile-bound/entity-
-  bound/proximity-bound; action: input handlers for click/key types) — the
-  mechanism by which extensions declare spatial rules on tiles and entities,
-  or register for player input events (`18-extensions.md` §3a). Input handlers
+- Trigger system (zone gate: block/allow/ask; zone notify: enter/exit for
+  static zones and proximity for mobile circle zones; input: for click/key
+  types) — the mechanism by which extensions declare spatial rules on zones
+  or register for player input events (`18-extensions.md` §3a). Input triggers
   enable click-based and key-based interactions (shooting, throwing, pressing
   E to interact) — the kernel broadcasts each input event to all registered
   extensions with range, LOS, entities on tile, and an equipment snapshot;
-  extensions self-filter and all replies are applied. Proximity-bound triggers
+  extensions self-filter and all replies are applied. Proximity triggers
   enable radius-based detection (alarms, NPC aggro) with a single registration
   per entity.
 - `ActionFrame` protocol — replaces `InteractFrame` with a unified frame for
@@ -34,7 +34,7 @@ positional audio/video.
   `input_type`) (`07-network-protocol.md` §1.5).
 - Zones incl. exclusive zones and knock-to-join meeting rooms
   (`14-zones-and-interactions.md`) — implemented as extension-owned triggers
-  on zone boundary tiles.
+  on zones.
 - First-party extension pack (walls, doors, base zone behaviors) as sibling
   processes in Docker Compose (`18-extensions.md`).
 - Proximity audio/video via LiveKit (`19-livekit.md`) + Bridge.

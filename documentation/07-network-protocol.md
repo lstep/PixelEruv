@@ -200,12 +200,13 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 | `entity.<entity_id>.move` | Extension | World Sim | Movement target |
 | `entity.<entity_id>.arrived` | World Sim | Extension | Reached movement target |
 | `entity.<entity_id>.despawned` | World Sim | Extension | Entity removed |
-| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Entity-bound and proximity-bound notify dispatch (enter/exit/proximity_enter/proximity_exit) |
-| `trigger.<trigger_id>.query` | World Sim | Extension (owning the trigger) | Access trigger query (for ask) |
-| `trigger.<trigger_id>.reply` | Extension | World Sim | Access trigger reply (for ask) |
-| `input.<input_type>` | World Sim | Extensions (registered for that input type) | Input handler dispatch (player clicked or pressed a key; includes range, LOS, entities, equipment) |
-| `input.<input_type>.reply.<req_id>` | Extension | World Sim | Input handler response (updates, consume_items) |
-| `trigger.notify.tile.<map_id>.<x>.<y>` | World Sim | All extensions (broadcast) | Tile-bound notify trigger dispatch |
+| `entity.<entity_id>.notify.<event>` | World Sim | Extension (owning the trigger) | Proximity trigger dispatch (proximity_enter/proximity_exit for mobile circle zones) |
+| `trigger.<trigger_id>.query` | World Sim | Extension (owning the trigger) | Gate trigger query (for ask) |
+| `trigger.<trigger_id>.reply` | Extension | World Sim | Gate trigger reply (for ask) |
+| `input.<input_type>` | World Sim | Extensions (registered for that input type) | Input trigger dispatch (player clicked or pressed a key; includes range, LOS, entities, equipment) |
+| `input.<input_type>.reply.<req_id>` | Extension | World Sim | Input trigger response (updates, consume_items) |
+| `zone.<zone_id>.notify.<event>` | World Sim | Extension (owning the zone) | Zone notify trigger dispatch (enter/exit) |
+| `entity.<entity_id>.notify.proximity_<event>` | World Sim | Extension (owning the trigger) | Proximity trigger dispatch (proximity_enter/proximity_exit) |
 
 ### 2.4 Extension lifecycle subjects
 
@@ -220,9 +221,10 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 | `extension.<ext_id>.despawn` | Extension | World Sim | Despawn entity |
 | `extension.<ext_id>.batch_update` | Extension | World Sim | Batched updates |
 | `extension.<ext_id>.error` | World Sim | Extension | Validation error |
-| `extension.<ext_id>.register_triggers` | Extension | World Sim | Register access/event triggers on tiles/entities, or input handlers for input types |
+| `extension.<ext_id>.register_triggers` | Extension | World Sim | Register zone triggers (gate/notify) on zones, or input triggers for input types |
 | `extension.<ext_id>.unregister_triggers` | Extension | World Sim | Remove triggers |
-| `extension.<ext_id>.register_zone` | Extension | World Sim | Register a zone (boundary + properties) |
+| `extension.<ext_id>.register_zone` | Extension | World Sim | Register a zone (shape + mobility + properties) |
+| `zone.<zone_id>.query_occupancy` | Extension | World Sim (request/reply) | Query current entity IDs inside the zone (used at init time to bootstrap occupancy state) |
 
 ### 2.5 Media (LiveKit Bridge) subjects
 
@@ -271,10 +273,8 @@ KV keys are **not** NATS subjects but follow a parallel convention. See
   (assumed) and that no JSON is sent on the hot path.
 - **[OPEN] Subject wildcards & sharding** — how `client.*.input` is partitioned
   across World Sim shards; ties into `14-zones-and-interactions.md`.
-- **[OPEN] Knock/invite wire protocol** — the knock-to-join flow
-  (`14-zones-and-interactions.md` §2) currently references `InteractFrame` for
-  the allow/deny popup. This should be updated to use `ActionFrame` (the
-  client sends an `ActionFrame` with `input_type: "click:left"` on the popup
-  entity's tile, the kernel broadcasts to extensions registered for
-  `click:left`, and the meeting extension self-filters based on
-  `entities_on_tile`).
+- **[RESOLVED] Knock/invite wire protocol** — uses transient popup entities +
+  `ActionFrame` (input trigger). See `14-zones-and-interactions.md` §8. No new
+  frame types. The client sends an `ActionFrame` with `input_type: "click:left"`
+  on the popup entity's tile; the kernel broadcasts to extensions registered for
+  `click:left`; the meeting extension self-filters based on `entities_on_tile`.

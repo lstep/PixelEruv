@@ -185,7 +185,7 @@ See `09-pusher.md` for the full specification.
 
 The World Simulator is a Go service that **is the spatial authority and
 replication gateway**. It owns the tile grid, the spatial index, the trigger
-registry, the zone boundaries, and the replication pipeline. Its only gameplay
+registry, the zone registry, and the replication pipeline. Its only gameplay
 system is player avatar movement; all other gameplay behavior is delegated to
 extensions via NATS. It is the only service that accesses PocketBase and
 JetStream KV.
@@ -193,9 +193,9 @@ JetStream KV.
 - Hosts the authoritative ECS (Ark) — see `13-ecs-design.md`. All entities live
   in the same ECS.
 - Owns the spatial index (tile → triggers, tile → entities), the trigger
-  registry, and the zone boundary registry. Evaluates access triggers
-  (block/allow cached, ask routed to extensions) and dispatches event triggers
-  (notify).
+  registry, and the zone registry. Evaluates zone gate triggers
+  (block/allow cached, ask routed to extensions) and dispatches zone notify
+  triggers (enter/exit).
 - Moves player avatars (the only in-kernel gameplay system — latency-critical
   and deployment-invariant). All other entity behavior comes from extensions
   via NATS.
@@ -220,15 +220,14 @@ entities.
 
 - Register with the World Sim via NATS, spawn entities in the ECS (no type
   restrictions).
-- Register triggers (access: block/allow/ask; event: notify
-  tile-bound/entity-bound/proximity-bound; action: input handlers for
-  click/key types) on tiles, entities, or input types. The kernel caches
-  block/allow triggers locally, routes ask triggers to the extension at
-  runtime, broadcasts input events to all registered extensions with range/LOS
-  data and an equipment snapshot, and evaluates proximity triggers per-tick.
-- Register zones (polygon regions with associated triggers). Zone boundaries
-  are stored in the kernel; zone behavior is implemented by the extension via
-  triggers.
+- Register triggers (zone gate: block/allow/ask; zone notify: enter/exit for
+  static zones and proximity for mobile circle zones; input: for click/key
+  types) on zones or input types. The kernel caches block/allow gate decisions
+  locally, routes ask gates to the extension at runtime, broadcasts input
+  events to all registered extensions with range/LOS data and an equipment
+  snapshot, and evaluates proximity triggers (mobile circle zones) per-tick.
+- Register zones (first-class kernel objects with shapes and mobility). Zone
+  behavior is implemented by the extension via zone triggers.
 - Update any component directly (per-tick or event-driven) — same mechanism
   as the World Sim's kernel. Target-based interpolated movement is also
   available as a convenience.
@@ -329,7 +328,7 @@ Browser → Pusher: ActionFrame (click door tile, input_type: "click:left")
          ↳ World Simulator receives ActionFrame:
             • broadcasts to all extensions registered for "click:left"
             • doors extension self-filters: sees door entity in entities_on_tile
-            • doors extension updates the door component, writes zone state to KV, and may register/unregister block triggers on the zone boundary tiles.
+            • doors extension updates the door component, writes zone state to KV, and may switch the zone's gate trigger between block and allow.
             • encodes replication batch (zone state change)
             • publishes batch to NATS → Pusher → clients (visual filter)
          ↳ NATS kv.Watch fires:
@@ -342,7 +341,7 @@ Browser → Pusher: ActionFrame (click door tile, input_type: "click:left")
 Browser → Pusher: input
          ↳ Pusher forwards input to NATS
          ↳ World Simulator receives input:
-            • runs player avatar movement (in-kernel): computes target tile, evaluates access triggers (block/allow cached, ask routed to extension), updates position if allowed, fires event triggers (notify) on entered/exited tiles
+            • runs player avatar movement (in-kernel): computes target tile, evaluates gate triggers (block/allow cached, ask routed to extension), updates position if allowed, fires zone notify triggers on entered/exited zones
             • encodes per-client replication batches (AOI-filtered)
             • publishes batches to NATS
          ↳ Pushers forward batches to their connected clients
@@ -354,7 +353,7 @@ Browser → Pusher: input
 ## 5. Design principles
 
 1. **Server-authoritative.** The World Simulator is the spatial authority: it
-   owns the tile grid, the trigger registry, and the zone boundaries. The client
+   owns the tile grid, the trigger registry, and the zone registry. The client
    predicts locally and reconciles; it never decides authoritative state. Zone
    isolation is enforced server-side via triggers, not client-side.
 

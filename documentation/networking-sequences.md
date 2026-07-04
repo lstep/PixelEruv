@@ -108,7 +108,7 @@ sequenceDiagram
 
 ---
 
-## 3. Interaction with input handler broadcast
+## 3. Interaction with input trigger broadcast
 
 An `ActionFrame` carries an `input_type` (e.g. `click:left`, `key:E`) and
 optional target tile coordinates (for clicks). The World Simulator computes

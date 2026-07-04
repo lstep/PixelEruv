@@ -144,7 +144,7 @@ resilience).
 
 #### Zone state (per zone)
 
-Defined in `14-zones-and-interactions.md`. Zone boundaries are stored in the
+Defined in `14-zones-and-interactions.md`. Zone shapes are stored in the
 World Sim's zone registry (in-memory, reconstructed from Tiled + extension
 registrations on restart). Zone **properties** (exclusivity, tint, owner) are
 written to KV by the owning extension so the LiveKit Bridge can react via

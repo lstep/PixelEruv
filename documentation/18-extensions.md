@@ -121,7 +121,7 @@ single point that:
   movement or by extensions — live in the same ECS. The World Sim creates them,
   stores them, and removes them.
 - **Owns the spatial index.** The tile grid (from Tiled), the trigger registry,
-  and the zone boundary registry are all in the World Sim. The spatial index
+  and the zone registry are all in the World Sim. The spatial index
   maps tiles to triggers and entities for O(1) lookup during movement
   validation.
 - **Handles replication.** The AOI filter, the replication encoder, and the
@@ -131,9 +131,9 @@ single point that:
   triggers), position bounds, and component schema validation apply to all
   entities equally. The World Sim rejects updates that violate these rules —
   whether they come from its own player movement or from an extension.
-- **Evaluates triggers.** The kernel checks access triggers (`block`/`allow`/
+- **Evaluates triggers.** The kernel checks zone gate triggers (`block`/`allow`/
   `ask`) on target tiles during movement. `block` and `allow` are cached
-  locally; `ask` triggers are routed to the owning extension via NATS.
+  locally; `ask` gates are routed to the owning extension via NATS.
 - **Moves player avatars.** The only gameplay system in the kernel. Input →
   target tile → trigger evaluation → Position update, all in one tick.
 - **Provisions and persists.** Identity → entity provisioning (PocketBase
@@ -146,19 +146,21 @@ single point that:
 - Update any component on their entities directly (per-tick or event-driven).
 - Request interpolated movement (target-based) or publish positions directly.
 - Register custom component types with new protobuf schemas.
-- **Register triggers** (access: `block`/`allow`/`ask`; event: `notify`;
-  action: input handlers) on tiles, entities, or input types. The kernel caches
-  `block`/`allow` triggers locally, routes `ask` triggers to the extension at
-  runtime, broadcasts input events to all registered extensions with range/LOS
-  data and an equipment snapshot, and evaluates proximity triggers per-tick. See
-  §3a.
-- **Register zones** (polygon regions with associated triggers). Zone
-  boundaries are stored in the kernel; zone behavior is implemented by the
-  extension via triggers. See §3b.
+- **Register triggers** (zone triggers: gate mode with `block`/`allow`/`ask`
+  behavior, or notify mode for enter/exit transitions; input triggers: for
+  player-initiated actions). Zone triggers attach to zones (which have shapes
+  and mobility); input triggers attach to input types. The kernel caches
+  `block`/`allow` gate decisions locally, routes `ask` gates to the extension
+  at runtime, broadcasts input events to all registered extensions with
+  range/LOS data and an equipment snapshot, and evaluates proximity triggers
+  (mobile circle zones in notify mode) per-tick. See §3a.
+- **Register zones** (first-class kernel objects with shapes and mobility).
+  Zone boundaries are stored in the kernel; zone behavior is implemented by
+  the extension via zone triggers. See §3b.
 - **Claim base entities** from the Tiled map. Base entities exist in the ECS
   without an `ExtensionOwner`; an extension can claim them by registering
   triggers on them or updating their components.
-- Handle client interactions asynchronously (via input handlers — register for
+- Handle client interactions asynchronously (via input triggers — register for
   input types like `click:left` or `key:E` and self-filter based on the
   payload).
 - Read and write any JetStream KV key.
@@ -339,45 +341,46 @@ the spatial index (or retained if the `freeze` policy is used, so cached
 
 ## 3a. Trigger registration
 
-Triggers are the mechanism by which extensions declare **spatial rules** on
-tiles and entities. The kernel stores them in its trigger registry and indexes
-them in the spatial index. There are three categories:
+Triggers are the mechanism by which extensions declare **spatial rules** and
+**input triggers**. The kernel stores them in its trigger registry and indexes
+them in the spatial index. There are two trigger types: **Zone Triggers** and
+**Input Triggers** (see `CONTEXT.md` for the canonical glossary).
 
-### Access triggers (gate movement)
+> **Vocabulary note:** "input handler" is a generic description of what input
+> triggers do (they handle input). The canonical term for the registered
+> trigger is **input trigger**.
+**Input Triggers** (see `CONTEXT.md` for the canonical glossary).
 
-| Behavior | Kernel action | NATS round-trip? | Use case |
+### Zone triggers (spatial transitions)
+
+Zone triggers attach to zones and fire on spatial transitions into or out of
+the zone's region. Each zone trigger has a **Mode**:
+
+| Mode | Kernel action | NATS round-trip? | Use case |
 |---|---|---|---|
-| `block` | Cache in spatial index. Refuse any move to that tile. | No — kernel decides locally | Walls, obstacles, closed doors |
-| `allow` | Cache in spatial index. Always permit. | No | Open passages, explicit overrides |
-| `ask` | Publish query to owning extension each time. Wait for reply. | Yes — but rare | Dynamic access (room full? on guest list?) |
+| `gate` (block) | Cache in spatial index. Refuse any move into the zone. | No — kernel decides locally | Walls, obstacles, closed doors |
+| `gate` (allow) | Cache in spatial index. Always permit. | No | Open passages, explicit overrides |
+| `gate` (ask) | Publish query to owning extension each time. Wait for reply. | Yes — but rare | Dynamic access (room full? on guest list?) |
+| `notify` | Publish enter/exit events to owning extension. No gating. | No (fire-and-forget) | Meeting room occupancy, proximity alarms |
 
-### Event triggers (notifications, do not gate movement)
+A zone trigger inherits the zone's **Shape** (polygon, circle, rect) and
+**Mobility** (static or mobile). Static zones are pre-rasterized to a tile set
+at load time for O(1) point-in-zone lookup. Mobile zones (circle-only) are
+evaluated per-tick via distance checks — this is the **proximity trigger**
+pattern: a mobile circle zone in notify mode fires `proximity_enter` /
+`proximity_exit` when a player enters or leaves the radius. The kernel handles
+enter/exit transition detection; the extension does not need to track a
+presence counter.
 
-| Binding | Routing | Use case |
-|---|---|---|
-| **Entity-bound** | Point-to-point to the extension that owns the entity | NPC notices a player approached |
-| **Tile-bound** | Broadcast to all extensions (self-filtered) | Welcome mat, floor switch, meeting room occupancy counter |
-| **Proximity-bound** | Point-to-point to the extension that owns the entity | Proximity alarm that rings while a player is within N tiles of an entity; NPC aggro radius |
+### Input triggers (player-initiated, broadcast to all registered extensions)
 
-Proximity-bound triggers fire when a player enters or leaves a radius around
-the bound entity. Unlike tile-bound triggers (which require one trigger per
-tile in the area), a proximity trigger is a single registration with a
-`radius` in tiles. The kernel evaluates proximity every tick after movement:
-it checks all players against all proximity triggers using the spatial index,
-fires `proximity_enter` for new entries and `proximity_exit` for departures,
-and sends point-to-point notifications to the owning extension. The extension
-does not need to track a presence counter — the kernel handles enter/exit
-transitions.
-
-### Input handlers (player-initiated, broadcast to all registered extensions)
-
-| Binding | Kernel action | NATS round-trip? | Use case |
+| Type | Kernel action | NATS round-trip? | Use case |
 |---|---|---|---|
 | `input` | Compute range + LOS + entities on tile, then broadcast to all extensions that registered for that input type | Yes (broadcast to all registered) | Shooting a bow, pressing E to interact, clicking a button, throwing an object |
 
-Input handlers fire when a player triggers an input event (a click or a key
-press, via `ActionFrame`). Unlike access and event triggers (which are bound to
-tiles or entities), input handlers are bound to an **input type** — a string
+Input triggers fire when a player triggers an input event (a click or a key
+press, via `ActionFrame`). Unlike zone triggers (which fire on spatial
+transitions), input triggers are bound to an **input type** — a string
 like `click:left`, `click:right`, `click:double`, `key:E`, etc. Extensions
 register for the input types they care about; the kernel broadcasts each input
 event to **all** extensions that registered for that type.
@@ -406,55 +409,61 @@ Payload:
   "triggers": [
     {
       "trigger_id": "wall-lobby-north",
-      "category": "access",
-      "binding": "tile",
-      "tiles": [{"map_id": "lobby", "x": 10, "y": 5}, {"map_id": "lobby", "x": 10, "y": 6}],
-      "behavior": "block"
+      "type": "zone",
+      "zone_id": "wall-lobby-north",
+      "mode": "gate",
+      "access_behavior": "block",
+      "shape": "rect",
+      "mobility": "static",
+      "tiles": [{"map_id": "lobby", "x": 10, "y": 5}, {"map_id": "lobby", "x": 10, "y": 6}]
     },
     {
-      "trigger_id": "meeting-room-1-entrance",
-      "category": "access",
-      "binding": "tile",
-      "tiles": [{"map_id": "office", "x": 42, "y": 17}],
-      "behavior": "ask",
+      "trigger_id": "meeting-room-1-gate",
+      "type": "zone",
+      "zone_id": "meeting-room-1",
+      "mode": "gate",
+      "access_behavior": "ask",
+      "shape": "polygon",
+      "mobility": "static",
       "default_on_timeout": "block",
       "ttl_ms": 500
     },
     {
-      "trigger_id": "welcome-mat-lobby",
-      "category": "event",
-      "binding": "tile",
-      "tiles": [{"map_id": "lobby", "x": 5, "y": 5}],
-      "event": "enter"
+      "trigger_id": "meeting-room-1-notify",
+      "type": "zone",
+      "zone_id": "meeting-room-1",
+      "mode": "notify",
+      "shape": "polygon",
+      "mobility": "static",
+      "events": ["enter", "exit"]
     },
     {
       "trigger_id": "waitress-1-interact",
-      "category": "action",
-      "binding": "input",
+      "type": "input",
       "input": "key:E",
-      "owner_extension_id": "waitress-npc-v1"
+      "owner_extension": "waitress-npc-v1"
     },
     {
       "trigger_id": "alarm-1-proximity",
-      "category": "event",
-      "binding": "proximity",
-      "entity_id": "alarm-1",
+      "type": "zone",
+      "mode": "notify",
+      "shape": "circle",
+      "mobility": "mobile",
+      "follows_entity_id": "alarm-1",
       "radius": 3,
       "events": ["proximity_enter", "proximity_exit"]
     },
     {
       "trigger_id": "combat-click-left",
-      "category": "action",
-      "binding": "input",
+      "type": "input",
       "input": "click:left",
-      "owner_extension_id": "combat-ext"
+      "owner_extension": "combat-ext"
     },
     {
       "trigger_id": "interact-key-e",
-      "category": "action",
-      "binding": "input",
+      "type": "input",
       "input": "key:E",
-      "owner_extension_id": "office-ext"
+      "owner_extension": "office-ext"
     }
   ]
 }
@@ -466,30 +475,31 @@ responds with a confirmation:
 ```
 {
   "status": "registered",
-  "trigger_ids": ["wall-lobby-north", "meeting-room-1-entrance", "welcome-mat-lobby", "waitress-1-interact", "alarm-1-proximity", "combat-click-left", "interact-key-e"]
+  "trigger_ids": ["wall-lobby-north", "meeting-room-1-gate", "meeting-room-1-notify", "waitress-1-interact", "alarm-1-proximity", "combat-click-left", "interact-key-e"]
 }
 ```
 
 ### Trigger evaluation at runtime
 
 When any entity (player or extension) attempts to enter a tile, the kernel
-evaluates all access triggers on that tile (see `10-world-simulator.md` §5c):
+evaluates all gate-mode zone triggers covering that tile (see
+`10-world-simulator.md` §5c):
 
-1. **Any `block` trigger?** → refuse immediately (cached, no NATS).
-2. **All `allow` or no triggers?** → accept.
-3. **Has `ask` trigger?** → publish query to the owning extension, defer move.
+1. **Any `block` gate?** → refuse immediately (cached, no NATS).
+2. **All `allow` or no gate triggers?** → accept.
+3. **Has `ask` gate?** → publish query to the owning extension, defer move.
 
-For `ask` triggers, the kernel publishes:
+For `ask` gates, the kernel publishes:
 
 ```
 Subject: trigger.<trigger_id>.query
 Payload:
 {
-  "trigger_id": "meeting-room-1-entrance",
+  "trigger_id": "meeting-room-1-gate",
   "entity_id": "user-42",
   "client_id": "abc123",
   "target_tile": {"map_id": "office", "x": 42, "y": 17},
-  "reply_to": "trigger.meeting-room-1-entrance.reply"
+  "reply_to": "trigger.meeting-room-1-gate.reply"
 }
 ```
 
@@ -499,7 +509,7 @@ The extension replies:
 Subject: trigger.<trigger_id>.reply
 Payload:
 {
-  "trigger_id": "meeting-room-1-entrance",
+  "trigger_id": "meeting-room-1-gate",
   "entity_id": "user-42",
   "decision": "allow" | "block",
   "reason": "Room is full"  // optional, for client feedback
@@ -509,51 +519,43 @@ Payload:
 If the extension does not reply within `ttl_ms`, the kernel applies
 `default_on_timeout` (default: `block` — fail closed).
 
-### Multiple triggers per tile: any-refusal-blocks
+### Multiple gate zones per tile: block-wins
 
-A tile can have triggers from multiple extensions. The resolution policy is
-**any-refusal-blocks**: all access triggers must approve the move. If any
-trigger refuses (`block` or `ask` reply with `block`), the move is blocked.
+A tile can be covered by multiple gate-mode zones from different extensions.
+The resolution policy is **block-wins**: if any gate zone returns `block`
+(cached or via `ask` reply), the movement is refused. Only if all overlapping
+gate zones permit is movement allowed. For overlapping `ask` gates owned by
+different extensions, the kernel queries all in parallel within a per-tick
+timeout and blocks if any replies `block`. See ADR 0001.
 
-### Event trigger dispatch
+### Zone notify trigger dispatch
 
-After a move succeeds, the kernel fires event triggers on the entered and
-exited tiles. Proximity-bound triggers are evaluated separately, once per
-tick after all movement is processed (see below).
+After a move succeeds, the kernel fires notify-mode zone triggers for the
+entered and exited zones. Proximity triggers (mobile circle zones in notify
+mode) are evaluated separately, once per tick after all movement is processed
+(see below).
 
-- **Entity-bound `notify`**: the kernel publishes to the owning extension
-  (point-to-point):
+- **Zone-bound `notify`** (static zones): the kernel detects zone boundary
+  crossings and publishes to the owning extension (point-to-point):
   ```
-  Subject: entity.<entity_id>.notify.<event>
+  Subject: zone.<zone_id>.notify.<event>
   Payload:
   {
-    "entity_id": "waitress-1",
+    "zone_id": "meeting-room-1",
     "event": "enter",
-    "player_entity_id": "user-42"
+    "entity_id": "user-42"
   }
   ```
   Events are `enter` and `exit` (fired after movement). This is fire-and-forget
   — no reply expected. (Player-initiated interactions like clicking or pressing
-  E are handled by input handlers, not by entity-bound notify triggers.)
+  E are handled by input triggers, not by zone notify triggers.)
 
-- **Tile-bound `notify`**: the kernel broadcasts to all extensions:
-  ```
-  Subject: trigger.notify.tile.<map_id>.<x>.<y>
-  Payload:
-  {
-    "event": "enter",
-    "entity_id": "user-42",
-    "tile": {"map_id": "lobby", "x": 5, "y": 5}
-  }
-  ```
-  Extensions self-filter: they receive the broadcast and ignore it if they
-  don't care about that tile/event. This is fire-and-forget — no reply expected.
-
-- **Proximity-bound `notify`**: the kernel evaluates proximity triggers once
-  per tick, after all movement has been processed. For each proximity trigger,
-  it computes the set of players within `radius` tiles of the bound entity
-  (using the spatial index) and compares with the previous tick's set. For
-  each transition, it publishes to the owning extension (point-to-point):
+- **Proximity `notify`** (mobile circle zones): the kernel evaluates proximity
+  triggers once per tick, after all movement has been processed. For each
+  proximity trigger, it computes the set of players within `radius` tiles of
+  the followed entity (using the spatial index) and compares with the previous
+  tick's set. For each transition, it publishes to the owning extension
+  (point-to-point):
   ```
   Subject: entity.<entity_id>.notify.proximity_enter
   Payload:
@@ -568,7 +570,7 @@ tick after all movement is processed (see below).
   kernel handles enter/exit transition detection; the extension does not need
   to track a presence counter.
 
-### Input handler dispatch
+### Input trigger dispatch
 
 When a player triggers an input event (via `ActionFrame`), the kernel:
 
@@ -653,15 +655,16 @@ The kernel removes them from the trigger registry and spatial index.
 ### Trigger persistence across extension crashes
 
 When an extension crashes:
-- **`block`/`allow` triggers** remain cached in the spatial index. They continue
-  to function without the extension being alive (the decision was pre-declared).
-- **`ask` triggers** will time out and fail closed (`default_on_timeout: block`).
-  The extension is unreachable, so no reply arrives.
-- **`notify` triggers** (tile-bound, entity-bound, proximity-bound) are
-  silently dropped (no one is listening on the extension's subscriber). The
-  kernel stops firing proximity evaluations for triggers owned by the crashed
-  extension.
-- **`input` handlers** from the crashed extension are removed from the input
+- **Gate triggers with `block`/`allow` behavior** remain cached in the spatial
+  index. They continue to function without the extension being alive (the
+  decision was pre-declared).
+- **Gate triggers with `ask` behavior** will time out and fail closed
+  (`default_on_timeout: block`). The extension is unreachable, so no reply
+  arrives.
+- **Notify-mode zone triggers** (static and proximity) are silently dropped
+  (no one is listening on the extension's subscriber). The kernel stops firing
+  proximity evaluations for triggers owned by the crashed extension.
+- **Input triggers** from the crashed extension are removed from the input
   registry. Input events of that type are no longer broadcast to the crashed
   extension. If no other extension registered for that input type, the kernel
   sends `ActionResultFrame{ ok: false, reason: "no_handler" }`.
@@ -674,14 +677,16 @@ registrations — the extension can update or replace them.
 
 ## 3b. Zone registration
 
-Zones are polygon-defined regions on a map. They can be created from Tiled (base
-zones) or dynamically by extensions at init time.
+Zones are first-class kernel objects representing regions on a map. They have
+a `zone_id`, a **Shape** (polygon, circle, or rect), a **Mobility** (static or
+mobile), and metadata. Zones can be created from Tiled (base zones) or
+dynamically by extensions at init time.
 
-A zone by itself is just a boundary. Zone **behavior** (exclusivity,
+A zone by itself is just a region. Zone **behavior** (exclusivity,
 knock-to-join, timers, access policies) is implemented by the owning extension
-via triggers on the zone's boundary tiles. The kernel does not know what a
-"meeting room" or an "exclusive zone" is — it knows "zone Z has trigger T on
-its boundary tiles, owned by extension E."
+via zone triggers (gate mode for access control, notify mode for enter/exit
+observations). The kernel does not know what a "meeting room" or an "exclusive
+zone" is — it knows "zone Z has gate trigger T, owned by extension E."
 
 ### Registration message
 
@@ -691,7 +696,9 @@ Payload:
 {
   "zone_id": "meeting-room-1",
   "map_id": "office",
-  "boundary_tiles": [{"x": 42, "y": 17}, {"x": 43, "y": 17}, ...],
+  "shape": "polygon",
+  "mobility": "static",
+  "polygon": [{"x": 40, "y": 15}, {"x": 50, "y": 15}, {"x": 50, "y": 25}, {"x": 40, "y": 25}],
   "properties": {
     "is_exclusive": false,
     "tint_color": null
@@ -699,9 +706,22 @@ Payload:
 }
 ```
 
-The kernel stores the zone boundaries in its zone registry. The extension is
-expected to also register triggers on the zone's boundary tiles (via
-`register_triggers`) if it wants to control access to the zone.
+For circle zones (typically mobile/proximity):
+```
+{
+  "zone_id": "alarm-1-proximity",
+  "map_id": "office",
+  "shape": "circle",
+  "mobility": "mobile",
+  "follows_entity_id": "alarm-1",
+  "radius": 3
+}
+```
+
+The kernel stores the zone in its zone registry. Static zones are pre-rasterized
+to a tile set for O(1) point-in-zone lookup. The extension is expected to also
+register zone triggers (via `register_triggers`) if it wants to control access
+to or observe transitions in the zone.
 
 Zone properties (exclusivity, tint, etc.) are written to JetStream KV by the
 extension (see §7), so the LiveKit Bridge can react to zone-state changes via
@@ -741,8 +761,8 @@ The World Sim enforces the same rules for all entities, regardless of who
 drives them:
 
 - **Collision.** No entity (kernel-driven or extension-driven) can move through
-  tiles with a `block` access trigger.
-- **Zone access.** No entity can enter a zone whose boundary triggers refuse
+  tiles covered by a `block` gate zone.
+- **Zone access.** No entity can enter a zone whose gate triggers refuse
   the entry (via `block` or `ask` with a refusal reply).
 - **Position bounds.** Positions must be on the map and within valid bounds.
 - **Component schema.** Component data must match its registered protobuf
@@ -801,7 +821,7 @@ Payload:
 
 The World Sim sets a `MovementTarget` component on the entity. The kernel's
 interpolation logic (part of the tick loop) interpolates the position toward
-the target each tick, at the specified speed. Access triggers on each tile
+the target each tick, at the specified speed. Gate triggers on each tile
 along the path are evaluated (block/allow cached, ask routed).
 
 When the entity reaches the target, the World Sim publishes:
@@ -847,7 +867,7 @@ fails validation, the entire batch is rejected.
 
 ## 6. Interactions
 
-Interactions are handled by the input handler model (see §3a). The client
+Interactions are handled by the input trigger model (see §3a). The client
 sends `ActionFrame` for all tile clicks and key presses (`InteractFrame` has
 been deprecated — `ActionFrame` replaces it for all player-initiated input).
 The kernel broadcasts each input event to all extensions that registered for
@@ -872,10 +892,10 @@ When a client sends an `ActionFrame`:
 
 ### What replaced entity interaction routing
 
-Previously, the kernel had a fallback path: if no action trigger was registered
-on a clicked tile but an entity was present, the kernel would forward the
+Previously, the kernel had a fallback path: if no input trigger was registered
+for a clicked tile but an entity was present, the kernel would forward the
 interaction to the entity's owning extension via `entity.<entity_id>.interact`.
-This is no longer needed. In the input handler model:
+This is no longer needed. In the input trigger model:
 
 - An extension that owns an NPC and wants to handle clicks on it registers for
   `click:left`. When a player clicks the NPC's tile, the extension receives the
@@ -884,7 +904,7 @@ This is no longer needed. In the input handler model:
   `key:E`. When a player presses E, the extension receives the broadcast,
   checks `adjacent_entities` for entities it owns, and responds.
 - The `entity.<entity_id>.interact` subject is no longer used. All interaction
-  routing goes through the input handler broadcast.
+  routing goes through the input trigger broadcast.
 
 ### Interaction flow
 
@@ -934,7 +954,7 @@ input.click.left.reply.req-125 → World Sim (via NATS)
 
 ### Async replies
 
-The input handler dispatch includes a `reply_to` subject so each extension can
+The input trigger dispatch includes a `reply_to` subject so each extension can
 respond asynchronously. The World Sim does **not** block the tick loop waiting
 for replies. Extensions respond whenever they're ready (immediately for fixed
 responses, after an LLM call for generated responses). The World Sim applies
@@ -993,8 +1013,8 @@ other clients can render equipped items.
   (kernel validates the tile).
 - **Use/consume**: handles item effects and sends `consume_items` in action
   trigger replies.
-- **Equipment in input handlers**: reads the equipment snapshot from the
-  input handler payload to decide the action.
+- **Equipment in input triggers**: reads the equipment snapshot from the
+  input trigger payload to decide the action.
 - **Persistence**: item definitions and player inventory state are persisted by
   the extension to JetStream KV (extensions have unrestricted KV access, see
   §7). For durable relational storage in PocketBase, the extension coordinates
@@ -1119,9 +1139,9 @@ The client needs to know how to render custom components. The mechanism:
 |---|---|---|
 | `extension.register` | Register a new extension | On startup |
 | `extension.<ext_id>.register_components` | Register custom component types | On startup |
-| `extension.<ext_id>.register_triggers` | Register access/event triggers on tiles/entities, or input handlers for input types | At init time |
+| `extension.<ext_id>.register_triggers` | Register zone triggers (gate/notify) on zones, or input triggers for input types | At init time |
 | `extension.<ext_id>.unregister_triggers` | Remove triggers | On demand |
-| `extension.<ext_id>.register_zone` | Register a zone (boundary + properties) | At init time |
+| `extension.<ext_id>.register_zone` | Register a zone (shape + mobility + properties) | At init time |
 | `extension.<ext_id>.deregister` | Graceful shutdown | On shutdown |
 | `extension.<ext_id>.heartbeat` | Liveness signal | Per interval (e.g. 5s) |
 | `extension.<ext_id>.spawn` | Spawn an entity | On demand |
@@ -1129,20 +1149,20 @@ The client needs to know how to render custom components. The mechanism:
 | `extension.<ext_id>.batch_update` | Batch component updates (multiple entities/components) | Per tick or event-driven |
 | `entity.<entity_id>.update` | Direct component update | Per tick or event-driven |
 | `entity.<entity_id>.move` | Request interpolated movement to a target | On demand |
-| `trigger.<trigger_id>.reply` | Reply to an `ask` access trigger query | Async (within `ttl_ms`) |
-| `input.<input_type>.reply.<req_id>` | Reply to an input handler dispatch (updates, consume_items) | Async |
+| `trigger.<trigger_id>.reply` | Reply to an `ask` gate trigger query | Async (within `ttl_ms`) |
+| `input.<input_type>.reply.<req_id>` | Reply to an input trigger dispatch (updates, consume_items) | Async |
 
 ### World Sim → Extension
 
 | Subject | Purpose | Frequency |
 |---|---|---|
 | `extension.<ext_id>.registered` | Registration response (with existing entities) | On registration |
-| `entity.<entity_id>.notify.<event>` | Entity-bound `notify` trigger dispatch (enter/exit) and proximity-bound `notify` dispatch (proximity_enter/proximity_exit) | Event-driven |
+| `zone.<zone_id>.notify.<event>` | Zone notify trigger dispatch (enter/exit for static zones) | On zone boundary crossing |
+| `entity.<entity_id>.notify.proximity_<event>` | Proximity trigger dispatch (proximity_enter/proximity_exit for mobile circle zones) | Per-tick |
 | `entity.<entity_id>.arrived` | Entity reached movement target | On arrival |
 | `entity.<entity_id>.despawned` | Entity was despawned (by World Sim or admin) | Event-driven |
-| `trigger.<trigger_id>.query` | `ask` access trigger query (does the kernel allow this move?) | On move attempt to a tile with an `ask` trigger |
-| `input.<input_type>` | Input handler dispatch (player clicked or pressed a key; includes equipment snapshot, range, LOS, entities on tile) | On ActionFrame with a matching input type |
-| `trigger.notify.tile.<map_id>.<x>.<y>` | Tile-bound `notify` trigger broadcast (all extensions self-filter) | On enter/exit |
+| `trigger.<trigger_id>.query` | `ask` gate trigger query (does the kernel allow this move?) | On move attempt to a tile covered by an `ask` gate zone |
+| `input.<input_type>` | Input trigger dispatch (player clicked or pressed a key; includes equipment snapshot, range, LOS, entities on tile) | On ActionFrame with a matching input type |
 | `world_sim.restarted` | World Sim restarted (extensions should re-register triggers and re-spawn) | On restart |
 | `extension.<ext_id>.error` | Validation error for a command | On error |
 
@@ -1172,13 +1192,13 @@ an error on `extension.<ext_id>.error` and does not apply the command.
 |---|---|
 | `spawn` | Position must be valid (on map, not on a `block` trigger tile). `entity_id` must not already exist. Components must be in the registry. |
 | `despawn` | Entity must exist and have `ExtensionOwner` matching this extension. |
-| `update` | Entity must exist and be owned by this extension. Component data must match its registered schema. Position updates must pass collision and trigger checks (access triggers on the target tile). |
+| `update` | Entity must exist and be owned by this extension. Component data must match its registered schema. Position updates must pass collision and trigger checks (gate triggers on the target tile). |
 | `batch_update` | All updates must pass validation. If any fails, the entire batch is rejected. |
-| `move` | Entity must exist and be owned by this extension. Target position must be reachable (access triggers on the target tile must allow). Speed must be within configured bounds. |
+| `move` | Entity must exist and be owned by this extension. Target position must be reachable (gate triggers on the target tile must allow). Speed must be within configured bounds. |
 | `register_components` | Component IDs must not collide with existing IDs. Protobuf schema must be valid. |
-| `register_triggers` | `trigger_id` must not already exist. Tiles must be on a valid map. Entity-bound and proximity-bound triggers must reference an existing entity. `behavior` must be `block`, `allow`, `ask` (for access), `notify` (for event), or `input` (for action). Input handlers must specify `input` (a non-empty string, e.g. `click:left`, `key:E`). Proximity-bound triggers must specify `radius` (in tiles, ≥ 1) and `events` (a list of `proximity_enter` and/or `proximity_exit`). |
+| `register_triggers` | `trigger_id` must not already exist. Zone triggers must reference an existing `zone_id`. `type` must be `zone` or `input`. For zone triggers, `mode` must be `gate` or `notify`. For gate mode, `access_behavior` must be `block`, `allow`, or `ask`. For notify mode, `events` must be a non-empty list. Input triggers must specify `input` (a non-empty string, e.g. `click:left`, `key:E`). Mobile circle zones (proximity triggers) must specify `radius` (in tiles, ≥ 1) and `events` (a list of `proximity_enter` and/or `proximity_exit`). |
 | `unregister_triggers` | `trigger_id` must exist and be owned by this extension. |
-| `register_zone` | `zone_id` must not already exist. Boundary tiles must be on a valid map. |
+| `register_zone` | `zone_id` must not already exist. Zone shape must be valid for the map. Mobile zones must be circles. |
 
 ### Error responses
 
@@ -1265,15 +1285,16 @@ Extension: walls-v1
   ├── On startup:
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Read Tiled map → identify wall tiles
-  │     └── Register triggers: block on every wall tile
-  │         (behavior: "block", binding: "tile")
-  ├── On notify (tile-bound, event: "enter") for tiles adjacent to walls:
+  │     └── Register zone triggers: block gate on every wall tile
+  │         (type: "zone", mode: "gate", access_behavior: "block",
+  │          shape: "rect", mobility: "static", 1×1 rect per wall tile)
+  ├── On notify (zone-bound, event: "enter") for zones adjacent to walls:
   │     └── (optional) play a "bump" animation on the entity
   ├── No entities to spawn (walls are tile properties, not entities)
   ├── No interactions
   └── Heartbeat every 30s
 
-Note: the kernel caches all block triggers locally. Walking into a wall is
+Note: the kernel caches all block gate decisions locally. Walking into a wall is
 a local cache lookup — zero NATS round-trips. The walls extension owns the
 decision (it registered the triggers), but the kernel enforces it.
 ```
@@ -1288,9 +1309,9 @@ Extension: waitress-npc-v1
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Register custom component: SpeechBubble (id: 100)
   │     ├── Spawn waitress-1 at lobby entrance
-  │     └── Register input handler: key:E (to handle interact key)
+  │     └── Register input trigger: key:E (to handle interact key)
   ├── Watch KV: world.time → change behavior (greeting vs. closing)
-  ├── On key:E (via input handler, self-filter for adjacent_entities):
+  ├── On key:E (via input trigger, self-filter for adjacent_entities):
   │     ├── Check adjacent_entities for waitress-1
   │     ├── Send message + context to LLM
   │     ├── Receive response
@@ -1301,7 +1322,7 @@ Extension: waitress-npc-v1
   └── Heartbeat every 5s
 ```
 
-### Example 2: Meeting room (zone + access trigger + timer)
+### Example 2: Meeting room (zone + gate trigger + timer)
 
 **Language:** Go (sibling process, part of the default gameplay pack)
 
@@ -1310,14 +1331,14 @@ Extension: meeting-v1
   ├── On startup:
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Register custom component: TimerDisplay (id: 200)
-  │     ├── Register zone: meeting-room-1 (boundary tiles from Tiled or dynamic)
+  │     ├── Register zone: meeting-room-1 (polygon from Tiled or dynamic)
   │     ├── Register triggers:
-  │     │     ├── ask trigger on meeting-room-1 boundary tiles (behavior: "ask",
-  │     │     │   default_on_timeout: "block", ttl_ms: 500)
-  │     │     └── notify trigger on meeting-room-1 interior tiles (event: "enter",
-  │     │         binding: "tile" — broadcast for occupancy counting)
+  │     │     ├── gate trigger on meeting-room-1 (mode: "gate",
+  │     │     │   access_behavior: "ask", default_on_timeout: "block", ttl_ms: 500)
+  │     │     └── notify trigger on meeting-room-1 (mode: "notify",
+  │     │         events: ["enter", "exit"] — for occupancy counting)
   │     └── Watch KV: zones.meeting-room-1.properties
-  ├── On ask trigger query (can entity enter?):
+  ├── On gate trigger query (can entity enter?):
   │     ├── Check room capacity and access policy
   │     └── Reply: allow or block (with reason for client feedback)
   ├── On notify (enter): increment occupancy counter
@@ -1340,9 +1361,9 @@ Extension: patrol-guard-v1
   │     ├── Register with World Sim (on_death: freeze)
   │     ├── Spawn guard-1 at security desk
   │     └── Register triggers:
-  │           ├── input handler for key:E (to handle interact key)
-  │           └── proximity-bound notify on guard-1 (radius: 4,
-  │               events: proximity_enter, proximity_exit)
+  │           ├── input trigger for key:E (to handle interact key)
+  │           └── proximity trigger on guard-1 (mobile circle zone, notify mode,
+  │               radius: 4, events: proximity_enter, proximity_exit)
   ├── Own pathfinding AI computes per-tick positions
   │     └── Direct update: entity.guard-1.update → Position (every tick)
   │         (kernel validates each position against trigger registry)
@@ -1391,7 +1412,7 @@ Extension: npc-system-v1
   │     ├── Spawn 10 NPCs across the map
   │     └── Write KV: ext.npc-system-v1.population (NPC roster)
   ├── Each NPC has its own DialogueState (conversation history)
-  ├── On key:E or click:left (via input handler, self-filter for adjacent_entities / entities_on_tile):
+  ├── On key:E or click:left (via input trigger, self-filter for adjacent_entities / entities_on_tile):
   │     ├── Check if an NPC the extension owns is adjacent / on the clicked tile
   │     ├── Route to shared LLM with NPC-specific personality prompt
   │     ├── Update DialogueState (append to history)
@@ -1503,12 +1524,13 @@ restart of the World Sim or Pusher is needed.
   implicitly (both can read each other's KV keys), but a formal subject
   convention would help.
 - **[OPEN] Trigger conflict resolution.** When two extensions register
-  conflicting triggers on the same tile (e.g. one says `block`, the other
-  says `allow`), the current `any-refusal-blocks` policy means `block` wins.
-  Should there be a priority mechanism for more nuanced conflict resolution?
-- **[OPEN] Tile-bound notify broadcast scaling.** The current design
-  broadcasts tile-bound `notify` triggers to all extensions. This is fine for
-  a small number of extensions (MVP: 5–10). If extension count grows, switch
+  conflicting gate triggers on the same tile (e.g. one says `block`, the other
+  says `allow`), the current `block-wins` policy means `block` wins. Should
+  there be a priority mechanism for more nuanced conflict resolution? (See ADR
+  0001 for the current decision and the future priority-layers option.)
+- **[OPEN] Zone notify dispatch scaling.** The current design sends zone
+  notify triggers point-to-point to the owning extension. This is fine for a
+  small number of extensions (MVP: 5–10). If extension count grows, switch
   to a subject-based subscription model where extensions subscribe only to
   trigger IDs they care about.
 - **[OPEN] First-party extension pack.** The "default gameplay" pack (walls,

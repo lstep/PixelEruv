@@ -28,7 +28,7 @@ The wiring between these components is described in `05-architecture.md`.
   - **Pusher** — a thin WebSocket proxy that handles client connections, token
     validation, and NATS forwarding. No game logic. See `09-pusher.md`.
   - **World Simulator** — the spatial authority and replication gateway: ECS,
-    spatial index, trigger registry, zone boundaries, AOI, replication encoding,
+    spatial index, trigger registry, zone registry, AOI, replication encoding,
     player avatar movement, and state-store access (provisioning + persistence).
     All other gameplay behavior is delegated to extensions via NATS. See
     `10-world-simulator.md` and `18-extensions.md`.

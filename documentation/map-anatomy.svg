@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 1200 820" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
   <title>Pixel Eruv — Anatomy of a Map</title>
-  <desc>A small example map (3 tiles) showing what the World Sim stores per map: the tile grid with per-tile values (traversable, sprite), entities placed on tiles with their components, and triggers registered on tiles via the trigger registry. Tile (0,0) has a player entity with equipment; tile (1,0) has a door entity with a block access trigger and an entity-bound notify trigger; tile (2,0) has a button (no entity, no trigger on the tile — the button is handled by an extension that registered for the click:left input type).</desc>
+  <desc>A small example map (3 tiles) showing what the World Sim stores per map: the tile grid with per-tile values (traversable, sprite), entities placed on tiles with their components, and triggers registered via the trigger registry. Tile (0,0) has a player entity with equipment; tile (1,0) has a door entity with a block gate zone trigger and a zone notify trigger; tile (2,0) has a button (no entity, no trigger on the tile — the button is handled by an extension that registered for the click:left input type).</desc>
 
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -85,7 +85,7 @@
   <!-- Triggers on tile -->
   <rect x="356" y="376" width="248" height="40" rx="4" fill="#fee2e2" stroke="#475569" stroke-width="0.5"/>
   <text x="364" y="392" font-size="11" font-weight="700" fill="#0f172a">Triggers on this tile</text>
-  <text x="364" y="408" font-size="11" fill="#64748b">• door-1-access (block) · door-1-notify (entity)</text>
+  <text x="364" y="408" font-size="11" fill="#64748b">• door-1-gate (block) · door-1-notify (zone)</text>
 
   <!-- Tile (2,0) - Button -->
   <rect x="640" y="184" width="280" height="240" rx="8" fill="#e2e8f0" stroke="#475569" stroke-width="1.5"/>
@@ -104,7 +104,7 @@
   <text x="780" y="308" text-anchor="middle" font-size="11" font-style="italic" fill="#94a3b8">no entity on this tile</text>
   <text x="780" y="322" text-anchor="middle" font-size="11" fill="#94a3b8">(button is purely a trigger)</text>
 
-  <!-- No trigger on tile — handled by input handler -->
+  <!-- No trigger on tile — handled by input trigger -->
   <rect x="656" y="292" width="248" height="76" rx="4" fill="#dbeafe" stroke="#475569" stroke-width="0.5"/>
   <text x="664" y="308" font-size="11" font-weight="700" fill="#0f172a">No trigger on this tile</text>
   <text x="664" y="324" font-size="11" fill="#64748b">The button is a visual sprite.</text>
@@ -135,43 +135,43 @@
   <!-- TRIGGER REGISTRY (bottom) -->
   <!-- ============================================ -->
   <text x="40" y="448" font-size="13" font-weight="700" fill="#0f172a">Trigger registry (kernel-side, indexed by trigger_id and by tile)</text>
-  <text x="40" y="464" font-size="11" fill="#64748b">Registered by extensions via `extension.&lt;ext_id&gt;.register_triggers`. The kernel consults this on movement (access), enter/exit (event), and ActionFrame (input handler broadcast).</text>
+  <text x="40" y="464" font-size="11" fill="#64748b">Registered by extensions via `extension.&lt;ext_id&gt;.register_triggers`. The kernel consults this on movement (zone gate), zone boundary crossing (zone notify), and ActionFrame (input trigger broadcast).</text>
 
-  <!-- Trigger 1: door-1-access -->
+  <!-- Trigger 1: door-1-gate -->
   <rect x="40" y="478" width="360" height="160" rx="8" fill="#fee2e2" stroke="#475569" stroke-width="1"/>
-  <text x="56" y="498" font-size="12" font-weight="700" fill="#0f172a">door-1-access</text>
-  <text x="56" y="514" font-size="11" fill="#64748b">category: access · binding: tile · owner: office-ext</text>
+  <text x="56" y="498" font-size="12" font-weight="700" fill="#0f172a">door-1-gate</text>
+  <text x="56" y="514" font-size="11" fill="#64748b">type: zone · mode: gate · owner: office-ext</text>
   <line x1="56" y1="522" x2="384" y2="522" stroke="#94a3b8" stroke-width="0.4"/>
-  <text x="56" y="538" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">behavior: "block"</text>
-  <text x="56" y="554" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">tiles: [{map:"lobby", x:1, y:0}]</text>
-  <line x1="56" y1="562" x2="384" y2="562" stroke="#94a3b8" stroke-width="0.4"/>
-  <text x="56" y="578" font-size="11" fill="#64748b">Kernel: cache in spatial index.</text>
-  <text x="56" y="592" font-size="11" fill="#64748b">Refuse move locally — no NATS.</text>
-  <text x="56" y="606" font-size="11" fill="#64748b">Door is locked; movement blocked.</text>
-  <text x="56" y="624" font-size="11" font-style="italic" fill="#94a3b8">If behavior were "ask": query ext,</text>
+  <text x="56" y="538" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">access_behavior: "block"</text>
+  <text x="56" y="554" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">zone_id: "door-1-zone"</text>
+  <text x="56" y="570" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">shape: rect (1×1) · mobility: static</text>
+  <line x1="56" y1="578" x2="384" y2="578" stroke="#94a3b8" stroke-width="0.4"/>
+  <text x="56" y="594" font-size="11" fill="#64748b">Kernel: cache in spatial index.</text>
+  <text x="56" y="608" font-size="11" fill="#64748b">Refuse move locally — no NATS.</text>
+  <text x="56" y="624" font-size="11" font-style="italic" fill="#94a3b8">If access_behavior were "ask": query ext,</text>
   <text x="56" y="636" font-size="11" font-style="italic" fill="#94a3b8">defer move, wait reply (ttl_ms).</text>
 
   <!-- Trigger 2: door-1-notify -->
   <rect x="420" y="478" width="360" height="160" rx="8" fill="#ccfbf1" stroke="#475569" stroke-width="1"/>
   <text x="436" y="498" font-size="12" font-weight="700" fill="#0f172a">door-1-notify</text>
-  <text x="436" y="514" font-size="11" fill="#64748b">category: event · binding: entity · owner: office-ext</text>
+  <text x="436" y="514" font-size="11" fill="#64748b">type: zone · mode: notify · owner: office-ext</text>
   <line x1="436" y1="522" x2="764" y2="522" stroke="#94a3b8" stroke-width="0.4"/>
-  <text x="436" y="538" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">behavior: "notify"</text>
-  <text x="436" y="554" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">entity_id: "door-1"</text>
+  <text x="436" y="538" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">zone_id: "door-1-zone"</text>
+  <text x="436" y="554" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">shape: rect (1×1) · mobility: static</text>
   <text x="436" y="570" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">events: ["enter","exit"]</text>
   <line x1="436" y1="578" x2="764" y2="578" stroke="#94a3b8" stroke-width="0.4"/>
   <text x="436" y="594" font-size="11" fill="#64748b">Kernel: point-to-point to office-ext</text>
-  <text x="436" y="608" font-size="11" fill="#64748b">when a player enters/exits/interacts.</text>
-  <text x="436" y="624" font-size="11" font-style="italic" fill="#94a3b8">Subject: entity.door-1.notify.&lt;event&gt;</text>
+  <text x="436" y="608" font-size="11" fill="#64748b">when a player enters/exits the zone.</text>
+  <text x="436" y="624" font-size="11" font-style="italic" fill="#94a3b8">Subject: zone.door-1-zone.notify.&lt;event&gt;</text>
   <text x="436" y="636" font-size="11" font-style="italic" fill="#94a3b8">Fire-and-forget — no reply.</text>
 
-  <!-- Trigger 3: button-click-left (input handler) -->
+  <!-- Trigger 3: office-click-left (input trigger) -->
   <rect x="800" y="478" width="360" height="160" rx="8" fill="#dbeafe" stroke="#475569" stroke-width="1"/>
   <text x="816" y="498" font-size="12" font-weight="700" fill="#0f172a">office-click-left</text>
-  <text x="816" y="514" font-size="11" fill="#64748b">category: action · binding: input · owner: office-ext</text>
+  <text x="816" y="514" font-size="11" fill="#64748b">type: input · owner: office-ext</text>
   <line x1="816" y1="522" x2="1144" y2="522" stroke="#94a3b8" stroke-width="0.4"/>
   <text x="816" y="538" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">input: "click:left"</text>
-  <text x="816" y="554" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">(no tile binding, no max_range)</text>
+  <text x="816" y="554" font-size="11" font-family="ui-monospace, monospace" fill="#0f172a">(not zone-bound, no max_range)</text>
   <line x1="816" y1="562" x2="1144" y2="562" stroke="#94a3b8" stroke-width="0.4"/>
   <text x="816" y="578" font-size="11" fill="#64748b">Kernel: compute range, LOS,</text>
   <text x="816" y="592" font-size="11" fill="#64748b">entities_on_tile, equipment →</text>
@@ -186,9 +186,9 @@
   <path d="M 480 424 C 480 446, 220 446, 220 478" stroke="#7c3aed" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#arr-purple)" opacity="0.6"/>
   <!-- Tile (1,0) → door-1-notify -->
   <path d="M 480 424 C 480 446, 600 446, 600 478" stroke="#7c3aed" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#arr-purple)" opacity="0.6"/>
-  <!-- Tile (2,0) → office-click-left (input handler, not tile-bound) -->
+  <!-- Tile (2,0) → office-click-left (input trigger, not zone-bound) -->
   <path d="M 780 424 C 780 446, 980 446, 980 478" stroke="#7c3aed" stroke-width="1.2" fill="none" stroke-dasharray="4 3" marker-end="url(#arr-purple)" opacity="0.4"/>
-  <text x="870" y="440" font-size="10" font-style="italic" fill="#94a3b8">not tile-bound (input handler)</text>
+  <text x="870" y="440" font-size="10" font-style="italic" fill="#94a3b8">not zone-bound (input trigger)</text>
 
   <!-- ============================================ -->
   <!-- LEGEND / NOTES (bottom) -->

@@ -27,23 +27,25 @@ camera), an alarm rings. It keeps ringing as long as any player is within the
 
 ```
 1. Claim the alarm entity from Tiled (or spawn it).
-2. Register a proximity-bound notify trigger:
+2. Register a zone trigger (mobile circle zone, notify mode — this is what
+   we call a proximity trigger):
    - trigger_id: "alarm-1-proximity"
-   - category: "event", binding: "proximity"
-   - entity_id: "alarm-1"
+   - type: "zone", mode: "notify"
+   - shape: "circle", mobility: "mobile", follows_entity_id: "alarm-1"
    - radius: 3 (tiles)
    - events: ["proximity_enter", "proximity_exit"]
 3. Maintain an in-memory presence set (players currently in radius).
 ```
 
 That's it — one trigger registration. The kernel handles the per-tick
-proximity evaluation and fires `proximity_enter`/`proximity_exit` events.
+proximity evaluation (distance check against the mobile circle zone) and fires
+`proximity_enter`/`proximity_exit` events.
 
 ### Runtime sequence
 
 ```
 Player A moves to tile (8, 4) — within 3 tiles of alarm at (10, 5)
-  → Tick 10: kernel evaluates proximity triggers (step 10 of tick loop)
+  → Tick 10: kernel evaluates proximity triggers (mobile circle zones, step 10 of tick loop)
   → Kernel: range query around (10, 5) with radius 3 → finds A at (8, 4)
   → Compare with previous tick's set (empty) → A is new
   → Kernel publishes: entity.alarm-1.notify.proximity_enter
@@ -91,8 +93,9 @@ entity, not to fixed tiles.
 
 ### Verdict
 
-**Feasible with the current architecture.** The proximity-bound trigger type
-handles this cleanly: one trigger registration, no tile enumeration, no
+**Feasible with the current architecture.** A zone trigger in notify mode
+with a mobile circle zone (what we call a proximity trigger) handles this
+cleanly: one trigger registration, no tile enumeration, no
 extension-side enter/exit pairing. The kernel evaluates proximity per-tick
 and fires transitions only on enter/exit.
 
@@ -114,37 +117,50 @@ Players inside the room can still see and hear each other normally.
 
 ### Map setup (Tiled)
 
-- A room with walls (block triggers from the walls extension).
+- A room with walls (block gate zones from the walls extension — 1×1 rect
+  zones per wall tile, gate mode, block behavior).
 - A door entity at the entrance tile `(42, 17)`.
 - A zone polygon (`meeting-room-1`) covering the room interior.
-- Boundary tiles at the entrance.
 
 ### Extension setup (`doors-ext`)
 
 ```
 1. Claim the door entity from Tiled.
-2. Register the zone (meeting-room-1) with the room's boundary tiles.
-3. Register an ask trigger on the door tile:
-   - behavior: "ask", default_on_timeout: "block", ttl_ms: 500
+2. Register the zone (meeting-room-1) as a polygon zone.
+3. Register a gate trigger on the zone (boundary crossing):
+   - trigger_id: "meeting-room-1-gate"
+   - type: "zone", zone_id: "meeting-room-1", mode: "gate"
+   - access_behavior: "ask", default_on_timeout: "block", ttl_ms: 500
    (When the door is open, the extension replies "allow".
     When closed, it replies "block".)
-4. Register notify triggers on the room interior tiles:
-   - event: "enter" / "exit" (to track who is inside).
-5. Watch KV: zones.meeting-room-1.properties
+4. Register a notify trigger on the zone (enter/exit transitions):
+   - trigger_id: "meeting-room-1-notify"
+   - type: "zone", zone_id: "meeting-room-1", mode: "notify"
+   - events: ["enter", "exit"] (to track who is inside).
+5. Register an input trigger on the door entity (click to toggle):
+   - trigger_id: "door-click-left"
+   - type: "input", input: "click:left"
+   - owner_extension: "doors-ext"
+6. Watch KV: zones.meeting-room-1.properties
 ```
+
+The gate trigger and the input trigger are decoupled. The gate lives on the
+zone boundary; the input trigger lives on the door entity (wherever it is).
+The extension wires them: the input trigger mutates door state; the gate
+handler reads door state and replies allow/block.
 
 ### Door close sequence
 
 ```
-Player A (inside the room) clicks the door tile → ActionFrame (input_type: "click:left")
+Player A (inside the room) clicks the door entity → ActionFrame (input_type: "click:left")
   → Kernel broadcasts to all extensions registered for "click:left"
   → doors-ext self-filters: sees door entity in entities_on_tile
   → doors-ext: door state = closed
-     a. Update internal state: reply "block" to future ask queries on the
-        door tile.
-        (Optionally: register a block trigger on the door tile so the
-        kernel refuses locally without a NATS round-trip. Faster, but
-        requires unregistering when the door reopens.)
+     a. Update internal state: reply "block" to future gate queries on the
+        zone boundary.
+        (Optionally: switch the gate trigger's access_behavior from "ask"
+        to "block" so the kernel refuses locally without a NATS round-trip.
+        Faster, but requires switching back to "ask" when the door reopens.)
      b. Write KV: zones.meeting-room-1.properties
         { is_exclusive: true, tint_color: "#1a1a2e" }
   → kv.Watch fires:
@@ -162,7 +178,7 @@ Player A (inside the room) clicks the door tile → ActionFrame (input_type: "cl
 
 | Layer | Mechanism | Hard isolation? |
 |---|---|---|
-| **Movement** (no entry) | `block` access trigger on door tile (cached in spatial index, kernel refuses locally) | ✅ Yes — kernel refuses the move, no NATS round-trip |
+| **Movement** (no entry) | Gate trigger on zone boundary (block behavior cached in spatial index, kernel refuses locally) | ✅ Yes — kernel refuses the move, no NATS round-trip |
 | **Audio/video** (no hear/see) | LiveKit Bridge cuts subscriptions based on `is_exclusive` in KV | ✅ Yes — Bridge revokes LiveKit track subscriptions for outsiders |
 | **Visual** (no see inside) | Zone-aware AOI filter (see below) | ⚠️ **Gap — needs implementation** |
 
@@ -240,12 +256,16 @@ should be added to `11-replication.md` §3.3 before implementation.
 ### Extension setup (`meeting-ext`)
 
 ```
-1. Register zone: meeting-room-1, boundary tiles = entrance tiles.
-2. Register ask trigger on boundary tiles:
-   - behavior: "ask", default_on_timeout: "block", ttl_ms: 500
-3. Register notify triggers on interior tiles:
-   - event: "enter" (detect first occupant → set owner)
-   - event: "exit" (detect last occupant → clear owner)
+1. Register zone: meeting-room-1 (polygon zone).
+2. Register gate trigger on the zone (boundary crossing):
+   - trigger_id: "meeting-room-1-gate"
+   - type: "zone", zone_id: "meeting-room-1", mode: "gate"
+   - access_behavior: "ask", default_on_timeout: "block", ttl_ms: 500
+3. Register notify trigger on the zone (enter/exit transitions):
+   - trigger_id: "meeting-room-1-notify"
+   - type: "zone", zone_id: "meeting-room-1", mode: "notify"
+   - events: ["enter"] (detect first occupant → set owner)
+   - events: ["exit"] (detect last occupant → clear owner)
 4. Watch KV: zones.meeting-room-1.owner
 5. Maintain in-memory guest list: Set<entity_id> (cleared on owner change).
 ```
@@ -254,8 +274,8 @@ should be added to `11-replication.md` §3.3 before implementation.
 
 ```
 Step 1: A enters the empty meeting zone
-  → Kernel fires notify enter on interior tile
-  → meeting-ext receives: trigger.notify.tile.office.42.18
+  → Kernel fires zone enter event
+  → meeting-ext receives: zone.meeting-room-1.notify.enter
       { event: "enter", entity_id: "A" }
   → Extension: occupancy = 1, first occupant → set owner = A
   → Write KV: zones.meeting-room-1.owner
@@ -265,10 +285,10 @@ Step 1: A enters the empty meeting zone
   → Replicated to all in AOI (others see A is the owner)
 
 Step 2: B walks toward the zone boundary
-  → Kernel evaluates ask trigger on boundary tile
-  → Kernel publishes: trigger.meeting-room-1-entrance.query
+  → Kernel evaluates gate trigger on zone boundary
+  → Kernel publishes: trigger.meeting-room-1-gate.query
       { entity_id: "B", target_tile: {x: 42, y: 17},
-        reply_to: "trigger.meeting-room-1-entrance.reply" }
+        reply_to: "trigger.meeting-room-1-gate.reply" }
   → meeting-ext receives query
   → Extension checks: zone has owner A, policy = "knock",
       B is not on guest list
@@ -301,13 +321,13 @@ Step 4: A clicks "Allow" on the popup
          (entity.B.update → NotifyComponent { text: "You may enter." })
 
 Step 5: B walks toward the boundary again
-  → ask trigger fires → meeting-ext: B is on guest list → reply: allow
+  → gate trigger fires → meeting-ext: B is on guest list → reply: allow
   → B enters the zone
-  → Kernel fires notify enter on interior tile
+  → Kernel fires zone enter event
   → meeting-ext: occupancy = 2
 
 Step 6: B leaves the zone (later)
-  → Kernel fires notify exit on interior tile
+  → Kernel fires zone exit event
   → meeting-ext: occupancy = 1
   → B removed from guest list (optional — guest list could persist
     until owner leaves)
@@ -335,15 +355,18 @@ Step 2: meeting-ext processes the invitation
   → B's client shows: "A invited you to meeting-room-1. Click to enter."
 
 Step 3: B walks toward the boundary
-  → ask trigger fires → meeting-ext: B is on guest list → allow
+  → gate trigger fires → meeting-ext: B is on guest list → allow
   → B enters the zone
 ```
 
-### Gap: popup response wire protocol
+### Popup response wire protocol (resolved)
+
+The knock-to-join flow uses **transient entities + ActionFrame (input
+trigger)**. See `14-zones-and-interactions.md` §8 for the full protocol.
 
 The knock-to-join flow is designed in `14-zones-and-interactions.md` §2, but
 the wire protocol for the popup response is an open question. The approach
-above uses **transient entities + ActionFrame (input handler)**:
+above uses **transient entities + ActionFrame (input trigger)**:
 
 1. The extension spawns a transient "knock-popup" entity on the owner's tile.
 2. The owner clicks it → `ActionFrame` (`input_type: "click:left"`) → kernel
@@ -351,7 +374,7 @@ above uses **transient entities + ActionFrame (input handler)**:
    self-filters based on `entities_on_tile` and processes the response.
 3. The extension despawns the popup entity after the response or a timeout.
 
-This requires no new frame types. The existing `ActionFrame` → input handler
+This requires no new frame types. The existing `ActionFrame` → input trigger
 broadcast handles it. The popup entity is a regular ECS entity with an
 `Interactable` component and a custom `KnockPopup` component — the client
 renders it as a popup UI element.
@@ -361,7 +384,7 @@ client→server frame type that carries a popup ID + response. This is cleaner
 conceptually (popups are not tiles) but adds a new frame type and a new
 routing path in the kernel. Not worth the complexity for the MVP.
 
-**Recommendation:** use transient entities + ActionFrame (input handler).
+**Recommendation:** use transient entities + ActionFrame (input trigger).
 Document this in `14-zones-and-interactions.md` §2 as the resolution of the
 open question.
 
@@ -385,11 +408,9 @@ open question.
 ### Verdict
 
 **Feasible with the current architecture.** The knock-to-join flow is
-already designed. The popup response wire protocol has a viable solution
-(transient entity + ActionFrame input handler) that requires no new frame
-types. The open
-question in `14-zones-and-interactions.md` §2 should be resolved with this
-approach.
+locked down in `14-zones-and-interactions.md` §8. The popup response wire
+protocol uses transient entity + `ActionFrame` (input trigger) — no new
+frame types.
 
 ---
 
@@ -411,16 +432,15 @@ sees it appear in their inventory.
 ### Extension setup (`inventory-ext`)
 
 ```
-1. Register an input handler for click:left:
+1. Register an input trigger for click:left:
    - trigger_id: "inventory-click-left"
-   - category: "action", binding: "input"
-   - input: "click:left"
-   - owner_extension_id: "inventory-ext"
+   - type: "input", input: "click:left"
+   - owner_extension: "inventory-ext"
 2. Maintain item state in memory (or read from ECS on each event).
 3. Persist inventory changes to PocketBase after each successful pickup.
 ```
 
-No `max_range`, `require_los`, or tile binding at registration. The kernel
+No `max_range`, `require_los`, or zone binding at registration. The kernel
 provides `range`, `has_los`, and `entities_on_tile` in the dispatch payload;
 the extension self-filters.
 
@@ -430,7 +450,7 @@ the extension self-filters.
 Player A clicks tile (30, 12) where the sword lies
   → A's client sends ActionFrame (input_type: "click:left", target: 30,12)
   → Pusher forwards to NATS: client.<id>.input
-  → World Sim receives ActionFrame in tick loop (step 6: input handler dispatch)
+  → World Sim receives ActionFrame in tick loop (step 6: input trigger dispatch)
   → Kernel looks up extensions registered for "click:left" → inventory-ext
   → Kernel computes contextual data:
       target_tile: { map_id, x: 30, y: 12 }
@@ -487,8 +507,8 @@ resolve conflicts.
 
 ### Verdict
 
-**Feasible with the current architecture.** The input handler broadcast model
-handles pickup cleanly: one registration, no tile binding, no kernel gating.
+**Feasible with the current architecture.** The input trigger broadcast model
+handles pickup cleanly: one registration, no zone binding, no kernel gating.
 The extension self-filters on `entities_on_tile`, `range`, and `has_los`. The
 replication encoder's owner-only filter (for `InventorySlot`) handles the
 visibility transition automatically.
@@ -499,7 +519,7 @@ visibility transition automatically.
 
 | Use case | Feasible? | Gap | Fix location |
 |---|---|---|---|
-| 1. Proximity alarm | Yes | None — proximity-bound trigger handles it natively | — |
+| 1. Proximity alarm | Yes | None — proximity trigger (mobile circle zone, notify mode) handles it natively | — |
 | 2. Full isolation room | Partial | Visual isolation is soft only — AOI filter doesn't exclude entities in exclusive zones from non-members | `11-replication.md` §3.3 — add zone-aware AOI filter |
-| 3. Knock-to-join | Yes | Popup response wire protocol is open | `14-zones-and-interactions.md` §2 — resolve with transient entity + ActionFrame (input handler) |
-| 4. Pickup item | Yes | None — input handler broadcast + owner-only replication handles it natively | — |
+| 3. Knock-to-join | Yes | None — resolved: transient popup entity + ActionFrame (input trigger) | `14-zones-and-interactions.md` §8 |
+| 4. Pickup item | Yes | None — input trigger broadcast + owner-only replication handles it natively | — |

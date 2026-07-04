@@ -85,9 +85,9 @@ via NATS. See `10-world-simulator.md` and `18-extensions.md`.
 | Publish volatile cross-shard events to NATS | ❌ | ✅ | ❌ |
 | Subscribe client input from NATS | ❌ | ✅ | ❌ |
 | Player avatar movement (input → position, in-kernel) | ❌ | ✅ | ❌ |
-| Access trigger evaluation (block/allow cached, ask routed) | ❌ | ✅ | ❌ |
-| Input handler dispatch (range/LOS computed, broadcast to extensions) | ❌ | ✅ | ❌ |
-| Event trigger dispatch (notify to extensions) | ❌ | ✅ | ❌ |
+| Gate trigger evaluation (block/allow cached, ask routed) | ❌ | ✅ | ❌ |
+| Input trigger dispatch (range/LOS computed, broadcast to extensions) | ❌ | ✅ | ❌ |
+| Zone notify trigger dispatch (enter/exit to owning extension) | ❌ | ✅ | ❌ |
 | Neutral validation (collision, zone access, bounds, schema) | ❌ | ✅ | ❌ |
 | Read / write JetStream KV (player positions; reads zone state) | ❌ | ✅ | ❌ (kernel-owned keys) |
 | Read / write PocketBase (users, world config, audit) | ❌ | ✅ | ❌ |

@@ -173,7 +173,7 @@ external services.
 > **Key split:** the Pusher handles only WebSocket I/O, token validation, and
 > NATS forwarding. The World Simulator is the **spatial authority and
 > replication gateway**: it owns the ECS, the tile grid, the trigger registry,
-> the zone boundaries, the AOI filter, and the replication encoder. Its only
+> the zone registry, the AOI filter, and the replication encoder. Its only
 > gameplay system is player avatar movement; all other gameplay behavior (NPCs,
 > triggers, zone behavior, AI) is delegated to **extensions** via NATS. They
 > communicate exclusively via NATS Core.
@@ -223,7 +223,7 @@ flowchart LR
     end
 
     subgraph WSRep["Replication layer"]
-      AOI["AOI manager<br/>(zone-of-interest filter)"]
+      AOI["AOI manager<br/>(area-of-interest filter)"]
       Rep["Replication encoder<br/>(component-based:<br/>Spawn / Update / Destroy / Anim)"]
     end
 
@@ -304,8 +304,8 @@ flowchart LR
     ExtLogic["Entity logic<br/>Trigger logic<br/>Zone behavior<br/>NPC AI / LLM<br/>Inventory & equipment"]
   end
 
-  Extensions -- "register, spawn, update,<br/>register_triggers (access/event/action), register_zone,<br/>trigger replies, input handler replies, KV watch/write" --> NATSCore
-  NATSCore -- "trigger queries, notify broadcasts,<br/>input handler dispatches, arrived, errors" --> Extensions
+  Extensions -- "register, spawn, update,<br/>register_triggers (zone gate/notify, input), register_zone,<br/>trigger replies, input trigger replies, KV watch/write" --> NATSCore
+  NATSCore -- "trigger queries, zone notify,<br/>input trigger dispatches, arrived, errors" --> Extensions
 
   %% ===========================
   %% World Sim ↔ Bridge (via NATS)
@@ -348,7 +348,7 @@ flowchart LR
 | **World Sim** | NATS Core | pub/sub | Publish `client.provisioned` (for LiveKit Bridge token issuance) | On connect |
 | **World Sim** | NATS JetStream KV | KV read/write | Player positions, player status; reads zone state (written by extensions) | Per change |
 | **World Sim** | PocketBase | HTTP | User lookup/create, world config, audit log writes | On login / rare |
-| **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones (access/event/action), reply to trigger queries and input handler dispatches | Per tick / event-driven |
+| **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones (zone gate/notify, input), reply to trigger queries and input trigger dispatches | Per tick / event-driven |
 | **Extension** | NATS JetStream KV | KV read/write | Extension-private state, shared world state (e.g. zone properties) | Event-driven |
 | **Bridge** | NATS JetStream KV | `kv.Watch` | React to zone-state changes | Event-driven |
 | **Bridge** | NATS Core | subscribe | Receive `client.provisioned` for token issuance | Event-driven |
@@ -408,19 +408,19 @@ flowchart LR
 ### World Simulator (Go — spatial authority + replication gateway)
 - Hosts the authoritative ECS (Ark) — see `13-ecs-design.md`.
 - Owns the **spatial index** (tile grid from Tiled, tile → triggers, tile →
-  entities), the **trigger registry** (trigger_id → owner, behavior, tiles),
-  and the **zone boundary registry**.
+  entities), the **trigger registry** (trigger_id → owner, type, mode, zone),
+  and the **zone registry**.
 - Runs the **replication tick** (fixed interval, e.g. 20 Hz): drains input,
   processes player movement, evaluates triggers, applies extension updates,
   encodes replication batches.
 - **Player avatar movement** is the only gameplay system in the kernel
   (latency-critical, deployment-invariant). All other gameplay behavior is
   delegated to extensions via NATS.
-- **Evaluates access triggers** (`block`/`allow` cached locally; `ask` routed
-  to the owning extension via NATS), **dispatches event triggers**
-  (`notify` to owning extensions or broadcast), and **evaluates action
-  triggers** (validates range and line-of-sight, then dispatches to the owning
-  extension with an equipment snapshot). See `10-world-simulator.md` §5f.
+- **Evaluates zone gate triggers** (`block`/`allow` cached locally; `ask`
+  routed to the owning extension via NATS), **dispatches zone notify triggers**
+  (enter/exit to owning extensions), and **dispatches input triggers**
+  (computes range and line-of-sight, then broadcasts to all registered
+  extensions with an equipment snapshot). See `10-world-simulator.md` §5f.
 - Computes the area-of-interest (AOI) per client and encodes component-based
   replication batches (`SpawnEntity`, `UpdateComponent`, `DestroyEntity`,
   `PlayAnimation` — see `11-replication.md`).
@@ -509,7 +509,7 @@ flowchart LR
    doors extension updates the door component (via
    `entity.<entity_id>.update`), and writes the new zone state to JetStream KV
    (`zones.<zone_id>.properties`). It may also register/unregister `block`
-   triggers on the zone boundary tiles (via `register_triggers` /
+   triggers on the zone (via `register_triggers` /
    `unregister_triggers`).
 4. The **World Sim** applies the door component update (marks it dirty for
    replication) and updates the spatial index with any trigger changes.
@@ -526,10 +526,10 @@ flowchart LR
 3. **World Simulator** receives the input, runs the **player avatar movement
    system** (in-kernel):
    - Computes the target tile from the input direction.
-   - Evaluates access triggers on the target tile (`block`/`allow` cached;
-     `ask` triggers query the owning extension via NATS).
+   - Evaluates gate triggers on the target tile (`block`/`allow` cached;
+     `ask` gates query the owning extension via NATS).
    - If allowed, updates the entity's `Position` in the ECS.
-   - Fires event triggers (`notify`) on the entered/exited tiles.
+   - Fires zone notify triggers for the entered/exited zones.
 4. The **World Simulator**'s replication encoder picks up dirty `Position`
    components, applies the AOI filter per client, and publishes per-client
    replication batches to NATS Core.
@@ -552,7 +552,7 @@ flowchart LR
 - **[DECISION] Two Go services: Pusher + World Simulator.** The Pusher is a
   thin WebSocket proxy (I/O, auth validation, NATS forwarding). The World
   Simulator is the **spatial authority and replication gateway**: it owns the
-  ECS, the tile grid, the trigger registry, the zone boundaries, the AOI
+  ECS, the tile grid, the trigger registry, the zone registry, the AOI
   filter, and the replication encoder. Its only gameplay system is player
   avatar movement. All other gameplay behavior is delegated to extensions.
   They communicate exclusively via NATS Core. See `09-pusher.md` for the
@@ -577,7 +577,7 @@ flowchart LR
 - **[DECISION] Chat backend is PocketBase** (`messages` collection) for the
   MVP. Matrix Synapse is deferred to the post-MVP roadmap. See `17-chat.md`
   and `06-data-model-and-persistence.md` § 3.
-- **[OPEN] Zone-of-interest algorithm** (grid / quadtree / distance) is not
+- **[OPEN] Area-of-interest algorithm** (grid / quadtree / distance) is not
   decided; it affects how NATS subjects are partitioned. See
   `14-zones-and-interactions.md`.
 - **[DECISION] Extension system.** External processes (any language with a
@@ -585,12 +585,12 @@ flowchart LR
   that own all gameplay behavior for non-player entities. Extensions can
   spawn entities (no type restrictions), update any component directly
   (per-tick or event-driven), register custom component types, register
-  triggers (access: block/allow/ask; event: notify
-  tile-bound/entity-bound/proximity-bound; action: input handlers for
-  click/key types) on tiles, entities, or input types,
+  triggers (zone gate: block/allow/ask; zone notify: enter/exit for static
+  zones and proximity for mobile circle zones; input: for click/key types) on
+  zones or input types,
   register zones, handle client interactions, and read/write JetStream KV.
   The World Sim's role is spatial authority (ECS, spatial index, trigger
-  registry, zone boundaries) and replication gateway (AOI, replication
+  registry, zone registry) and replication gateway (AOI, replication
   encoding). It validates all entity changes against collision, zone access,
   and trigger rules. The only gameplay system in the kernel is player avatar
   movement. First-party extensions (walls, doors, base zone behaviors) ship
