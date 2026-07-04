@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { WsClient, decodePosition, ReplicationBatchView } from "../net/WsClient";
+import type { MapAssets } from "../mapLoader";
 
 const TILE_SIZE = 32;
 const MAP_W = 20;
@@ -74,14 +75,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload(): void {
-    this.load.tilemapTiledJSON("test-map", "/maps/test-map.json");
-    this.load.image("tileset", "/maps/tileset.png");
+    const mapAssets = this.registry.get("mapAssets") as MapAssets | null;
+    if (mapAssets) {
+      // Load from PocketBase — pass the parsed JSON object directly.
+      this.load.tilemapTiledJSON("test-map", mapAssets.tiledJson);
+      for (const ts of mapAssets.tilesets) {
+        this.load.image(ts.name, ts.url);
+      }
+    } else {
+      // Fallback: static files served by Vite / nginx.
+      this.load.tilemapTiledJSON("test-map", "/maps/test-map.json");
+      this.load.image("tileset", "/maps/tileset.png");
+    }
   }
 
   create(): void {
     // Render the Tiled map
     const map = this.make.tilemap({ key: "test-map" });
-    const tileset = map.addTilesetImage("tileset", "tileset");
+    const mapAssets = this.registry.get("mapAssets") as MapAssets | null;
+    const tilesetKey = mapAssets ? mapAssets.tilesets[0].name : "tileset";
+    const tileset = map.addTilesetImage(tilesetKey, tilesetKey);
     if (tileset) {
       const ground = map.createLayer(0, tileset, 0, 0);
       const walls = map.createLayer(1, tileset, 0, 0);

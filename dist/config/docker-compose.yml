@@ -9,6 +9,16 @@ services:
       - "8222:8222"
     restart: unless-stopped
 
+  pocketbase:
+    build:
+      context: ../..
+      dockerfile: docker/pocketbase.Dockerfile
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb/pb_data
+    restart: unless-stopped
+
   pusher:
     build:
       context: ../..
@@ -53,3 +63,6 @@ services:
     ports:
       - "8080:80"
     restart: unless-stopped
+
+volumes:
+  pb_data:
