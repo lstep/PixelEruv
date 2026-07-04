@@ -102,6 +102,68 @@ To serve the built frontend natively instead, point an nginx instance at
 `dist/web/` with `dist/config/nginx.conf` (change the `proxy_pass` upstream
 from `pusher:8081` to `127.0.0.1:8081` for a non-Docker host).
 
+🔍 Debugging with motel
+
+The backend (pusher, worldsim) and frontend are instrumented with
+OpenTelemetry traces and logs. Telemetry is **off by default**; flip it on
+when you want runtime evidence while debugging.
+
+motel is a local OpenTelemetry collector with a query API and TUI. Install it
+from [github.com/kitlangton/motel](https://github.com/kitlangton/motel), then
+start it once (it runs as a machine-global daemon, shared across projects):
+
+    motel start
+
+Then run the services with `OTEL_ENABLED=true`, pointing at motel's default
+OTLP/HTTP endpoint:
+
+    OTEL_ENABLED=true \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:27686 \
+    NATS_URL=nats://localhost:4222 ./dist/bin/worldsim &
+
+    OTEL_ENABLED=true \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:27686 \
+    NATS_URL=nats://localhost:4222 WS_ADDR=:8081 ./dist/bin/pusher &
+
+For the frontend, set the Vite env vars at build/dev time:
+
+    cd frontend
+    VITE_OTEL_ENABLED=true \
+    VITE_OTEL_ENDPOINT=http://127.0.0.1:27686/v1/traces \
+    npx vite
+
+Open http://127.0.0.1:27686 for the motel TUI, or query the API directly:
+
+    curl "http://127.0.0.1:27686/api/traces/search?service=worldsim&operation=apply_input"
+    curl "http://127.0.0.1:27686/api/logs/search?service=worldsim&body=tick"
+
+What you get:
+
+* Cross-service traces — a `traceparent` header carries span context through
+  NATS, so one trace spans `pusher.nats.publish.input → worldsim.apply_input`
+  and `worldsim.tick → worldsim.replicate → pusher.ws.write_replication`.
+* Browser → backend link — the frontend stamps a W3C `traceparent` into each
+  `AuthFrame`/`InputFrame`, so `ws.send_input → pusher.nats.publish.input →
+  worldsim.apply_input` share one trace id.
+* Tick metrics as logs — `worldsim.tick` emits a structured log per tick with
+  `duration_ms`, `entity_count`, `replicated_clients`, and `snapshot_seq`
+  attributes (motel has no metrics endpoint, so these ride on logs/spans).
+
+Env vars:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `OTEL_ENABLED` | `false` | Arm the Go exporters (`true`/`1`/`yes`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:27686` | OTLP base URL |
+| `OTEL_SERVICE_NAME` | caller-provided | Override `service.name` |
+| `OTEL_TRACES_SAMPLE_RATIO` | `1.0` | TraceIDRatio sampler (0.0–1.0) |
+| `VITE_OTEL_ENABLED` | `false` | Arm the frontend exporter |
+| `VITE_OTEL_ENDPOINT` | `http://127.0.0.1:27686/v1/traces` | Frontend OTLP traces URL |
+| `VITE_OTEL_SERVICE` | `pixeleruv-frontend` | Frontend `service.name` |
+
+When telemetry is disabled, the Go services use a no-op tracer/logger and the
+frontend registers no provider — zero overhead.
+
 Project layout
 
     proto/                  Protobuf definitions (frames, replication, components)

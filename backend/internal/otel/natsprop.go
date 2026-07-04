@@ -41,3 +41,29 @@ func Extract(ctx context.Context, msg *nats.Msg) context.Context {
 	}
 	return otel.GetTextMapPropagator().Extract(ctx, headerCarrier{msg.Header})
 }
+
+// ContextFromTraceparent parses a W3C traceparent string (as carried in a
+// protobuf AuthFrame/InputFrame.traceparent field) and returns a ctx that
+// carries that span context. Use it to parent server-side spans to a browser
+// span when the only propagation channel is the protobuf body (not NATS
+// headers). Returns ctx unchanged if tp is empty or malformed.
+func ContextFromTraceparent(ctx context.Context, tp string) context.Context {
+	if tp == "" {
+		return ctx
+	}
+	return otel.GetTextMapPropagator().Extract(ctx, stringCarrier{"traceparent": tp})
+}
+
+// stringCarrier adapts a plain map[string]string to the otel TextMapCarrier
+// interface, for extracting context from a single traceparent header value.
+type stringCarrier map[string]string
+
+func (c stringCarrier) Get(key string) string   { return c[key] }
+func (c stringCarrier) Set(key, val string)     { c[key] = val }
+func (c stringCarrier) Keys() []string {
+	out := make([]string, 0, len(c))
+	for k := range c {
+		out = append(out, k)
+	}
+	return out
+}

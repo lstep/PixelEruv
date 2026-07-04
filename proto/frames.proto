@@ -18,12 +18,17 @@ message ClientFrame {
 
 message AuthFrame {
   string id_token = 1;             // dummy for lite MVP ("dev" accepted)
+  // W3C traceparent of the browser span that initiated this connection.
+  // Lets the pusher parent its server spans to the client-side trace.
+  string traceparent = 2;
 }
 
 message InputFrame {
   uint32 seq = 1;
   uint32 client_tick = 2;
   InputState state = 3;
+  // W3C traceparent of the browser span for this input (e.g. ws.send_input).
+  string traceparent = 4;
 }
 
 message InputState {

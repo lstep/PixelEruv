@@ -112,15 +112,25 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parent a server-side auth span to the browser's ws.send_auth span via
+	// the traceparent carried in the AuthFrame. This is what links the
+	// client-side trace to the backend trace tree.
+	authCtx, authSpan := s.tracer.Start(
+		otelinternal.ContextFromTraceparent(ctx, auth.GetTraceparent()),
+		"pusher.ws.auth",
+	)
+	defer authSpan.End()
+
 	// Dummy auth — accept any token.
 	clientID := generateClientID()
 	span.SetAttributes(attribute.String("client.id", clientID))
+	authSpan.SetAttributes(attribute.String("client.id", clientID))
 	sess := &session{clientID: clientID, conn: c}
 
 	// Subscribe to replication + control subjects for this client.
 	repSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.replication", clientID), func(m *nats.Msg) {
 		// Continue the trace started by worldsim's replication publish.
-		rctx, rspan := s.tracer.Start(otelinternal.Extract(ctx, m), "pusher.ws.write_replication")
+		rctx, rspan := s.tracer.Start(otelinternal.Extract(authCtx, m), "pusher.ws.write_replication")
 		defer rspan.End()
 		rspan.SetAttributes(attribute.String("client.id", clientID), attribute.Int("bytes", len(m.Data)))
 
@@ -141,7 +151,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		sess.sub.Unsubscribe()
 		s.sessions.Delete(clientID)
-		s.publishLifecycle(ctx, "client.disconnected", clientID)
+		s.publishLifecycle(authCtx, "client.disconnected", clientID)
 	}()
 
 	// Send AuthResultFrame.
@@ -156,7 +166,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	resultBytes, _ := proto.Marshal(result)
-	if err := c.Write(ctx, websocket.MessageBinary, resultBytes); err != nil {
+	if err := c.Write(authCtx, websocket.MessageBinary, resultBytes); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "ws write auth result")
 		s.logger.Warn("ws write auth result", "client", clientID, "err", err)
@@ -164,7 +174,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Publish client.connected so World Sim provisions the entity.
-	s.publishLifecycle(ctx, "client.connected", clientID)
+	s.publishLifecycle(authCtx, "client.connected", clientID)
 
 	s.logger.Info("client connected", "client", clientID)
 
@@ -186,7 +196,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 		switch p := frame.Payload.(type) {
 		case *pb.ClientFrame_Input:
-			pctx, pspan := s.tracer.Start(ctx, "pusher.nats.publish.input")
+			// Parent to the browser's ws.send_input span via the InputFrame's
+			// traceparent, so the full chain is:
+			// ws.send_input -> pusher.nats.publish.input -> worldsim.apply_input.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.Input.GetTraceparent()),
+				"pusher.nats.publish.input",
+			)
 			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.Int("input.seq", int(p.Input.GetSeq())))
 			inputBytes, _ := proto.Marshal(p.Input)
 			subject := fmt.Sprintf("client.%s.input", clientID)

@@ -1,7 +1,8 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
+import { context, trace } from "@opentelemetry/api";
 import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
-import { tracer } from "../otel";
+import { tracer, traceparentFor } from "../otel";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
@@ -45,7 +46,11 @@ export class WsClient {
     this.ws.onopen = () => {
       const authSpan = tracer.startSpan("ws.send_auth");
       try {
-        const auth = create(AuthFrameSchema, { idToken: "dev" });
+        // Build the auth frame inside the span's active context so
+        // traceparentFor() serializes this span's context for the backend.
+        const auth = context.with(trace.setSpan(context.active(), authSpan), () =>
+          create(AuthFrameSchema, { idToken: "dev", traceparent: traceparentFor() }),
+        );
         const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
         this.ws!.send(toBinary(ClientFrameSchema, frame));
       } finally {
@@ -142,8 +147,17 @@ export class WsClient {
       },
     });
     try {
+      // Serialize this span's context into the frame so the backend's
+      // input-handling spans parent to ws.send_input.
       const inputState = create(InputStateSchema, state);
-      const input = create(InputFrameSchema, { seq: this.seq, clientTick: 0, state: inputState });
+      const input = context.with(trace.setSpan(context.active(), span), () =>
+        create(InputFrameSchema, {
+          seq: this.seq,
+          clientTick: 0,
+          state: inputState,
+          traceparent: traceparentFor(),
+        }),
+      );
       const frame = create(ClientFrameSchema, { payload: { case: "input", value: input } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
