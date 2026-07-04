@@ -31,3 +31,6 @@ dist/web/
 
 # Docker
 .docker/
+
+# PocketBase
+pb_data/

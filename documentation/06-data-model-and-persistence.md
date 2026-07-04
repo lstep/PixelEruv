@@ -94,6 +94,12 @@ One row per virtual office instance (the MVP ships with one world).
 #### `maps`
 Each Tiled map file registered in the world.
 
+> **MVP:** SeaweedFS/RustFS is deferred. The `maps` collection uses
+> PocketBase's built-in file fields (`tiled_json`, `tilesets`) instead of
+> S3 URL strings. See `15-maps-and-tiled.md` for the MVP upload workflow.
+> Post-MVP, these become `tiled_json_url` / `tileset_urls` string fields
+> pointing at object storage.
+
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string (PB auto) | |
