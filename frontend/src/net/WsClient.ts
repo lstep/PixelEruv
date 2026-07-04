@@ -132,8 +132,8 @@ export class WsClient {
     };
   }
 
-  sendInput(state: { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+  sendInput(state: { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }): number {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return 0;
     this.seq++;
     const span = tracer.startSpan("ws.send_input", {
       attributes: {
@@ -163,6 +163,7 @@ export class WsClient {
     } finally {
       span.end();
     }
+    return this.seq;
   }
 
   getClientId(): string | null {
