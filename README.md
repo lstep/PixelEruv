@@ -109,8 +109,24 @@ OpenTelemetry traces and logs. Telemetry is **off by default**; flip it on
 when you want runtime evidence while debugging.
 
 motel is a local OpenTelemetry collector with a query API and TUI. Install it
-from [github.com/kitlangton/motel](https://github.com/kitlangton/motel), then
-start it once (it runs as a machine-global daemon, shared across projects):
+from [github.com/kitlangton/motel](https://github.com/kitlangton/motel).
+
+Quick start (one command):
+
+    make build          # one-time: build the Go binaries
+    make debug          # starts NATS + motel + pusher + worldsim with OTel on
+
+This starts a standalone NATS container, ensures motel is running, then
+launches both Go services with `OTEL_ENABLED=true`. Ctrl-C stops the
+services and cleans up NATS. For the frontend with browser traces:
+
+    make debug-frontend   # in a second terminal: Vite dev server + OTel
+
+Open http://127.0.0.1:27686 for the motel TUI, or http://localhost:5173
+for the game.
+
+Or run them manually — start motel once (it runs as a machine-global
+daemon, shared across projects):
 
     motel start
 

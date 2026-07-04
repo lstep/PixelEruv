@@ -851,6 +851,69 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:27686 \
 ./bin/your-service
 ```
 
+### Makefile debug target (one-command launch)
+
+To avoid retyping the env vars every session, add a `debug` target to your
+Makefile that starts motel, any infrastructure (e.g. NATS), and all
+instrumented services in one shot. Here is the pattern used in PixelEruv:
+
+```make
+# OpenTelemetry / motel debug configuration
+OTEL_ENDPOINT := http://127.0.0.1:27686
+NATS_CONTAINER := myapp-debug-nats
+NATS_PORT := 4222
+DIST_BIN := dist/bin
+
+# Start motel + NATS + Go services with OTel enabled.
+# Ctrl-C stops the services; debug-stop cleans up NATS.
+debug: debug-nats
+	@command -v motel >/dev/null 2>&1 || { echo "motel not found"; exit 1; }
+	@motel start >/dev/null 2>&1 || true
+	@echo "==> motel: $(OTEL_ENDPOINT) (TUI at http://127.0.0.1:27686)"
+	@echo "==> starting services with OTel enabled (Ctrl-C to stop)"
+	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
+		NATS_URL=nats://127.0.0.1:$(NATS_PORT) TICK_HZ=10 \
+		./$(DIST_BIN)/worldsim &
+	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
+		NATS_URL=nats://127.0.0.1:$(NATS_PORT) WS_ADDR=:8081 \
+		./$(DIST_BIN)/pusher
+	@$(MAKE) debug-stop
+
+debug-nats:
+	@docker rm -f $(NATS_CONTAINER) >/dev/null 2>&1 || true
+	@docker run -d --name $(NATS_CONTAINER) -p $(NATS_PORT):4222 nats:2.10-alpine -js >/dev/null
+	@echo "==> NATS running on nats://127.0.0.1:$(NATS_PORT)"
+
+debug-stop:
+	@docker rm -f $(NATS_CONTAINER) >/dev/null 2>&1 || true
+	@echo "==> debug session stopped"
+
+# Frontend dev server with OTel enabled (run in a second terminal).
+debug-frontend:
+	cd frontend && VITE_OTEL_ENABLED=true \
+		VITE_OTEL_ENDPOINT=$(OTEL_ENDPOINT)/v1/traces npx vite
+```
+
+Usage:
+
+```
+make build            # one-time: build the Go binaries
+make debug            # terminal 1: NATS + motel + Go services with OTel
+make debug-frontend   # terminal 2: Vite dev server with frontend OTel
+```
+
+Key details:
+
+- `motel start` is idempotent — it starts the daemon if not running and is
+  a no-op if already running, so it's safe to call every time.
+- `worldsim` is backgrounded (`&`) so its output doesn't block; `pusher`
+  runs in the foreground so **Ctrl-C stops the session** and triggers
+  `debug-stop` to clean up the NATS container.
+- The `command -v motel` check gives a clear error if motel isn't
+  installed, rather than a cryptic failure when the exporter can't connect.
+- `debug-frontend` is a separate target because the Vite dev server needs
+  its own terminal (it's long-running and watches files).
+
 ### Query the API
 
 ```bash
@@ -947,4 +1010,6 @@ extracted correctly — check section 7 or 8.
       in entry point (section 9)
 - [ ] Start motel, run services with `OTEL_ENABLED=true`, verify traces
       appear (section 10)
+- [ ] Add a `make debug` target that launches motel + infrastructure +
+      services with OTel enabled in one command (section 10)
 - [ ] Document the env vars in your README or docker-compose
