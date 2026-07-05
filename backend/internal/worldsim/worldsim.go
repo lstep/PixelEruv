@@ -224,7 +224,17 @@ func (s *Simulator) subscribe() error {
 			return
 		}
 		span.SetAttributes(attribute.String("client.id", ar.ClientId), attribute.String("user.sub", ar.GetSub()))
-		s.provisionClient(ctx, ar.ClientId, ar.GetSub())
+		entityID := s.provisionClient(ctx, ar.ClientId, ar.GetSub())
+		// Respond with the entity ID so the pusher can include it in the
+		// AuthResultFrame sent to the client. The client needs the actual
+		// entity ID (which may differ from "e_"+clientID[2:] when a
+		// PocketBase-stored identity exists) to identify its own avatar.
+		if m.Reply != "" {
+			resp, _ := proto.Marshal(&pb.AuthResultFrame{EntityId: entityID})
+			if err := s.nc.Publish(m.Reply, resp); err != nil {
+				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
+			}
+		}
 	}); err != nil {
 		return fmt.Errorf("subscribe client.connected: %w", err)
 	}
@@ -325,12 +335,12 @@ func (s *Simulator) Run(ctx context.Context) error {
 // If the user has a record in PocketBase (by oidc_sub), their persistent
 // entity_id and last position are restored. Otherwise a new user record
 // is created.
-func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) {
+func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.clients[clientID]; exists {
-		return
+	if existing, exists := s.clients[clientID]; exists {
+		return existing.ID
 	}
 
 	defaultEntityID := "e_" + clientID[2:]
@@ -372,6 +382,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) {
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
 		"x", e.Position.X, "y", e.Position.Y)
+	return entityID
 }
 
 func (s *Simulator) despawnClient(ctx context.Context, clientID string) {

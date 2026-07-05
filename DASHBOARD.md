@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-05 (session 5)
+Last updated: 2026-07-05 (session 6)
 
 ## Overview
 
@@ -88,7 +88,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 ## Remaining work (MVP)
 
 ### High priority
-- [ ] **Camera follow**: camera follows local player instead of showing whole map
+- [x] **Camera follow**: camera follows local player (centered) with mouse-wheel zoom (1x–4x, default 2x)
 - [ ] **Zones in Tiled**: add rectangles on Zones object layer with `zone_type=wall` to test ext-walls
 - [ ] **Chat**: chat UI + PocketBase collection, messages broadcast via NATS
 

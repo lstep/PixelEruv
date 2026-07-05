@@ -87,6 +87,15 @@ const TICK_MS = 50; // 20 Hz server tick
 // evaluated at the feet — must match worldsim.go avatarFeetYOffset.
 const FEET_Y_OFFSET = 1.0;
 
+// Camera zoom bounds and default. The wheel handler adjusts zoom within
+// [ZOOM_MIN, ZOOM_MAX]; ZOOM_SENSITIVITY converts DOM wheel deltaY (~100
+// per notch) to a zoom delta (~0.1 per notch). Default 2 shows a 10x10
+// tile window around the player on the 30x20 map.
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+const ZOOM_DEFAULT = 2;
+const ZOOM_SENSITIVITY = 0.001;
+
 // Character sprite sheets — one per player, cycled. Each sheet is 768x192.
 // The limezu characters are ~48px tall (taller than a 32px tile): the head
 // occupies the bottom of one 32px row and the body fills the next row. We
@@ -334,8 +343,19 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Camera bounds
+    // Camera bounds + initial zoom. startFollow is called once the local
+    // avatar spawns (see handleReplication). Zoom is adjustable via the
+    // mouse wheel between ZOOM_MIN and ZOOM_MAX.
     this.cameras.main.setBounds(0, 0, this.mapW * TILE_SIZE, this.mapH * TILE_SIZE);
+    this.cameras.main.setZoom(ZOOM_DEFAULT);
+    this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _gameObjects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+      const z = Phaser.Math.Clamp(
+        this.cameras.main.zoom - deltaY * ZOOM_SENSITIVITY,
+        ZOOM_MIN,
+        ZOOM_MAX,
+      );
+      this.cameras.main.setZoom(z);
+    });
 
     // Create walk + idle animations for each character sheet. Walk cycles
     // are in row 3. Idle uses the same frames at a slower rate for a subtle
@@ -389,11 +409,11 @@ export class GameScene extends Phaser.Scene {
     this.ws = new WsClient(wsUrl);
     this.ws.connect(
       () => {
-        // Derive our avatar's entity id from the assigned client id
-        // (worldsim: entityID = "e_" + clientID[2:]).
-        const cid = this.ws?.getClientId();
-        if (cid) this.myEntityId = "e_" + cid.slice(2);
-        console.log("ready, waiting for replication...");
+        // Use the entity ID from the server's AuthResult. The server may
+        // assign a different entity ID than "e_"+clientId[2:] when a
+        // PocketBase-stored identity exists (persistent entity_id).
+        this.myEntityId = this.ws?.getEntityId() ?? null;
+        console.log("ready, myEntityId=", this.myEntityId);
       },
       (batch: ReplicationBatchView) => this.handleReplication(batch),
     );
@@ -544,6 +564,11 @@ export class GameScene extends Phaser.Scene {
       });
       // Start idle animation immediately.
       sprite.play(`${charKey}_idle_down`, true);
+      // Camera follows the local player. roundPixels keeps pixel-art
+      // crisp; lerp 1 = hard snap each frame (no sub-pixel smear).
+      if (spawn.entityId === this.myEntityId) {
+        this.cameras.main.startFollow(sprite, true, 1, 1);
+      }
       console.log(`spawned ${spawn.entityId} at (${x}, ${y})`);
     }
 

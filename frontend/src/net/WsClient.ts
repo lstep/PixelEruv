@@ -33,6 +33,7 @@ export class WsClient {
   private ws: WebSocket | null = null;
   private url: string;
   private clientId: string | null = null;
+  private entityId: string | null = null;
   private seq = 0;
 
   constructor(url: string) {
@@ -68,9 +69,10 @@ export class WsClient {
           const ar = serverFrame.payload.value;
           if (ar.ok) {
             this.clientId = ar.clientId;
+            this.entityId = ar.entityId || null;
             connectSpan.setAttribute("client.id", ar.clientId);
             connectSpan.end();
-            console.log(`authenticated: client=${this.clientId}`);
+            console.log(`authenticated: client=${this.clientId} entity=${this.entityId}`);
             onReady();
           } else {
             connectSpan.recordException(new Error("auth failed"));
@@ -204,6 +206,10 @@ export class WsClient {
 
   getClientId(): string | null {
     return this.clientId;
+  }
+
+  getEntityId(): string | null {
+    return this.entityId;
   }
 
   close(): void {

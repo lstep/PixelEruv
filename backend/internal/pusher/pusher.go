@@ -191,14 +191,29 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
 	}()
 
-	// Send AuthResultFrame.
-	// The World Sim will send the entity_id via the first replication batch
-	// (SpawnEntity). For now, entity_id is empty here.
+	// Publish client.connected so World Sim provisions the entity. Use
+	// request-reply to get the actual entity ID, which may differ from
+	// "e_"+clientID[2:] when a PocketBase-stored identity exists. The
+	// client needs the real entity ID to identify its own avatar.
+	entityID := ""
+	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub); err != nil {
+		s.logger.Warn("client.connected request-reply, using default entity ID", "client", clientID, "err", err)
+	} else {
+		var ar pb.AuthResultFrame
+		if err := proto.Unmarshal(reply, &ar); err != nil {
+			s.logger.Warn("client.connected reply unmarshal", "client", clientID, "err", err)
+		} else {
+			entityID = ar.EntityId
+		}
+	}
+
+	// Send AuthResultFrame with the entity ID from worldsim.
 	result := &pb.ServerFrame{
 		Payload: &pb.ServerFrame_AuthResult{
 			AuthResult: &pb.AuthResultFrame{
 				Ok:       true,
 				ClientId: clientID,
+				EntityId: entityID,
 			},
 		},
 	}
@@ -210,10 +225,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Publish client.connected so World Sim provisions the entity.
-	s.publishLifecycle(authCtx, "client.connected", clientID, sub)
-
-	s.logger.Info("client connected", "client", clientID)
+	s.logger.Info("client connected", "client", clientID, "entity", entityID)
 
 	// Main read loop — forward InputFrames to NATS.
 	for {
@@ -288,6 +300,20 @@ func (s *Server) publishLifecycle(ctx context.Context, subject, clientID, sub st
 	if err := s.nc.PublishMsg(m); err != nil {
 		s.logger.Warn("nats publish lifecycle", "subject", subject, "err", err)
 	}
+}
+
+// publishLifecycleRequest is like publishLifecycle but uses NATS request-reply
+// and returns the reply data. Used for client.connected so worldsim can return
+// the provisioned entity ID.
+func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub string) ([]byte, error) {
+	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub})
+	m := &nats.Msg{Subject: subject, Data: msg}
+	otelinternal.Inject(ctx, m)
+	reply, err := s.nc.RequestMsg(m, 5*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	return reply.Data, nil
 }
 
 func generateClientID() string {
