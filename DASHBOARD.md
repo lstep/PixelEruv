@@ -1,14 +1,14 @@
 # PixelEruv.o — Dashboard
 
-Dernière mise à jour : 2026-07-05 (session 2)
+Last updated: 2026-07-05 (session 2)
 
-## Vue d'ensemble
+## Overview
 
-MMO spatial 2D top-down avec authentification OIDC, identité persistante,
-système de zones extensible et extensions first-party. Architecture kernel
-(worldsim + pusher) + extensions communicantes via NATS.
+2D top-down spatial MMO with OIDC authentication, persistent identity,
+extensible zone system, and first-party extensions. Kernel architecture
+(worldsim + pusher) + extensions communicating via NATS.
 
-## Architecture actuelle
+## Current architecture
 
 ```
 Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> PocketBase
@@ -16,103 +16,103 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
                              ext-demo        ext-walls
 ```
 
-| Service      | Rôle                                              | Stack         |
-|--------------|---------------------------------------------------|---------------|
-| frontend     | Client Phaser 3, auth OIDC, rendu sprites         | TypeScript/Vite |
-| pusher       | Passerelle WebSocket ↔ NATS, validation JWT       | Go            |
-| worldsim     | Autorité spatiale, ECS, zones, réplication        | Go            |
-| pocketbase   | Stockage maps, joueurs, positions                 | PocketBase    |
-| dex          | Fournisseur d'identité OIDC (local-password)      | Dex           |
-| nats         | Bus de messages pub/sub + JetStream               | NATS          |
-| ext-demo     | Extension de démonstration (log zone events)      | Go            |
-| ext-walls    | Extension murs (gate triggers block sur zones)    | Go            |
+| Service      | Role                                              | Stack           |
+|--------------|---------------------------------------------------|-----------------|
+| frontend     | Phaser 3 client, OIDC auth, sprite rendering      | TypeScript/Vite |
+| pusher       | WebSocket ↔ NATS gateway, JWT validation          | Go              |
+| worldsim     | Spatial authority, ECS, zones, replication        | Go              |
+| pocketbase   | Maps, players, positions storage                  | PocketBase      |
+| dex          | OIDC identity provider (local-password)           | Dex             |
+| nats         | Pub/sub message bus + JetStream                   | NATS            |
+| ext-demo     | Demo extension (logs zone events)                 | Go              |
+| ext-walls    | Walls extension (block gate triggers on zones)    | Go              |
 
-## Fonctionnalités implémentées
+## Implemented features
 
-### Authentification & Identité
-- [x] Dex OIDC avec authorization code flow + PKCE
-- [x] Validation JWT côté pusher (JWKS, iss, aud, sub)
-- [x] 2 utilisateurs : `admin@pixeleruv.local` / `player@pixeleruv.local` (mdp: `password123`)
-- [x] Identité persistante : `oidc_sub` → record PocketBase `players` → `entity_id` + position
-- [x] Position sauvegardée sur déconnexion, restaurée à la reconnexion
+### Authentication & Identity
+- [x] Dex OIDC with authorization code flow + PKCE
+- [x] JWT validation on pusher side (JWKS, iss, aud, sub)
+- [x] 2 users: `admin@pixeleruv.local` / `player@pixeleruv.local` (password: `password123`)
+- [x] Persistent identity: `oidc_sub` → PocketBase `players` record → `entity_id` + position
+- [x] Position saved on disconnect, restored on reconnect
 
-### Rendu & Mouvement
-- [x] Sprites personnages 32x32 (6 personnages, 4 directions, 6 frames walk)
-- [x] Animations walk (3fps) + idle (2fps, 4 frames)
-- [x] Mapping directions : 0=down, 1=left, 2=right, 3=up
-- [x] Mouvement 8-directionnel avec slide le long des murs
-- [x] Collision : tile layer Walls (fallback) + gate triggers extension (zones)
+### Rendering & Movement
+- [x] 32x32 character sprites (6 characters, 4 directions, 6 walk frames)
+- [x] Walk animation (3fps) + idle animation (2fps, 4 frames)
+- [x] Direction mapping: 0=down, 1=left, 2=right, 3=up
+- [x] 8-directional movement with wall sliding
+- [x] Collision: Walls tile layer (fallback) + extension gate triggers (zones)
 
 ### Zones & Extensions
-- [x] Parsing Zones object layer depuis Tiled (rect, circle, polygon)
-- [x] Pré-rastérisation des zones statiques (lookup O(1) par tile)
-- [x] Détection enter/exit → publication NATS `zone.enter` / `zone.exit`
-- [x] Protocole extension : `extension.<id>.register`, `.heartbeat`, `.register_triggers`
-- [x] Gate triggers : `block` / `allow` (cache local, évalués pendant le mouvement)
-- [x] Détection d'extensions stale (3× heartbeat interval)
-- [x] ext-walls : lit la map, trouve `zone_type=wall`, enregistre des triggers block
-- [x] ext-demo : log les événements zone enter/exit
-- [x] Murs migrés vers le système d'extensions (Walls tile layer = fallback uniquement)
+- [x] Parse Zones object layer from Tiled (rect, circle, polygon)
+- [x] Pre-rasterize static zones for O(1) point-in-zone lookup
+- [x] Enter/exit detection → NATS `zone.enter` / `zone.exit` events
+- [x] Extension protocol: `extension.<id>.register`, `.heartbeat`, `.register_triggers`
+- [x] Gate triggers: `block` / `allow` (cached locally, evaluated during movement)
+- [x] Stale extension detection (3× heartbeat interval)
+- [x] ext-walls: reads map, finds `zone_type=wall`, registers block triggers
+- [x] ext-demo: logs zone enter/exit events
+- [x] Walls migrated to extension system (Walls tile layer = fallback only)
 
-### Intégrité & Documentation
-- [x] Map integrity checker : validation au démarrage, toutes les 5 min, et à la demande (`admin.map.integrity` via NATS)
-- [x] Documentation map design guide (`documentation/21-map-design-guide.md`) : layers, propriétés, shapes, upload
-- [x] Diagramme SVG de la structure des layers et du flux de données (`documentation/map-design-guide.html`)
+### Integrity & Documentation
+- [x] Map integrity checker: validation at startup, every 5 min, and on demand (`admin.map.integrity` via NATS)
+- [x] Map design guide documentation (`documentation/21-map-design-guide.md`): layers, properties, shapes, upload
+- [x] SVG diagram of layer structure and data flow (`documentation/map-design-guide.html`)
 
 ### Infrastructure
-- [x] Docker Compose : nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls
-- [x] Nginx proxy : `/dex/` → Dex (same-origin pour le browser)
-- [x] Makefile pour dev local (pusher + worldsim en binaire natif)
-- [x] OpenTelemetry instrumentation (désactivé par défaut)
+- [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls
+- [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
+- [x] Makefile for local dev (pusher + worldsim as native binaries)
+- [x] OpenTelemetry instrumentation (disabled by default)
 
-## Ce qui reste (MVP)
+## Remaining work (MVP)
 
-### Priorité haute
-- [ ] **Camera follow** : la caméra suit le joueur local au lieu de montrer toute la map
-- [ ] **Zones dans Tiled** : ajouter des rectangles sur l'object layer Zones avec `zone_type=wall` pour tester ext-walls
-- [ ] **Chat** : UI chat + collection PocketBase, messages broadcast via NATS
+### High priority
+- [ ] **Camera follow**: camera follows local player instead of showing whole map
+- [ ] **Zones in Tiled**: add rectangles on Zones object layer with `zone_type=wall` to test ext-walls
+- [ ] **Chat**: chat UI + PocketBase collection, messages broadcast via NATS
 
-### Priorité moyenne
-- [ ] **LiveKit A/V** : audio/vidéo positionnel (serveur LiveKit, bridge, token exchange, WebRTC client)
-- [ ] **AOI filter** : ne répliquer que les entités dans le rayon du client + même zone
-- [ ] **Input triggers** : clics/touches → broadcast aux extensions (interactions NPC, objets)
-- [ ] **Exclusive zones** : isolation visuelle + audio pour les membres
+### Medium priority
+- [ ] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
+- [ ] **AOI filter**: only replicate entities within client radius + same zone
+- [ ] **Input triggers**: clicks/keys → broadcast to extensions (NPC interactions, objects)
+- [ ] **Exclusive zones**: visual + audio isolation for members
 
-### Priorité basse
-- [ ] **Knock-to-join** : meeting rooms avec propriétaire et admission
-- [ ] **Mobile zones** : zones circulaires qui suivent une entité (vision de PNJ)
-- [ ] **Extension pack complet** : walls, doors, base zone behaviors, base triggers
-- [ ] **Prédiction côté client + réconciliation** (netcode-lerp-prediction branch existe)
+### Low priority
+- [ ] **Knock-to-join**: meeting rooms with owner and admission
+- [ ] **Mobile zones**: circular zones that follow an entity (NPC vision)
+- [ ] **Full extension pack**: walls, doors, base zone behaviors, base triggers
+- [ ] **Client-side prediction + reconciliation** (netcode-lerp-prediction branch exists)
 
-## Décisions architecturales
+## Architectural decisions
 
-| Date       | Décision | Rationale |
+| Date       | Decision | Rationale |
 |------------|----------|-----------|
-| 2026-07-05 | Authorization code flow + PKCE (pas implicit) | Dex ne supporte pas `response_type=id_token` |
-| 2026-07-05 | Collection `players` (pas `users`) | PocketBase a déjà une collection `users` intégrée |
-| 2026-07-05 | Auth superuser pour API PocketBase | Les règles `null` = superuser only pour create/update |
-| 2026-07-05 | `DEX_ISSUER` séparé de `DEX_JWKS_URL` | Token `iss` = `localhost:5556`, mais pusher atteint Dex via `dex:5556` en Docker |
-| 2026-07-05 | Zones = object layer Tiled (pas tile layer) | Les zones sont des formes vectorielles avec metadata, pas des tiles |
-| 2026-07-05 | Gate triggers en cache local (pas round-trip NATS) | `block`/`allow` sont déterministes, pas besoin de requêter l'extension à chaque mouvement |
-| 2026-07-05 | Walls tile layer conservé comme fallback | Évite de casser la collision si aucune zone wall n'est définie |
-| 2026-07-05 | Re-registration périodique des extensions | NATS Core est fire-and-forget ; le premier publish peut être perdu |
-| 2026-07-05 | Murs migrés vers extensions (gate triggers) | Architecture kernel sans gameplay logic ; Walls tile layer conservé comme fallback |
-| 2026-07-05 | Integrity checker au démarrage + périodique + à la demande | Détecte corruption/incohérences de map tôt et pendant l'exécution |
+| 2026-07-05 | Authorization code flow + PKCE (not implicit) | Dex doesn't support `response_type=id_token` |
+| 2026-07-05 | Collection `players` (not `users`) | PocketBase has a built-in `users` collection |
+| 2026-07-05 | Superuser auth for PocketBase API | `null` rules = superuser only for create/update |
+| 2026-07-05 | Separate `DEX_ISSUER` from `DEX_JWKS_URL` | Token `iss` = `localhost:5556`, but pusher reaches Dex via `dex:5556` in Docker |
+| 2026-07-05 | Zones = Tiled object layer (not tile layer) | Zones are vector shapes with metadata, not tiles |
+| 2026-07-05 | Gate triggers cached locally (no NATS round-trip) | `block`/`allow` are deterministic, no need to query extension on every move |
+| 2026-07-05 | Walls tile layer kept as fallback | Prevents breaking collision if no wall zones are defined |
+| 2026-07-05 | Periodic extension re-registration | NATS Core is fire-and-forget; first publish may be lost |
+| 2026-07-05 | Walls migrated to extensions (gate triggers) | Kernel architecture with no gameplay logic; Walls tile layer kept as fallback |
+| 2026-07-05 | Integrity checker at startup + periodic + on demand | Detects map corruption/inconsistencies early and during runtime |
 
-## Comptes de test
+## Test accounts
 
-| Service      | Identifiant                | Mot de passe   |
-|--------------|----------------------------|----------------|
-| Dex admin    | `admin@pixeleruv.local`    | `password123`  |
-| Dex player   | `player@pixeleruv.local`   | `password123`  |
-| PB superuser | `admin@pixeleruv.local`    | `password123`  |
+| Service      | Username                   | Password        |
+|--------------|----------------------------|-----------------|
+| Dex admin    | `admin@pixeleruv.local`    | `password123`   |
+| Dex player   | `player@pixeleruv.local`   | `password123`   |
+| PB superuser | `admin@pixeleruv.local`    | `password123`   |
 
-## Commandes utiles
+## Useful commands
 
 ```bash
-# Dev local
-make up                    # démarre nats + pocketbase + dex + pusher + worldsim
-make down                  # arrête tout
+# Local dev
+make up                    # starts nats + pocketbase + dex + pusher + worldsim
+make down                  # stops everything
 
 # Docker (full stack)
 docker compose -f docker/docker-compose.yml up --build -d
@@ -122,21 +122,21 @@ docker compose -f docker/docker-compose.yml restart ext-walls
 # PocketBase admin
 http://localhost:8090/_/
 
-# Vérifier les joueurs enregistrés
+# Check registered players
 curl -s http://localhost:8090/api/collections/players/records | jq
 
-# Logs zone events
+# Zone event logs
 docker logs pixeleruv-ext-demo-1 -f
 
-# Map integrity check à la demande
+# Map integrity check on demand
 nats -s nats://localhost:4222 pub admin.map.integrity ""
 docker logs pixeleruv-worldsim-1 2>&1 | grep "integrity"
 ```
 
-## Branches notables
+## Notable branches
 
-| Branche                  | Description |
+| Branch                    | Description |
 |--------------------------|-------------|
-| main                     | Branche principale |
+| main                     | Main branch |
 | zones                    | Zones + extension protocol (merged into main) |
-| netcode-lerp-prediction  | Prédiction client + interpolation (non mergée) |
+| netcode-lerp-prediction  | Client prediction + interpolation (not merged) |
