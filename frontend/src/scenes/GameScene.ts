@@ -162,15 +162,23 @@ export class GameScene extends Phaser.Scene {
     // Camera bounds
     this.cameras.main.setBounds(0, 0, this.mapW * TILE_SIZE, this.mapH * TILE_SIZE);
 
-    // Create walk animations for each character sheet. Row 3 has the walk
-    // cycles: down (c0-5), left (c6-11), right (c12-17), up (c18-23).
+    // Create walk + idle animations for each character sheet. Walk cycles
+    // are in row 3. Idle uses the same frames at a slower rate for a subtle
+    // breathing effect.
     for (const key of CHAR_SPRITES) {
       for (let dir = 0; dir < 4; dir++) {
         const start = DIR_FRAME_START[dir];
+        const frames = this.anims.generateFrameNumbers(key, { start, end: start + FRAMES_PER_DIR - 1 });
         this.anims.create({
           key: `${key}_walk_${DIR_NAMES[dir]}`,
-          frames: this.anims.generateFrameNumbers(key, { start, end: start + FRAMES_PER_DIR - 1 }),
+          frames,
           frameRate: 4,
+          repeat: -1,
+        });
+        this.anims.create({
+          key: `${key}_idle_${DIR_NAMES[dir]}`,
+          frames: [frames[0], frames[1], frames[0], frames[2]],
+          frameRate: 2,
           repeat: -1,
         });
       }
@@ -277,10 +285,7 @@ export class GameScene extends Phaser.Scene {
       if (moving) {
         avatar.sprite.play(animKey, true);
       } else {
-        avatar.sprite.stop();
-        // Set to first frame of the walk cycle for this direction (idle pose).
-        const frame = DIR_FRAME_START[dir];
-        avatar.sprite.setFrame(frame);
+        avatar.sprite.play(`${avatar.charKey}_idle_${DIR_NAMES[dir]}`, true);
       }
     }
   }
