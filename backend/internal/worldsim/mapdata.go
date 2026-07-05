@@ -64,6 +64,41 @@ func LoadMap(pocketbaseURL, mapName string) (*MapData, error) {
 	return nil, lastErr
 }
 
+// MapRecordInfo is the lightweight metadata for a map record in PocketBase,
+// used to detect when the map has been re-uploaded (filename changes).
+type MapRecordInfo struct {
+	TiledJSONFilename string
+}
+
+// FetchMapRecordInfo fetches just the map record metadata (without parsing
+// the full Tiled JSON). Used by the periodic reload checker to detect
+// changes by comparing the tiled_json filename.
+func FetchMapRecordInfo(pocketbaseURL, mapName string) (*MapRecordInfo, error) {
+	resp, err := http.Get(fmt.Sprintf(
+		"%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1",
+		pocketbaseURL, mapName,
+	))
+	if err != nil {
+		return nil, fmt.Errorf("fetch map record: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("pocketbase responded %d", resp.StatusCode)
+	}
+	var record struct {
+		Items []struct {
+			TiledJSON string `json:"tiled_json"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
+		return nil, fmt.Errorf("decode record: %w", err)
+	}
+	if len(record.Items) == 0 {
+		return nil, fmt.Errorf("no map named %q", mapName)
+	}
+	return &MapRecordInfo{TiledJSONFilename: record.Items[0].TiledJSON}, nil
+}
+
 func loadMapOnce(pocketbaseURL, mapName string) (*MapData, error) {
 	// Fetch the maps record by name.
 	resp, err := http.Get(fmt.Sprintf(

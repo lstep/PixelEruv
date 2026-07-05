@@ -69,51 +69,64 @@ func main() {
 	}
 	defer nc.Close()
 
-	// Find wall zones from the map (retry until PocketBase is ready).
-	var wallZones []string
+	regSubject := fmt.Sprintf("extension.%s.register", extID)
+	trigSubject := fmt.Sprintf("extension.%s.register_triggers", extID)
+	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
+
+	// register reads wall zones from the map and publishes register + trigger
+	// messages. Called at startup, on map.updated, and periodically.
+	register := func() {
+		zones, err := findWallZones(pbURL, mapID, logger)
+		if err != nil {
+			logger.Warn("find wall zones failed", "err", err)
+			return
+		}
+		logger.Info("found wall zones", "count", len(zones), "zones", zones)
+
+		var gateTriggers []struct {
+			ZoneID   string `json:"zone_id"`
+			Behavior string `json:"behavior"`
+		}
+		for _, zid := range zones {
+			gateTriggers = append(gateTriggers, struct {
+				ZoneID   string `json:"zone_id"`
+				Behavior string `json:"behavior"`
+			}{ZoneID: zid, Behavior: "block"})
+		}
+
+		regData, _ := json.Marshal(registerMsg{
+			ExtensionID:        extID,
+			HeartbeatIntervalS: heartbeatS,
+		})
+		trigData, _ := json.Marshal(triggerMsg{
+			ExtensionID:  extID,
+			GateTriggers: gateTriggers,
+		})
+
+		nc.Publish(regSubject, regData)
+		nc.Publish(trigSubject, trigData)
+		logger.Info("registered walls extension", "triggers", len(gateTriggers))
+	}
+
+	// Subscribe to map.updated so we re-read the map when it changes.
+	if _, err := nc.Subscribe("map.updated", func(m *nats.Msg) {
+		logger.Info("map.updated received, re-reading map", "map", string(m.Data))
+		register()
+	}); err != nil {
+		logger.Error("subscribe map.updated", "err", err)
+	}
+
+	// Initial registration (retry until PocketBase is ready).
 	for i := 0; i < 30; i++ {
 		zones, err := findWallZones(pbURL, mapID, logger)
 		if err == nil {
-			wallZones = zones
+			_ = zones // register() will re-fetch, but we just need to know PB is up
 			break
 		}
 		logger.Warn("waiting for pocketbase", "attempt", i+1, "err", err)
 		time.Sleep(time.Second)
 	}
-	logger.Info("found wall zones", "count", len(wallZones), "zones", wallZones)
-
-	// Build trigger registration message.
-	var gateTriggers []struct {
-		ZoneID   string `json:"zone_id"`
-		Behavior string `json:"behavior"`
-	}
-	for _, zid := range wallZones {
-		gateTriggers = append(gateTriggers, struct {
-			ZoneID   string `json:"zone_id"`
-			Behavior string `json:"behavior"`
-		}{ZoneID: zid, Behavior: "block"})
-	}
-
-	regData, _ := json.Marshal(registerMsg{
-		ExtensionID:        extID,
-		HeartbeatIntervalS: heartbeatS,
-	})
-	trigData, _ := json.Marshal(triggerMsg{
-		ExtensionID:  extID,
-		GateTriggers: gateTriggers,
-	})
-
-	regSubject := fmt.Sprintf("extension.%s.register", extID)
-	trigSubject := fmt.Sprintf("extension.%s.register_triggers", extID)
-	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
-
-	// Register + send triggers (retry periodically since NATS is fire-and-forget).
-	register := func() {
-		nc.Publish(regSubject, regData)
-		nc.Publish(trigSubject, trigData)
-	}
 	register()
-	logger.Info("registered walls extension", "triggers", len(gateTriggers))
 
 	// Heartbeat + re-register loop.
 	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)

@@ -52,16 +52,18 @@ type NetworkSession struct {
 // --- World Sim ---
 
 type Simulator struct {
-	nc          *nats.Conn
-	mapID       string
-	mapData     *MapData
-	zoneReg     *ZoneRegistry
-	userStore   *UserStore
-	extMgr      *ExtensionManager
-	tickHz      int
-	tickDur     time.Duration
-	logger      *slog.Logger
-	tracer      trace.Tracer
+	nc           *nats.Conn
+	mapID        string
+	mapFilename  string
+	mapData      *MapData
+	zoneReg      *ZoneRegistry
+	userStore    *UserStore
+	extMgr       *ExtensionManager
+	pocketbaseURL string
+	tickHz       int
+	tickDur      time.Duration
+	logger       *slog.Logger
+	tracer       trace.Tracer
 
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
@@ -89,18 +91,19 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 	}
 
 	s := &Simulator{
-		nc:        nc,
-		mapID:     mapID,
-		mapData:   mapData,
-		zoneReg:   NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
-		userStore: NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
-		extMgr:    NewExtensionManager(logger),
-		tickHz:    tickHz,
-		tickDur:   time.Second / time.Duration(tickHz),
-		logger:    logger,
-		tracer:    otel.Tracer("worldsim"),
-		entities:  make(map[string]*Entity),
-		clients:   make(map[string]*Entity),
+		nc:            nc,
+		mapID:         mapID,
+		mapData:       mapData,
+		zoneReg:       NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
+		userStore:     NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
+		extMgr:        NewExtensionManager(logger),
+		pocketbaseURL: pocketbaseURL,
+		tickHz:        tickHz,
+		tickDur:       time.Second / time.Duration(tickHz),
+		logger:        logger,
+		tracer:        otel.Tracer("worldsim"),
+		entities:      make(map[string]*Entity),
+		clients:       make(map[string]*Entity),
 	}
 
 	if err := s.subscribe(); err != nil {
@@ -184,6 +187,9 @@ func (s *Simulator) Run(ctx context.Context) error {
 
 	// Periodic integrity check (every 5 minutes).
 	go s.startPeriodicIntegrityCheck(ctx)
+
+	// Periodic map reload check (every 30 seconds).
+	go s.startMapReloadChecker(ctx)
 
 	ticker := time.NewTicker(s.tickDur)
 	defer ticker.Stop()
@@ -533,6 +539,78 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 func (s *Simulator) runIntegrityCheck() {
 	results := CheckMapIntegrity(s.mapData)
 	LogIntegrityResults(s.logger, results, s.mapID)
+}
+
+// startMapReloadChecker periodically checks if the map has been updated in
+// PocketBase (by comparing the tiled_json filename). If changed, reloads the
+// map, rebuilds the zone registry, and publishes a map.updated event on NATS
+// so extensions can re-read the map too.
+func (s *Simulator) startMapReloadChecker(ctx context.Context) {
+	// Get the initial filename.
+	currentInfo, err := FetchMapRecordInfo(s.pocketbaseURL, s.mapID)
+	if err != nil {
+		s.logger.Warn("map reload checker: failed to get initial record info", "err", err)
+	} else if currentInfo != nil {
+		s.mu.Lock()
+		s.mapFilename = currentInfo.TiledJSONFilename
+		s.mu.Unlock()
+	}
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkMapReload()
+		}
+	}
+}
+
+// checkMapReload fetches the current map record info and compares the
+// filename. If it changed, reloads the map.
+func (s *Simulator) checkMapReload() {
+	info, err := FetchMapRecordInfo(s.pocketbaseURL, s.mapID)
+	if err != nil {
+		return // PocketBase might be temporarily unreachable
+	}
+	if info == nil {
+		return
+	}
+
+	s.mu.Lock()
+	oldFilename := s.mapFilename
+	s.mu.Unlock()
+
+	if info.TiledJSONFilename == oldFilename {
+		return // no change
+	}
+
+	s.logger.Info("map updated, reloading",
+		"map", s.mapID,
+		"old_file", oldFilename,
+		"new_file", info.TiledJSONFilename)
+
+	// Reload the map.
+	newMapData, err := LoadMap(s.pocketbaseURL, s.mapID)
+	if err != nil {
+		s.logger.Error("map reload failed", "err", err)
+		return
+	}
+
+	s.mu.Lock()
+	s.mapData = newMapData
+	s.zoneReg = NewZoneRegistry(newMapData.Zones, newMapData.Width, newMapData.Height)
+	s.mapFilename = info.TiledJSONFilename
+	s.mu.Unlock()
+
+	// Run integrity check on the new map.
+	s.runIntegrityCheck()
+
+	// Notify extensions that the map has been updated.
+	s.nc.Publish("map.updated", []byte(s.mapID))
+	s.logger.Info("map reloaded and map.updated event published", "map", s.mapID)
 }
 
 // startPeriodicIntegrityCheck runs the integrity check every 5 minutes.
