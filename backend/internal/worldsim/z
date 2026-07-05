@@ -1,5 +1,9 @@
 package worldsim
 
+import (
+	"fmt"
+)
+
 // ZoneShape is the geometric shape of a zone.
 type ZoneShape int
 
@@ -89,4 +93,8 @@ func (r *ZoneRegistry) ZonesAtPoint(px, py float32) []string {
 // AllZones returns all registered zones.
 func (r *ZoneRegistry) AllZones() []*Zone {
 	return r.zones
+}
+
+func tileKey(x, y int) string {
+	return fmt.Sprintf("%d:%d", x, y)
 }
