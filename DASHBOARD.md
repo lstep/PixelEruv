@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-05 (session 6)
+Last updated: 2026-07-05 (session 7)
 
 ## Overview
 
@@ -84,6 +84,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
 - [x] Makefile for local dev (pusher + worldsim as native binaries)
 - [x] OpenTelemetry instrumentation (disabled by default)
+- [x] WebSocket keepalive: pusher sends protocol-level pings every 30s (browser auto-responds with pong) so idle connections don't die
+- [x] Frontend auto-reconnect: exponential backoff (1s→30s cap), re-auths on reconnect, "Reconnecting…" overlay, re-sends current input state
 
 ## Remaining work (MVP)
 
@@ -126,6 +128,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-05 | Layer altitude = Tiled layer stack order (no explicit numeric property) | Simplest mental model: reordering layers in Tiled changes altitude |
 | 2026-07-05 | Per-layer `sort_mode` (`static`/`dynamic`) for Y-sort | Most decorations never need to interleave with the player; only tall/walkable-around objects do |
 | 2026-07-05 | Entity ownership via `owner_extension` property + `TriggerOwner` | Lets a generic extension and dedicated extensions claim map-authored props without colliding |
+| 2026-07-05 | Server-side WebSocket pings (not app-level ping frames) for keepalive | `coder/websocket` doesn't auto-ping; protocol-level pings get auto-pong from the browser with no client code. App-level `ClientFrame_Ping` already existed but was unused — protocol pings are simpler and keep the connection alive at the transport layer |
+| 2026-07-05 | Reconnect mints a fresh session (new entity id, spawn-point teleport) | True session resumption would need worldsim to reattach the entity to the new session; out of MVP scope. Player teleports to spawn on reconnect — flagged for a future task |
 
 ## Test accounts
 

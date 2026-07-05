@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { fromBinary } from "@bufbuild/protobuf";
 import { AppearanceSchema } from "../proto/components_pb";
-import { WsClient, decodePosition, ReplicationBatchView } from "../net/WsClient";
+import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
 import type { MapAssets } from "../mapLoader";
 
 const TILE_SIZE = 32;
@@ -33,6 +33,8 @@ interface TiledObjectJSON {
   y: number;
   width: number;
   height: number;
+  ellipse?: boolean;
+  polygon?: { x: number; y: number }[];
   properties?: TiledPropertyJSON[];
 }
 interface TiledLayerJSON {
@@ -54,14 +56,17 @@ function layerProp(props: TiledPropertyJSON[] | undefined, name: string): unknow
 
 // Wall zone in tile coordinates, parsed from the Tiled "Zones" object layer.
 // Used for client-side prediction of zone collision (matching the server's
-// swept segment-vs-rect test) so the local avatar doesn't predict through
+// swept segment-vs-shape test) so the local avatar doesn't predict through
 // wall zones and rubber-band on reconciliation.
-interface WallZone { x: number; y: number; w: number; h: number }
+type WallZone =
+  | { shape: "rect"; x: number; y: number; w: number; h: number }
+  | { shape: "circle"; cx: number; cy: number; r: number }
+  | { shape: "polygon"; verts: [number, number][] };
 
-// segmentIntersectsRect reports whether the segment from (x0,y0) to (x1,y1)
-// intersects the axis-aligned rect [rx, rx+rw] x [ry, ry+rh]. Uses the slab
-// method — ported from worldsim_swept.go to match the server's collision
-// exactly.
+// --- Swept collision helpers (ported from worldsim_swept.go / zones.go) ---
+// All operate in continuous tile coords already translated to feet space
+// by the caller. Must match the server exactly to avoid prediction drift.
+
 function segmentIntersectsRect(x0: number, y0: number, x1: number, y1: number, rx: number, ry: number, rw: number, rh: number): boolean {
   const rx1 = rx + rw;
   const ry1 = ry + rh;
@@ -70,7 +75,6 @@ function segmentIntersectsRect(x0: number, y0: number, x1: number, y1: number, r
 
   let t0 = 0, t1 = 1;
 
-  // X slab.
   if (dx === 0) {
     if (x0 < rx || x0 > rx1) return false;
   } else {
@@ -82,7 +86,6 @@ function segmentIntersectsRect(x0: number, y0: number, x1: number, y1: number, r
     if (t0 > t1) return false;
   }
 
-  // Y slab.
   if (dy === 0) {
     if (y0 < ry || y0 > ry1) return false;
   } else {
@@ -95,6 +98,102 @@ function segmentIntersectsRect(x0: number, y0: number, x1: number, y1: number, r
   }
 
   return t0 <= t1;
+}
+
+function segmentIntersectsCircle(x0: number, y0: number, x1: number, y1: number, cx: number, cy: number, r: number): boolean {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const lensq = dx * dx + dy * dy;
+
+  let t = 0;
+  if (lensq > 0) {
+    t = ((cx - x0) * dx + (cy - y0) * dy) / lensq;
+  }
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+
+  const px = x0 + t * dx;
+  const py = y0 + t * dy;
+  const ddx = px - cx;
+  const ddy = py - cy;
+  return ddx * ddx + ddy * ddy <= r * r;
+}
+
+function cross2(cx: number, cy: number, dx: number, dy: number, px: number, py: number): number {
+  return (dx - cx) * (py - cy) - (dy - cy) * (px - cx);
+}
+
+function segmentsIntersect(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): boolean {
+  const d1 = cross2(cx, cy, dx, dy, ax, ay);
+  const d2 = cross2(cx, cy, dx, dy, bx, by);
+  const d3 = cross2(ax, ay, bx, by, cx, cy);
+  const d4 = cross2(ax, ay, bx, by, dx, dy);
+  if ((d1 > 0) !== (d2 > 0) && (d3 > 0) !== (d4 > 0)) return true;
+  return false;
+}
+
+function pointInPolygon(px: number, py: number, poly: [number, number][]): boolean {
+  let inside = false;
+  const n = poly.length;
+  let j = n - 1;
+  for (let i = 0; i < n; i++) {
+    const xi = poly[i][0], yi = poly[i][1];
+    const xj = poly[j][0], yj = poly[j][1];
+    if ((yi > py) !== (yj > py) &&
+        (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+    j = i;
+  }
+  return inside;
+}
+
+function segmentIntersectsPolygon(x0: number, y0: number, x1: number, y1: number, poly: [number, number][]): boolean {
+  if (pointInPolygon(x0, y0, poly) || pointInPolygon(x1, y1, poly)) return true;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const ax = poly[i][0], ay = poly[i][1];
+    const bx = poly[(i + 1) % n][0], by = poly[(i + 1) % n][1];
+    if (segmentsIntersect(x0, y0, x1, y1, ax, ay, bx, by)) return true;
+  }
+  return false;
+}
+
+function pointSegmentDistSq(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lensq = dx * dx + dy * dy;
+  let t = 0;
+  if (lensq > 0) t = ((px - ax) * dx + (py - ay) * dy) / lensq;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  const cx = ax + t * dx;
+  const cy = ay + t * dy;
+  const ddx = px - cx;
+  const ddy = py - cy;
+  return ddx * ddx + ddy * ddy;
+}
+
+function segmentSegmentDistLE(p0x: number, p0y: number, p1x: number, p1y: number, q0x: number, q0y: number, q1x: number, q1y: number, r: number): boolean {
+  if (segmentsIntersect(p0x, p0y, p1x, p1y, q0x, q0y, q1x, q1y)) return true;
+  const r2 = r * r;
+  return pointSegmentDistSq(p0x, p0y, q0x, q0y, q1x, q1y) <= r2 ||
+         pointSegmentDistSq(p1x, p1y, q0x, q0y, q1x, q1y) <= r2 ||
+         pointSegmentDistSq(q0x, q0y, p0x, p0y, p1x, p1y) <= r2 ||
+         pointSegmentDistSq(q1x, q1y, p0x, p0y, p1x, p1y) <= r2;
+}
+
+// segmentIntersectsPolygonExpanded tests the segment against a polygon
+// expanded by radius r (Minkowski sum of polygon + disc). Ported from
+// worldsim_swept.go — approximates with vertex circles + edge distance.
+function segmentIntersectsPolygonExpanded(x0: number, y0: number, x1: number, y1: number, poly: [number, number][], r: number): boolean {
+  if (segmentIntersectsPolygon(x0, y0, x1, y1, poly)) return true;
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const ax = poly[i][0], ay = poly[i][1];
+    if (segmentIntersectsCircle(x0, y0, x1, y1, ax, ay, r)) return true;
+    const bx = poly[(i + 1) % n][0], by = poly[(i + 1) % n][1];
+    if (segmentSegmentDistLE(x0, y0, x1, y1, ax, ay, bx, by, r)) return true;
+  }
+  return false;
 }
 
 // Find the tileset that contains a given Tiled gid, and return the
@@ -223,6 +322,9 @@ export class GameScene extends Phaser.Scene {
   // Tilesets from the Tiled JSON, stored so handleReplication can resolve
   // Appearance gids to tileset sheet + frame for base entity sprites.
   private tilesets: TiledMapJSON["tilesets"] = [];
+  // "Reconnecting…" overlay shown when the WebSocket drops and WsClient is
+  // retrying. Fixed to the screen (scrollFactor 0) so it stays visible.
+  private reconnectOverlay: Phaser.GameObjects.Text | null = null;
 
   constructor() {
     super("GameScene");
@@ -275,31 +377,46 @@ export class GameScene extends Phaser.Scene {
     //
     // Two collision sources, matching the server's isMoveBlocked:
     //   1. Walls tile-layer grid (point check at destination tile)
-    //   2. Wall zones from the Zones object layer (swept segment-vs-rect,
+    //   2. Wall zones from the Zones object layer (swept segment-vs-shape,
     //      expanded by PLAYER_COLLISION_RADIUS)
     const fy = (y: number) => Math.floor(y + FEET_Y_OFFSET + 0.5);
     if (this.isBlocked(Math.floor(newX + 0.5), fy(y)) ||
         this.isZoneBlocked(x, y, newX, y)) newX = x;
     if (this.isBlocked(Math.floor(newX + 0.5), fy(newY)) ||
         this.isZoneBlocked(newX, y, newX, newY)) newY = y;
+    // Diagonal guard: if both axes moved, check the full diagonal segment.
+    // The X-then-Y decomposition can skip a wall that the diagonal crosses
+    // but neither axis-aligned segment does. If the diagonal is blocked,
+    // revert Y to slide along X. Matches worldsim.go.
+    if (newX !== x && newY !== y) {
+      if (this.isZoneBlocked(x, y, newX, newY)) newY = y;
+    }
 
     return { x: newX, y: newY };
   }
 
   // isZoneBlocked checks whether the movement segment from (oldX, oldY) to
   // (newX, newY) intersects any wall zone, evaluated at the avatar's feet
-  // (Position.Y + FEET_Y_OFFSET). Each zone rect is expanded by
+  // (Position.Y + FEET_Y_OFFSET). Each zone shape is expanded by
   // PLAYER_COLLISION_RADIUS (Minkowski sum) so the feet center stops `r`
   // tiles before the wall edge. Matches the server's isMoveBlocked zone
-  // collision (worldsim.go).
+  // collision (worldsim.go) — supports rect, circle, and polygon shapes.
   private isZoneBlocked(oldX: number, oldY: number, newX: number, newY: number): boolean {
     if (this.wallZones.length === 0) return false;
     const ofy = oldY + FEET_Y_OFFSET;
     const nfy = newY + FEET_Y_OFFSET;
     const r = PLAYER_COLLISION_RADIUS;
     for (const z of this.wallZones) {
-      if (segmentIntersectsRect(oldX, ofy, newX, nfy, z.x - r, z.y - r, z.w + 2 * r, z.h + 2 * r)) {
-        return true;
+      switch (z.shape) {
+        case "rect":
+          if (segmentIntersectsRect(oldX, ofy, newX, nfy, z.x - r, z.y - r, z.w + 2 * r, z.h + 2 * r)) return true;
+          break;
+        case "circle":
+          if (segmentIntersectsCircle(oldX, ofy, newX, nfy, z.cx, z.cy, z.r + r)) return true;
+          break;
+        case "polygon":
+          if (segmentIntersectsPolygonExpanded(oldX, ofy, newX, nfy, z.verts, r)) return true;
+          break;
       }
     }
     return false;
@@ -426,7 +543,8 @@ export class GameScene extends Phaser.Scene {
     // collision prediction. Matches the server's zone collision (ext-walls
     // registers block triggers for zone_type=wall). The client predicts
     // against these so the local avatar doesn't predict through wall zones
-    // and rubber-band on reconciliation.
+    // and rubber-band on reconciliation. Supports rect, circle, and polygon
+    // shapes — matching the server's isMoveBlocked.
     if (rawJson) {
       const tileW = rawJson.tilewidth || TILE_SIZE;
       const tileH = rawJson.tileheight || TILE_SIZE;
@@ -434,12 +552,34 @@ export class GameScene extends Phaser.Scene {
         if (layer.name.toLowerCase() !== "zones" || layer.type !== "objectgroup") continue;
         for (const obj of layer.objects ?? []) {
           if (layerProp(obj.properties, "zone_type") !== "wall") continue;
-          this.wallZones.push({
-            x: obj.x / tileW,
-            y: obj.y / tileH,
-            w: obj.width / tileW,
-            h: obj.height / tileH,
-          });
+          if (obj.ellipse) {
+            // Circle: Tiled ellipse with width == height.
+            const r = obj.width / tileW / 2;
+            this.wallZones.push({
+              shape: "circle",
+              cx: obj.x / tileW + r,
+              cy: obj.y / tileH + r,
+              r,
+            });
+          } else if (obj.polygon && obj.polygon.length > 0) {
+            // Polygon: vertices are relative to (obj.x, obj.y) in Tiled.
+            this.wallZones.push({
+              shape: "polygon",
+              verts: obj.polygon.map((p) => [
+                (p.x + obj.x) / tileW,
+                (p.y + obj.y) / tileH,
+              ] as [number, number]),
+            });
+          } else {
+            // Rect (default).
+            this.wallZones.push({
+              shape: "rect",
+              x: obj.x / tileW,
+              y: obj.y / tileH,
+              w: obj.width / tileW,
+              h: obj.height / tileH,
+            });
+          }
         }
         break;
       }
@@ -509,16 +649,51 @@ export class GameScene extends Phaser.Scene {
       : `ws://${window.location.host}/ws`;
     console.log("connecting to", wsUrl);
     this.ws = new WsClient(wsUrl);
-    this.ws.connect(
-      () => {
+    // "Reconnecting…" overlay — created up front, hidden until the WS drops.
+    this.reconnectOverlay = this.add
+      .text(this.scale.width / 2, 24, "Reconnecting…", {
+        fontFamily: "monospace",
+        fontSize: "16px",
+        color: "#ffffff",
+        backgroundColor: "#000000",
+        padding: { x: 12, y: 6 },
+      })
+      .setOrigin(0.5, 0)
+      .setScrollFactor(0)
+      .setDepth(9999)
+      .setVisible(false);
+    this.ws.connect({
+      onReady: () => {
         // Use the entity ID from the server's AuthResult. The server may
         // assign a different entity ID than "e_"+clientId[2:] when a
         // PocketBase-stored identity exists (persistent entity_id).
         this.myEntityId = this.ws?.getEntityId() ?? null;
         console.log("ready, myEntityId=", this.myEntityId);
       },
-      (batch: ReplicationBatchView) => this.handleReplication(batch),
-    );
+      onReplication: (batch: ReplicationBatchView) => this.handleReplication(batch),
+      onReconnect: (_clientId: string, entityId: string) => {
+        // The pusher mints a fresh session on reconnect, so the entity id
+        // changes and worldsim spawns the avatar at the spawn point. Drop the
+        // old self sprite (a Destroy will also arrive via replication once
+        // worldsim processes client.disconnected, but removing it now avoids
+        // a lingering ghost) and clear un-acked inputs that referenced the
+        // old entity. Re-mark input dirty so the current input state is
+        // re-sent on the new connection and movement resumes seamlessly.
+        const old = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+        if (old) {
+          old.sprite.destroy();
+          this.avatars.delete(this.myEntityId);
+        }
+        this.myEntityId = entityId || null;
+        this.pendingInputs = [];
+        this.inputDirty = true;
+        console.log("reconnected, myEntityId=", this.myEntityId);
+      },
+      onStateChange: (state: ConnectionState) => {
+        if (!this.reconnectOverlay) return;
+        this.reconnectOverlay.setVisible(state === "reconnecting" || state === "closed");
+      },
+    });
   }
 
   update(_time: number, delta: number): void {

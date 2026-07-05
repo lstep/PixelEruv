@@ -7,6 +7,22 @@ import { getIdToken } from "../auth";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
+// Connection state surfaced to the UI so it can show a "Reconnecting…"
+// overlay. Transitions:
+//   connecting -> open -> reconnecting -> open -> ... -> closed
+// "closed" is terminal and only reached via an explicit close().
+export type ConnectionState = "connecting" | "open" | "reconnecting" | "closed";
+
+export interface ConnectHandlers {
+  onReady: () => void;
+  onReplication: ReplicationHandler;
+  // Fired on every successful auth AFTER the first one (i.e. after a
+  // reconnect). Carries the new clientId/entityId — these change on each
+  // reconnect because the pusher mints a fresh session.
+  onReconnect?: (clientId: string, entityId: string) => void;
+  onStateChange?: (state: ConnectionState) => void;
+}
+
 export interface SpawnEntityView {
   entityId: string;
   components: { componentId: number; data: Uint8Array }[];
@@ -35,17 +51,42 @@ export class WsClient {
   private clientId: string | null = null;
   private entityId: string | null = null;
   private seq = 0;
+  private handlers!: ConnectHandlers;
+  // True after the first successful auth; used to dispatch onReady vs
+  // onReconnect on subsequent auths.
+  private hadFirstAuth = false;
+  // Set by close() to suppress the auto-reconnect loop.
+  private closed = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private state: ConnectionState = "connecting";
 
   constructor(url: string) {
     this.url = url;
   }
 
-  connect(onReady: () => void, onReplication: ReplicationHandler): void {
-    const connectSpan = tracer.startSpan("ws.connect");
-    this.ws = new WebSocket(this.url);
-    this.ws.binaryType = "arraybuffer";
+  connect(handlers: ConnectHandlers): void {
+    this.handlers = handlers;
+    this.closed = false;
+    this.openSocket();
+  }
 
-    this.ws.onopen = () => {
+  private setState(s: ConnectionState): void {
+    this.state = s;
+    this.handlers.onStateChange?.(s);
+  }
+
+  // openSocket creates a fresh WebSocket, sends the auth frame on open, and
+  // wires onclose to schedule a reconnect (unless close() was called). Called
+  // once from connect() and again on each reconnect attempt.
+  private openSocket(): void {
+    const isReconnect = this.hadFirstAuth;
+    const connectSpan = tracer.startSpan(isReconnect ? "ws.reconnect" : "ws.connect");
+    const ws = new WebSocket(this.url);
+    this.ws = ws;
+    ws.binaryType = "arraybuffer";
+
+    ws.onopen = () => {
       const authSpan = tracer.startSpan("ws.send_auth");
       try {
         // Build the auth frame inside the span's active context so
@@ -54,13 +95,15 @@ export class WsClient {
           create(AuthFrameSchema, { idToken: getIdToken() ?? "dev", traceparent: traceparentFor() }),
         );
         const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
-        this.ws!.send(toBinary(ClientFrameSchema, frame));
+        ws.send(toBinary(ClientFrameSchema, frame));
       } finally {
         authSpan.end();
       }
     };
 
-    this.ws.onmessage = (event) => {
+    ws.onmessage = (event) => {
+      // Ignore messages from a stale socket that has since been replaced.
+      if (this.ws !== ws) return;
       const data = new Uint8Array(event.data as ArrayBuffer);
       const serverFrame = fromBinary(ServerFrameSchema, data);
 
@@ -70,10 +113,17 @@ export class WsClient {
           if (ar.ok) {
             this.clientId = ar.clientId;
             this.entityId = ar.entityId || null;
+            this.reconnectAttempt = 0;
             connectSpan.setAttribute("client.id", ar.clientId);
             connectSpan.end();
             console.log(`authenticated: client=${this.clientId} entity=${this.entityId}`);
-            onReady();
+            this.setState("open");
+            if (this.hadFirstAuth) {
+              this.handlers.onReconnect?.(ar.clientId, this.entityId ?? "");
+            } else {
+              this.hadFirstAuth = true;
+              this.handlers.onReady();
+            }
           } else {
             connectSpan.recordException(new Error("auth failed"));
             connectSpan.setStatus({ code: 2, message: "auth failed" });
@@ -94,7 +144,7 @@ export class WsClient {
             },
           });
           try {
-            onReplication({
+            this.handlers.onReplication({
               lastInputSeq: Number(batch.lastInputSeq),
               spawns: batch.spawns.map((s: any) => ({
                 entityId: s.entityId,
@@ -127,17 +177,39 @@ export class WsClient {
       }
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      // Ignore close from a stale socket that has been replaced.
+      if (this.ws !== ws) return;
       const span = tracer.startSpan("ws.close");
       span.setAttribute("client.id", this.clientId ?? "");
       span.end();
       console.log("websocket closed");
+      if (this.closed) {
+        this.setState("closed");
+        return;
+      }
+      this.scheduleReconnect();
     };
-    this.ws.onerror = (err) => {
+
+    ws.onerror = (err) => {
       connectSpan.recordException(new Error("websocket error"));
       connectSpan.setStatus({ code: 2, message: "websocket error" });
       console.error("websocket error:", err);
     };
+  }
+
+  // scheduleReconnect backs off exponentially (1s, 2s, 4s, ... capped at 30s)
+  // and re-dials. Reset to 0 on successful auth.
+  private scheduleReconnect(): void {
+    this.setState("reconnecting");
+    const delay = Math.min(1000 * 2 ** this.reconnectAttempt, 30000);
+    this.reconnectAttempt++;
+    console.log(`reconnecting in ${delay}ms (attempt ${this.reconnectAttempt})`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closed) return;
+      this.openSocket();
+    }, delay);
   }
 
   sendInput(state: { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }): number {
@@ -213,6 +285,11 @@ export class WsClient {
   }
 
   close(): void {
+    this.closed = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     this.ws?.close();
   }
 }

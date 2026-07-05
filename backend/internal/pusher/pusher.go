@@ -25,6 +25,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// PingInterval is how often the pusher sends a WebSocket protocol-level ping
+// to keep idle connections alive. coder/websocket does not auto-ping, so
+// without this an idle player (no input, no replication traffic) has zero
+// bytes flowing in either direction and the TCP connection silently dies
+// after long idle periods / sleep / network changes. The browser auto-
+// responds to protocol pings with a pong, so no client-side keepalive code is
+// needed. Overridable (mainly by tests) to keep the regression test fast.
+var PingInterval = 30 * time.Second
+
 type Server struct {
 	wsAddr   string
 	nc       *nats.Conn
@@ -227,6 +236,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Info("client connected", "client", clientID, "entity", entityID)
 
+	// Keepalive: send a WebSocket ping every PingInterval. The browser
+	// auto-responds with a pong, which keeps idle connections alive and lets
+	// us detect dead peers (ping fails → we close → the read loop exits and
+	// the session is cleaned up). Runs concurrently with the read loop, as
+	// coder/websocket requires for Ping. Exits when ctx is canceled (read
+	// loop returned) or a ping fails.
+	go s.keepalive(ctx, c, clientID)
+
 	// Main read loop — forward InputFrames to NATS.
 	for {
 		msgType, msgData, err := c.Read(ctx)
@@ -287,6 +304,31 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish action", "client", clientID, "err", err)
 			}
 			pspan.End()
+		}
+	}
+}
+
+// keepalive sends a WebSocket protocol-level ping every PingInterval. The
+// browser auto-responds with a pong, keeping idle connections alive. On ping
+// failure (dead peer / timeout) it closes the connection so the read loop in
+// handleWS exits and the session is torn down. Must run concurrently with the
+// read loop, as coder/websocket requires for Ping.
+func (s *Server) keepalive(ctx context.Context, c *websocket.Conn, clientID string) {
+	ticker := time.NewTicker(PingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if err := c.Ping(pingCtx); err != nil {
+				cancel()
+				s.logger.Info("ws keepalive ping failed", "client", clientID, "err", err)
+				c.Close(websocket.StatusPolicyViolation, "keepalive timeout")
+				return
+			}
+			cancel()
 		}
 	}
 }
