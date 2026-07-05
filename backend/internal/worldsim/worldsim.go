@@ -239,7 +239,7 @@ func (s *Simulator) tick() {
 	s.snapshotSeq++
 
 	// --- Movement system ---
-	speed := float32(0.8) // tiles per tick (~16 tiles/sec at 20Hz)
+	speed := float32(0.4) // tiles per tick (~8 tiles/sec at 20Hz)
 	for _, e := range s.entities {
 		if e.NetworkSession == nil || e.Position == nil {
 			continue

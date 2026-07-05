@@ -10,7 +10,7 @@ const TILE_SIZE = 32;
 const LERP_TAU_MS = 80;
 
 // Movement constants — must match worldsim.go movement system.
-const SPEED_TILES_PER_TICK = 0.8;
+const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
 
 // Character sprite sheets — one per player, cycled. Each sheet is 768x192
