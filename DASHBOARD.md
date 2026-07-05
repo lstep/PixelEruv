@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Dernière mise à jour : 2026-07-05
+Dernière mise à jour : 2026-07-05 (session 2)
 
 ## Vue d'ensemble
 
@@ -52,6 +52,12 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Détection d'extensions stale (3× heartbeat interval)
 - [x] ext-walls : lit la map, trouve `zone_type=wall`, enregistre des triggers block
 - [x] ext-demo : log les événements zone enter/exit
+- [x] Murs migrés vers le système d'extensions (Walls tile layer = fallback uniquement)
+
+### Intégrité & Documentation
+- [x] Map integrity checker : validation au démarrage, toutes les 5 min, et à la demande (`admin.map.integrity` via NATS)
+- [x] Documentation map design guide (`documentation/21-map-design-guide.md`) : layers, propriétés, shapes, upload
+- [x] Diagramme SVG de la structure des layers et du flux de données (`documentation/map-design-guide.html`)
 
 ### Infrastructure
 - [x] Docker Compose : nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls
@@ -90,6 +96,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-05 | Gate triggers en cache local (pas round-trip NATS) | `block`/`allow` sont déterministes, pas besoin de requêter l'extension à chaque mouvement |
 | 2026-07-05 | Walls tile layer conservé comme fallback | Évite de casser la collision si aucune zone wall n'est définie |
 | 2026-07-05 | Re-registration périodique des extensions | NATS Core est fire-and-forget ; le premier publish peut être perdu |
+| 2026-07-05 | Murs migrés vers extensions (gate triggers) | Architecture kernel sans gameplay logic ; Walls tile layer conservé comme fallback |
+| 2026-07-05 | Integrity checker au démarrage + périodique + à la demande | Détecte corruption/incohérences de map tôt et pendant l'exécution |
 
 ## Comptes de test
 
@@ -119,6 +127,10 @@ curl -s http://localhost:8090/api/collections/players/records | jq
 
 # Logs zone events
 docker logs pixeleruv-ext-demo-1 -f
+
+# Map integrity check à la demande
+nats -s nats://localhost:4222 pub admin.map.integrity ""
+docker logs pixeleruv-worldsim-1 2>&1 | grep "integrity"
 ```
 
 ## Branches notables
