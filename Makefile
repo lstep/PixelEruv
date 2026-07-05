@@ -3,7 +3,7 @@
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
 TS_OUT := frontend/src/proto
-COMPOSE_FILE := dist/config/docker-compose.yml
+COMPOSE_FILE := docker/docker-compose.yml
 DIST_BIN := dist/bin
 
 # OpenTelemetry / motel debug configuration

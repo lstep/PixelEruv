@@ -10,5 +10,5 @@ RUN npx vite build
 FROM nginx:alpine
 COPY --from=builder /dist/web /usr/share/nginx/html
 # Proxy /ws to the pusher service
-COPY dist/config/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80

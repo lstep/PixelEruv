@@ -99,7 +99,7 @@ For frontend development with hot reload, use the Vite dev server (it proxies
 Open http://localhost:5173.
 
 To serve the built frontend natively instead, point an nginx instance at
-`dist/web/` with `dist/config/nginx.conf` (change the `proxy_pass` upstream
+`dist/web/` with `docker/nginx.conf` (change the `proxy_pass` upstream
 from `pusher:8081` to `127.0.0.1:8081` for a non-Docker host).
 
 🔍 Debugging with motel

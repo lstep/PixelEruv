@@ -33,7 +33,7 @@ The `maps` collection is created automatically by the migration in
 
 ### Steps
 
-1. **Start PocketBase** — `docker compose -f dist/config/docker-compose.yml up pocketbase` (or `make up` for all services). PocketBase serves on `http://localhost:8090`.
+1. **Start PocketBase** — `docker compose -f docker/docker-compose.yml up pocketbase` (or `make up` for all services). PocketBase serves on `http://localhost:8090`.
 
 2. **Create an admin account** — open `http://localhost:8090/_/` in a browser and create the first admin user.
 

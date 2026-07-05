@@ -26,8 +26,7 @@ frontend/node_modules/
 frontend/src/proto/
 
 # Build outputs (binaries + web assets)
-dist/bin/
-dist/web/
+dist/
 
 # Docker
 .docker/
