@@ -683,10 +683,11 @@ export class GameScene extends Phaser.Scene {
         // a lingering ghost) and clear un-acked inputs that referenced the
         // old entity. Re-mark input dirty so the current input state is
         // re-sent on the new connection and movement resumes seamlessly.
-        const old = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
-        if (old) {
+        const oldId = this.myEntityId;
+        const old = oldId ? this.avatars.get(oldId) : null;
+        if (old && oldId) {
           old.sprite.destroy();
-          this.avatars.delete(this.myEntityId);
+          this.avatars.delete(oldId);
         }
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
