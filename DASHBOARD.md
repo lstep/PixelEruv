@@ -89,7 +89,9 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 
 ### High priority
 - [x] **Camera follow**: camera follows local player (centered) with mouse-wheel zoom (1x–4x, default 2x)
-- [ ] **Zones in Tiled**: add rectangles on Zones object layer with `zone_type=wall` to test ext-walls
+- [x] **Zones in Tiled**: wall zones on Zones object layer tested with ext-walls; client-side prediction matches server
+- [x] **Canvas fills browser window**: Scale.RESIZE mode (was hardcoded 640x640)
+- [x] **Entity ID fix**: server returns real entity ID via request-reply (was derived client-side, wrong for persistent identities)
 - [ ] **Chat**: chat UI + PocketBase collection, messages broadcast via NATS
 
 ### Medium priority
