@@ -46,6 +46,7 @@ services:
       target: worldsim
     depends_on:
       - nats
+      - pocketbase
     environment:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"

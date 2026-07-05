@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // MapData holds the spatial properties of a Tiled map needed by the
@@ -28,7 +29,21 @@ type tiledMapJSON struct {
 
 // LoadMap fetches the Tiled map JSON from PocketBase by map name and builds
 // a collision grid from the "Walls" layer (any non-zero tile = blocked).
+// It retries for up to 30 seconds in case PocketBase is still starting.
 func LoadMap(pocketbaseURL, mapName string) (*MapData, error) {
+	var lastErr error
+	for i := 0; i < 30; i++ {
+		md, err := loadMapOnce(pocketbaseURL, mapName)
+		if err == nil {
+			return md, nil
+		}
+		lastErr = err
+		time.Sleep(time.Second)
+	}
+	return nil, lastErr
+}
+
+func loadMapOnce(pocketbaseURL, mapName string) (*MapData, error) {
 	// Fetch the maps record by name.
 	resp, err := http.Get(fmt.Sprintf(
 		"%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1",
