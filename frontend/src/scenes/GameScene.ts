@@ -206,8 +206,10 @@ export class GameScene extends Phaser.Scene {
     // Slide along walls: try X and Y independently. Collision is evaluated at
     // the avatar's feet, which render at Position.Y + FEET_Y_OFFSET (origin
     // 0.5/0.75 on a 64px frame → feet one tile below Position). This must
-    // match the server's isPositionBlocked (worldsim.go, avatarFeetYOffset)
-    // or the local avatar visually clips into walls before reconciliation.
+    // match the server's feet offset (worldsim.go, avatarFeetYOffset) or the
+    // local avatar visually clips into walls before reconciliation. The
+    // frontend only checks the Walls tile-layer grid here (zones are
+    // server-side); tile-grid collision can't tunnel at 0.4 tiles/tick.
     const fy = (y: number) => Math.floor(y + FEET_Y_OFFSET + 0.5);
     if (this.isBlocked(Math.floor(newX + 0.5), fy(y))) newX = x;
     if (this.isBlocked(Math.floor(newX + 0.5), fy(newY))) newY = y;

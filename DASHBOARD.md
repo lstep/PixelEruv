@@ -44,6 +44,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] 8-directional movement with wall sliding
 - [x] Collision: Walls tile layer (fallback) + extension gate triggers (zones)
 - [x] Collision evaluated at avatar feet (Position.Y + feet offset), not sprite origin — fixes wall collision being off by ~1 tile
+- [x] Swept (segment-vs-shape) collision: walls of any thickness work, no tunneling through sub-tile walls
 
 ### Zones & Extensions
 - [x] Parse Zones object layer from Tiled (rect, circle, polygon)

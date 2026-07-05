@@ -401,19 +401,18 @@ worldsim. Players cannot walk into wall zones.
      docker compose -f docker/docker-compose.yml restart worldsim ext-walls
      ```
 
-> **Note:** Zone collision is checked in continuous space directly against
-> the zone shape (point-in-polygon for polygons, bounding-box for rects,
-> distance for circles), evaluated at the avatar's **feet**
+> **Note:** Zone collision uses swept (segment-vs-shape) tests in
+> continuous space, evaluated at the avatar's **feet**
 > (`Position.Y + avatarFeetYOffset`, see "Anchoring multi-tile-tall
-> objects" above). This means a wall zone blocks the player where the feet
-> enter it, not where the sprite origin sits — no tile grid approximation.
->
-> **Sub-tile walls:** zones thinner than a full tile work, but walls
-> thinner than ~0.3 tiles are risky. Collision samples 5 points with 0.3
-> spacing around the feet and the player moves 0.4 tiles/tick, so a very
-> thin wall can fall between sample points and be tunneled through. Keep
-> wall zones at least ~0.3 tiles thick. (The Walls tile-layer fallback is
-> tile-grid-based and cannot represent sub-tile walls at all.)
+> objects" above). The movement segment from the player's old position to
+> the new position is tested against each zone shape (slab method for
+> rects, point-segment distance for circles, edge intersection for
+> polygons). This means a wall zone blocks the player where the feet
+> enter it, not where the sprite origin sits — no tile grid approximation
+> — and walls of any thickness work correctly, including walls thinner
+> than a tile or thinner than the per-tick movement distance. (The Walls
+> tile-layer fallback is tile-grid-based and cannot represent sub-tile
+> walls.)
 
 9. **Verify** in the worldsim logs:
    ```bash
