@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { GameScene } from "./scenes/GameScene";
-import { initOtel } from "./otel";
+import { initOtel, tracer } from "./otel";
 import { loadMapAssets, type MapAssets } from "./mapLoader";
 
 // Initialize OpenTelemetry before any instrumented code runs. No-op when
@@ -22,11 +22,17 @@ const config: Phaser.Types.Core.GameConfig = {
 // PocketBase is unavailable (e.g. not yet set up in dev).
 async function bootstrap(): Promise<void> {
   let mapAssets: MapAssets | null = null;
+  const span = tracer.startSpan("map.load", { attributes: { "map.source": "pocketbase" } });
   try {
     mapAssets = await loadMapAssets();
+    span.setAttribute("map.fallback", false);
     console.log("loaded map from PocketBase");
   } catch (err) {
+    span.setAttribute("map.fallback", true);
+    span.recordException(err as Error);
     console.warn("PocketBase map load failed, falling back to static files:", err);
+  } finally {
+    span.end();
   }
 
   const game = new Phaser.Game(config);
