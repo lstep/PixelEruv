@@ -159,11 +159,8 @@ docker logs pixeleruv-worldsim-1 2>&1 | grep "integrity"
 # Unit tests (worldsim — no Docker needed)
 cd backend && go test ./internal/worldsim/ -v
 
-# Integration tests (requires Docker stack running)
-# NOTE: TestLiteMVPFlow and TestTwoClientsSeeEachOther are currently
-# broken — they send IdToken="dev" but docker-compose has DEX_ISSUER set,
-# so the pusher validates the token against Dex and rejects "dev" as
-# malformed. This is a pre-existing issue, not a regression.
+# Integration tests (requires Docker stack running: worldsim, nats)
+# TestMain starts an in-process pusher with no Dex so IdToken="dev" works.
 cd backend && go test ./test/integration/ -v
 ```
 

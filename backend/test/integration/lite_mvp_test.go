@@ -13,13 +13,14 @@ import (
 // TestLiteMVPFlow verifies the full pipeline:
 // WS connect → AuthFrame → AuthResult → InputFrame → ReplicationBatch
 //
-// Prerequisites: docker compose up (pusher on :8081, worldsim, nats)
+// Prerequisites: docker compose up (worldsim, nats). The pusher is started
+// in-process by TestMain (no Dex) so IdToken="dev" is accepted.
 func TestLiteMVPFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Connect to pusher
-	c, _, err := websocket.Dial(ctx, "ws://localhost:8081/ws", nil)
+	// Connect to the in-process pusher
+	c, _, err := websocket.Dial(ctx, pusherAddr, nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -92,13 +93,14 @@ func TestLiteMVPFlow(t *testing.T) {
 // TestTwoClientsSeeEachOther verifies that a second client receives a
 // SpawnEntity for the first client's entity (per-client spawn tracking).
 //
-// Prerequisites: docker compose up (pusher on :8081, worldsim, nats)
+// Prerequisites: docker compose up (worldsim, nats). The pusher is started
+// in-process by TestMain (no Dex) so IdToken="dev" is accepted.
 func TestTwoClientsSeeEachOther(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Client A connects
-	cA, _, err := websocket.Dial(ctx, "ws://localhost:8081/ws", nil)
+	// Client A connects to the in-process pusher
+	cA, _, err := websocket.Dial(ctx, pusherAddr, nil)
 	if err != nil {
 		t.Fatalf("dial A: %v", err)
 	}
@@ -114,8 +116,8 @@ func TestTwoClientsSeeEachOther(t *testing.T) {
 	// Wait for A to receive its own spawn
 	waitForSpawn(t, ctx, cA, entityA)
 
-	// Client B connects
-	cB, _, err := websocket.Dial(ctx, "ws://localhost:8081/ws", nil)
+	// Client B connects to the in-process pusher
+	cB, _, err := websocket.Dial(ctx, pusherAddr, nil)
 	if err != nil {
 		t.Fatalf("dial B: %v", err)
 	}
