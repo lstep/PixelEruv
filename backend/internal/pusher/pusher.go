@@ -255,6 +255,26 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			pong := &pb.ServerFrame{Payload: &pb.ServerFrame_Pong{Pong: &pb.PongFrame{}}}
 			pongBytes, _ := proto.Marshal(pong)
 			c.Write(ctx, websocket.MessageBinary, pongBytes)
+		case *pb.ClientFrame_Action:
+			// Player-initiated input trigger (key/click) — see
+			// 14-zones-and-interactions.md §3a. Forwarded to worldsim like
+			// InputFrame; the result comes back on the replication subject
+			// this session already subscribes to (ActionResultFrame).
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.Action.GetTraceparent()),
+				"pusher.nats.publish.action",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.String("action.input", p.Action.GetInput()))
+			actionBytes, _ := proto.Marshal(p.Action)
+			subject := fmt.Sprintf("client.%s.action", clientID)
+			msg := &nats.Msg{Subject: subject, Data: actionBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish action")
+				s.logger.Warn("nats publish action", "client", clientID, "err", err)
+			}
+			pspan.End()
 		}
 	}
 }

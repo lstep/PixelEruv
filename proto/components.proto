@@ -17,3 +17,11 @@ message Position {
   string map_id = 3;
   uint32 dir = 4;        // 0=down, 1=left, 2=right, 3=up
 }
+
+// Component ID 2 — EntityState
+// Generic opaque state string for simple interactive props (e.g. a light
+// switch box toggling "on"/"off"). Extensions set this via an input-trigger
+// reply; the client picks a sprite frame/behavior based on the value.
+message EntityState {
+  string state = 1;
+}

@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-05 (session 3)
+Last updated: 2026-07-05 (session 4)
 
 ## Overview
 
@@ -26,6 +26,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | nats         | Pub/sub message bus + JetStream                   | NATS            |
 | ext-demo     | Demo extension (logs zone events)                 | Go              |
 | ext-walls    | Walls extension (block gate triggers on zones)    | Go              |
+| ext-props    | Props extension (interactive entities, key:E)     | Go              |
 
 ## Implemented features
 
@@ -56,11 +57,25 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Map hot-reload: worldsim detects map changes in PocketBase every 30s, publishes `map.updated` NATS event
 - [x] ext-walls subscribes to `map.updated`, re-reads map and re-registers triggers
 
+### Decoration Layers & Interactive Entities
+- [x] Decoration layers identified by `layer_type=decoration` custom property (tile layers + object layers with `gid`)
+- [x] Layer altitude = Tiled layer stack order (no numeric property)
+- [x] Per-layer `sort_mode` (`static` = fixed depth band, `dynamic` = Y-sort with avatars)
+- [x] Unified depth space: `BAND_BASE(layer) + (feetY_pixels / mapHeightPixels)`
+- [x] Frontend renders multiple decoration layers with static/dynamic sort modes (GameScene.ts)
+- [x] Interactive entities authored as Tiled objects with `entity_id`, `sprite`, `interactable`, `trigger_radius`
+- [x] `ext-props` extension claims entities by `entity_type=prop`, registers `key:E` input trigger
+- [x] `ActionFrame` / `ActionResultFrame` protos for client→worldsim→extension→worldsim→client flow
+- [x] Pusher forwards `ActionFrame` to worldsim via `client.<id>.action` NATS subject
+- [x] Worldsim dispatches actions to registered extensions, applies replies (state + animation)
+- [x] `TriggerOwner` proto for extension ownership claims (by `entity_type` or `owner_extension`)
+- [x] Unit tests: entity parsing, adjacency filtering, action reply, input trigger registration/coexistence/staleness
+
 ### Integrity & Documentation
 - [x] Map integrity checker: validation at startup, every 5 min, and on demand (`admin.map.integrity` via NATS)
 - [x] Map design guide documentation (`documentation/21-map-design-guide.md`): layers, properties, shapes, upload
 - [x] SVG diagram of layer structure and data flow (`documentation/map-design-guide.html`)
-- [x] Design (not yet implemented): decoration layers, Y-sort depth bands, and interactive map-authored entities — `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md` + `documentation/depth-layers-diagram.svg`
+- [x] Design doc: decoration layers, Y-sort depth bands, and interactive map-authored entities — `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md` + `documentation/depth-layers-diagram.svg`
 
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls
@@ -78,9 +93,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 ### Medium priority
 - [ ] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
 - [ ] **AOI filter**: only replicate entities within client radius + same zone
-- [ ] **Input triggers**: clicks/keys → broadcast to extensions (NPC interactions, objects) — design ready, see `documentation/plans/2026-07-01-inventory-equipment-action-triggers-design.md` and `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
+- [ ] **Input triggers (broader)**: inventory/equipment action triggers — basic `key:E` interaction implemented via ext-props; broader design ready, see `documentation/plans/2026-07-01-inventory-equipment-action-triggers-design.md`
 - [ ] **Exclusive zones**: visual + audio isolation for members
-- [ ] **Decoration layers + Y-sort**: multiple `layer_type=decoration` layers with `static`/`dynamic` sort modes, replacing the hardcoded single `Ground` layer — design ready, see `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
 
 ### Low priority
 - [ ] **Knock-to-join**: meeting rooms with owner and admission
@@ -141,6 +155,16 @@ docker logs pixeleruv-ext-demo-1 -f
 # Map integrity check on demand
 nats -s nats://localhost:4222 pub admin.map.integrity ""
 docker logs pixeleruv-worldsim-1 2>&1 | grep "integrity"
+
+# Unit tests (worldsim — no Docker needed)
+cd backend && go test ./internal/worldsim/ -v
+
+# Integration tests (requires Docker stack running)
+# NOTE: TestLiteMVPFlow and TestTwoClientsSeeEachOther are currently
+# broken — they send IdToken="dev" but docker-compose has DEX_ISSUER set,
+# so the pusher validates the token against Dex and rejects "dev" as
+# malformed. This is a pre-existing issue, not a regression.
+cd backend && go test ./test/integration/ -v
 ```
 
 ## Notable branches

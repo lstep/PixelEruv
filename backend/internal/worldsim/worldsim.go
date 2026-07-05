@@ -5,6 +5,7 @@ package worldsim
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -24,15 +25,30 @@ import (
 // --- Minimal ECS ---
 
 const (
-	compPosition = 1
+	compPosition   = 1
+	compEntityState = 2
 )
 
 type Entity struct {
 	ID         string
 	Position   *pb.Position
 	NetworkSession *NetworkSession
+	// EntityType/OwnerExtension/TriggerRadius: set for base entities loaded
+	// from the map's "Entities" object layer (see mapdata.go PropEntity).
+	// Included in input-trigger dispatch payloads so extensions can
+	// self-filter without re-reading the map.
+	EntityType     string
+	OwnerExtension string
+	TriggerRadius  float32
+	// State is a generic opaque string (EntityState component) that
+	// extensions can set via an input-trigger reply, e.g. "on"/"off".
+	State      string
 	// dirty: which components changed since last replication tick
 	dirtyPosition bool
+	dirtyState    bool
+	// pendingAnimations: animation IDs to replicate as PlayAnimation on the
+	// next tick, then cleared.
+	pendingAnimations []uint32
 	// spawnedTo tracks which clients have received a SpawnEntity for this
 	// entity. Per-client rather than global so a late-joining client gets
 	// spawns for entities that already exist.
@@ -107,11 +123,35 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		clients:       make(map[string]*Entity),
 	}
 
+	s.loadBaseEntities()
+
 	if err := s.subscribe(); err != nil {
 		return nil, fmt.Errorf("subscribe: %w", err)
 	}
 
 	return s, nil
+}
+
+// loadBaseEntities spawns ECS entities for props defined on the map's
+// "Entities" object layer (see mapdata.go PropEntity and
+// documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md
+// Part C). These have no NetworkSession and are inert until an extension
+// claims them via an input trigger.
+func (s *Simulator) loadBaseEntities() {
+	if s.mapData == nil {
+		return
+	}
+	for _, pe := range s.mapData.Entities {
+		s.entities[pe.ID] = &Entity{
+			ID:             pe.ID,
+			Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: s.mapID},
+			EntityType:     pe.EntityType,
+			OwnerExtension: pe.OwnerExtension,
+			TriggerRadius:  pe.TriggerRadius,
+			spawnedTo:      make(map[string]bool),
+			currentZones:   make(map[string]bool),
+		}
+	}
 }
 
 func (s *Simulator) subscribe() error {
@@ -162,6 +202,24 @@ func (s *Simulator) subscribe() error {
 		s.applyInput(ctx, clientID, &input)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.input: %w", err)
+	}
+
+	// client.<id>.action — input trigger (key/click), see 14-zones-and-interactions.md §3a.
+	if _, err := s.nc.Subscribe("client.*.action", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.apply_action")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "action")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var action pb.ActionFrame
+		if err := proto.Unmarshal(m.Data, &action); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		span.SetAttributes(attribute.String("action.input", action.GetInput()))
+		s.applyAction(ctx, clientID, &action)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.action: %w", err)
 	}
 
 	// Extension lifecycle subscriptions.
@@ -295,6 +353,160 @@ func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.I
 	e.NetworkSession.Seq = input.GetSeq()
 }
 
+// actionInputTimeout bounds how long the kernel waits for a single
+// extension's reply to a dispatched input event before moving on.
+const actionInputTimeout = 300 * time.Millisecond
+
+// adjacentEntityInfo is the per-entity data included in an input-trigger
+// dispatch payload, letting extensions self-filter without re-reading the
+// map (see 13-ecs-design.md §6).
+type adjacentEntityInfo struct {
+	EntityID       string `json:"entity_id"`
+	EntityType     string `json:"entity_type,omitempty"`
+	OwnerExtension string `json:"owner_extension,omitempty"`
+}
+
+// actionDispatchMsg is published to extension.<id>.action for every
+// extension registered for the triggered input type.
+type actionDispatchMsg struct {
+	EntityID         string                `json:"entity_id"` // the acting player
+	Input            string                `json:"input"`
+	AdjacentEntities []adjacentEntityInfo  `json:"adjacent_entities"`
+}
+
+// actionReplyMsg is the extension's reply to an actionDispatchMsg.
+type actionReplyMsg struct {
+	Handled bool `json:"handled"`
+	Updates []struct {
+		EntityID string `json:"entity_id"`
+		State    string `json:"state"`
+	} `json:"updates"`
+	Animations []struct {
+		EntityID    string `json:"entity_id"`
+		AnimationID uint32 `json:"animation_id"`
+	} `json:"animations"`
+}
+
+// applyAction handles a player-initiated ActionFrame (InputHandlerSystem —
+// see 13-ecs-design.md §5). It computes adjacent entities, broadcasts to all
+// extensions registered for the input type, applies every reply, and
+// replies to the client with the aggregate result.
+func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb.ActionFrame) {
+	s.mu.Lock()
+	e, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	px, py := e.Position.X, e.Position.Y
+	adjacent := s.adjacentEntitiesLocked(e.ID, px, py)
+	s.mu.Unlock()
+
+	extIDs := s.extMgr.ExtensionsForInput(action.GetInput())
+	if len(extIDs) == 0 {
+		s.sendActionResult(ctx, clientID, action.GetSeq(), false, "no_handler")
+		return
+	}
+
+	payload, err := json.Marshal(actionDispatchMsg{
+		EntityID:         e.ID,
+		Input:            action.GetInput(),
+		AdjacentEntities: adjacent,
+	})
+	if err != nil {
+		s.logger.WarnContext(ctx, "action dispatch marshal", "err", err)
+		return
+	}
+
+	handled := false
+	for _, extID := range extIDs {
+		subject := fmt.Sprintf("extension.%s.action", extID)
+		reply, err := s.nc.RequestWithContext(ctx, subject, payload)
+		if err != nil {
+			// Timeout or no responder — extension may have chosen not to
+			// reply because it doesn't own any of the adjacent entities.
+			continue
+		}
+		var resp actionReplyMsg
+		if err := json.Unmarshal(reply.Data, &resp); err != nil {
+			s.logger.WarnContext(ctx, "action reply unmarshal", "extension", extID, "err", err)
+			continue
+		}
+		if resp.Handled {
+			handled = true
+			s.applyActionReply(&resp)
+		}
+	}
+
+	reason := ""
+	if !handled {
+		reason = "timeout"
+	}
+	s.sendActionResult(ctx, clientID, action.GetSeq(), handled, reason)
+}
+
+// adjacentEntitiesLocked returns non-avatar entities within trigger range of
+// (px, py), excluding the acting entity. Caller must hold s.mu.
+func (s *Simulator) adjacentEntitiesLocked(actingID string, px, py float32) []adjacentEntityInfo {
+	const defaultRadius = float32(1.5) // tiles
+	var result []adjacentEntityInfo
+	for _, e := range s.entities {
+		if e.ID == actingID || e.Position == nil {
+			continue
+		}
+		radius := e.TriggerRadius
+		if radius <= 0 {
+			radius = defaultRadius
+		}
+		dx, dy := e.Position.X-px, e.Position.Y-py
+		if dx*dx+dy*dy > radius*radius {
+			continue
+		}
+		result = append(result, adjacentEntityInfo{
+			EntityID:       e.ID,
+			EntityType:     e.EntityType,
+			OwnerExtension: e.OwnerExtension,
+		})
+	}
+	return result
+}
+
+// applyActionReply applies component/animation updates from an extension's
+// reply to the target entities. Unknown entity IDs are ignored.
+func (s *Simulator) applyActionReply(resp *actionReplyMsg) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, u := range resp.Updates {
+		if e, ok := s.entities[u.EntityID]; ok && e.State != u.State {
+			e.State = u.State
+			e.dirtyState = true
+		}
+	}
+	for _, a := range resp.Animations {
+		if e, ok := s.entities[a.EntityID]; ok {
+			e.pendingAnimations = append(e.pendingAnimations, a.AnimationID)
+		}
+	}
+}
+
+// sendActionResult publishes an ActionResultFrame to the client on its
+// replication subject (the pusher forwards ServerFrame bytes verbatim
+// regardless of which oneof case is set, so no new subject is needed).
+func (s *Simulator) sendActionResult(ctx context.Context, clientID string, seq uint32, ok bool, reason string) {
+	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_ActionResult{
+		ActionResult: &pb.ActionResultFrame{Seq: seq, Ok: ok, Reason: reason},
+	}}
+	frameBytes, err := proto.Marshal(frame)
+	if err != nil {
+		s.logger.WarnContext(ctx, "action result marshal", "err", err)
+		return
+	}
+	subject := fmt.Sprintf("client.%s.replication", clientID)
+	if err := s.nc.Publish(subject, frameBytes); err != nil {
+		s.logger.WarnContext(ctx, "action result publish", "client", clientID, "err", err)
+	}
+}
+
 // tick runs the game loop: movement system + replication.
 func (s *Simulator) tick() {
 	ctx, span := s.tracer.Start(context.Background(), "worldsim.tick")
@@ -426,6 +638,8 @@ func (s *Simulator) tick() {
 	// Clear dirty flags
 	for _, e := range s.entities {
 		e.dirtyPosition = false
+		e.dirtyState = false
+		e.pendingAnimations = nil
 	}
 
 	// Metric-as-log-attrs: tick duration, entity count, replication batches.
@@ -448,6 +662,17 @@ func (s *Simulator) tick() {
 			"replicated_clients", replicated,
 			"snapshot_seq", s.snapshotSeq,
 		)
+	}
+}
+
+// appendAnimations queues any pending PlayAnimation events for an
+// already-spawned entity onto the batch.
+func (s *Simulator) appendAnimations(batch *pb.ReplicationBatch, e *Entity) {
+	for _, animID := range e.pendingAnimations {
+		batch.Animations = append(batch.Animations, &pb.PlayAnimation{
+			EntityId:    e.ID,
+			AnimationId: animID,
+		})
 	}
 }
 
@@ -482,33 +707,51 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					SnapshotSeq: s.snapshotSeq,
 				})
 			}
+			s.appendAnimations(batch, e)
 			continue
 		}
 
 		if !alreadySpawned {
 			// Spawn
 			posBytes, _ := proto.Marshal(e.Position)
+			components := []*pb.ComponentData{
+				{ComponentId: compPosition, Data: posBytes},
+			}
+			if e.State != "" {
+				stateBytes, _ := proto.Marshal(&pb.EntityState{State: e.State})
+				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
+			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
 				EntityId:    e.ID,
 				SnapshotSeq: s.snapshotSeq,
-				Components: []*pb.ComponentData{
-					{ComponentId: compPosition, Data: posBytes},
-				},
+				Components:  components,
 			})
 			e.spawnedTo[clientID] = true
-		} else if e.dirtyPosition {
-			posBytes, _ := proto.Marshal(e.Position)
-			batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-				EntityId:    e.ID,
-				ComponentId: compPosition,
-				Data:        posBytes,
-				SnapshotSeq: s.snapshotSeq,
-			})
+		} else {
+			if e.dirtyPosition {
+				posBytes, _ := proto.Marshal(e.Position)
+				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
+					EntityId:    e.ID,
+					ComponentId: compPosition,
+					Data:        posBytes,
+					SnapshotSeq: s.snapshotSeq,
+				})
+			}
+			if e.dirtyState {
+				stateBytes, _ := proto.Marshal(&pb.EntityState{State: e.State})
+				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
+					EntityId:    e.ID,
+					ComponentId: compEntityState,
+					Data:        stateBytes,
+					SnapshotSeq: s.snapshotSeq,
+				})
+			}
+			s.appendAnimations(batch, e)
 		}
 	}
 
 	// Only publish if there's something to send
-	if len(batch.Spawns) == 0 && len(batch.Updates) == 0 && len(batch.Destroys) == 0 {
+	if len(batch.Spawns) == 0 && len(batch.Updates) == 0 && len(batch.Destroys) == 0 && len(batch.Animations) == 0 {
 		return false
 	}
 

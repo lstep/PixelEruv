@@ -10,12 +10,27 @@ import (
 )
 
 // MapData holds the spatial properties of a Tiled map needed by the
-// simulation: dimensions, collision grid, and zones.
+// simulation: dimensions, collision grid, zones, and base entities.
 type MapData struct {
 	Width     int
 	Height    int
 	Collision [][]bool // [y][x] — true = blocked
 	Zones     []*Zone
+	Entities  []*PropEntity
+}
+
+// PropEntity is a base entity authored on the "Entities" object layer in
+// Tiled (e.g. an interactive box) — see
+// documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md
+// Part C. It exists in the ECS from map load with no owning extension; an
+// extension claims it by registering an input trigger and self-filtering on
+// EntityType/OwnerExtension when dispatched an input event.
+type PropEntity struct {
+	ID             string
+	X, Y           float32 // tile coordinates
+	EntityType     string
+	OwnerExtension string
+	TriggerRadius  float32
 }
 
 // tiledMapJSON is the minimal subset of the Tiled JSON format we read.
@@ -147,6 +162,13 @@ func loadMapOnce(pocketbaseURL, mapName string) (*MapData, error) {
 		return nil, fmt.Errorf("read tiled json: %w", err)
 	}
 
+	return parseTiledMapJSON(body)
+}
+
+// parseTiledMapJSON parses a Tiled JSON export into MapData: collision grid,
+// zones, and base entities. Extracted from loadMapOnce so it can be tested
+// without a PocketBase server.
+func parseTiledMapJSON(body []byte) (*MapData, error) {
 	var tiled tiledMapJSON
 	if err := json.Unmarshal(body, &tiled); err != nil {
 		return nil, fmt.Errorf("parse tiled json: %w", err)
@@ -242,11 +264,48 @@ func loadMapOnce(pocketbaseURL, mapName string) (*MapData, error) {
 		break
 	}
 
+	// Parse base entities from the "Entities" object layer.
+	var entities []*PropEntity
+	for _, layer := range tiled.Layers {
+		if strings.ToLower(layer.Name) != "entities" || layer.Type != "objectgroup" {
+			continue
+		}
+		for _, obj := range layer.Objects {
+			if obj.Name == "" {
+				continue
+			}
+			pe := &PropEntity{
+				ID: obj.Name,
+				X:  float32(obj.X) / tileW,
+				Y:  float32(obj.Y) / tileH,
+			}
+			for _, prop := range obj.Properties {
+				switch prop.Name {
+				case "entity_type":
+					if s, ok := prop.Value.(string); ok {
+						pe.EntityType = s
+					}
+				case "owner_extension":
+					if s, ok := prop.Value.(string); ok {
+						pe.OwnerExtension = s
+					}
+				case "trigger_radius":
+					if f, ok := prop.Value.(float64); ok {
+						pe.TriggerRadius = float32(f)
+					}
+				}
+			}
+			entities = append(entities, pe)
+		}
+		break
+	}
+
 	return &MapData{
 		Width:     tiled.Width,
 		Height:    tiled.Height,
 		Collision: collision,
 		Zones:     zones,
+		Entities:  entities,
 	}, nil
 }
 

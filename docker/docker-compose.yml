@@ -107,6 +107,17 @@ services:
       MAP_ID: "test-map"
     restart: unless-stopped
 
+  ext-props:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: ext-props
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+    restart: unless-stopped
+
 volumes:
   pb_data:
   dex_data:

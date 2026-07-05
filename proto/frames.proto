@@ -13,6 +13,7 @@ message ClientFrame {
     AuthFrame auth = 1;
     InputFrame input = 2;
     PingFrame ping = 3;
+    ActionFrame action = 4;
   }
 }
 
@@ -41,6 +42,16 @@ message InputState {
 
 message PingFrame {}
 
+// ActionFrame is a player-initiated input trigger (see
+// 14-zones-and-interactions.md §3a) — a key press or click that the kernel
+// broadcasts to extensions registered for that input type. Unlike InputFrame
+// (continuous movement), this is a single discrete event.
+message ActionFrame {
+  uint32 seq = 1;
+  string input = 2;         // e.g. "key:E", "click:left"
+  string traceparent = 3;
+}
+
 // === Server → Client frames ===
 
 message ServerFrame {
@@ -49,7 +60,16 @@ message ServerFrame {
     AuthResultFrame auth_result = 2;
     ErrorFrame error = 3;
     PongFrame pong = 4;
+    ActionResultFrame action_result = 5;
   }
+}
+
+// ActionResultFrame reports the outcome of an ActionFrame: whether any
+// extension handled it, and why not if none did (see 18-extensions.md §3a).
+message ActionResultFrame {
+  uint32 seq = 1;
+  bool ok = 2;
+  string reason = 3;        // "no_handler", "timeout", "" on success
 }
 
 message AuthResultFrame {

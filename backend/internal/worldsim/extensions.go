@@ -40,14 +40,18 @@ type ExtensionManager struct {
 	mu         sync.Mutex
 	extensions map[string]*Extension
 	gateTriggers map[string]*GateTrigger // zone_id -> trigger
+	// inputTriggers maps an input type (e.g. "key:E") to the set of
+	// extension IDs registered for it. See 14-zones-and-interactions.md §3a.
+	inputTriggers map[string]map[string]bool
 	logger     *slog.Logger
 }
 
 func NewExtensionManager(logger *slog.Logger) *ExtensionManager {
 	return &ExtensionManager{
-		extensions:   make(map[string]*Extension),
-		gateTriggers: make(map[string]*GateTrigger),
-		logger:       logger,
+		extensions:    make(map[string]*Extension),
+		gateTriggers:  make(map[string]*GateTrigger),
+		inputTriggers: make(map[string]map[string]bool),
+		logger:        logger,
 	}
 }
 
@@ -126,6 +130,14 @@ type triggerMsg struct {
 		ZoneID   string `json:"zone_id"`
 		Behavior string `json:"behavior"` // "block" or "allow"
 	} `json:"gate_triggers"`
+	// InputTriggers registers the extension for player-initiated input
+	// events (key presses, clicks) — see 14-zones-and-interactions.md §3a.
+	// Unlike gate triggers, these are not bound to a zone; the kernel
+	// broadcasts every matching input event to all registered extensions,
+	// which self-filter based on the dispatched payload (adjacent entities).
+	InputTriggers []struct {
+		Input string `json:"input"` // e.g. "key:E", "click:left"
+	} `json:"input_triggers"`
 }
 
 // RegisterTriggers processes a trigger registration message from an extension.
@@ -162,7 +174,34 @@ func (m *ExtensionManager) RegisterTriggers(data []byte) error {
 		m.logger.Info("gate trigger registered",
 			"extension", msg.ExtensionID, "zone", gt.ZoneID, "behavior", gt.Behavior)
 	}
+	for _, it := range msg.InputTriggers {
+		if it.Input == "" {
+			continue
+		}
+		if m.inputTriggers[it.Input] == nil {
+			m.inputTriggers[it.Input] = make(map[string]bool)
+		}
+		m.inputTriggers[it.Input][msg.ExtensionID] = true
+		m.logger.Info("input trigger registered",
+			"extension", msg.ExtensionID, "input", it.Input)
+	}
 	return nil
+}
+
+// ExtensionsForInput returns the IDs of active (non-stale) extensions
+// registered for the given input type (e.g. "key:E").
+func (m *ExtensionManager) ExtensionsForInput(input string) []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []string
+	for extID := range m.inputTriggers[input] {
+		ext, ok := m.extensions[extID]
+		if !ok || time.Since(ext.LastHeartbeat) > 3*ext.HeartbeatInterval {
+			continue
+		}
+		result = append(result, extID)
+	}
+	return result
 }
 
 // IsZoneBlocked returns true if the zone has a block gate trigger from a

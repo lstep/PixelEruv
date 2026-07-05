@@ -4,6 +4,61 @@ import type { MapAssets } from "../mapLoader";
 
 const TILE_SIZE = 32;
 
+// --- Decoration layers / depth bands ---
+// See documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md
+// Part B for the full design. Any layer (tile or object) with a
+// `layer_type=decoration` custom property is recognized, regardless of
+// name. Altitude is the layer's position in the Tiled layer list. A
+// per-layer `sort_mode` property picks the depth band:
+//   - "static" (default): fixed band by layer order, never interleaves
+//     with avatars.
+//   - "dynamic": shares DEPTH_BAND_DYNAMIC with avatars, sorted by base/feet
+//     Y so tall objects can occlude / be occluded by the player.
+const DEPTH_BAND_DYNAMIC = 1000;
+const DEPTH_BAND_STATIC_ABOVE = 2000;
+// "Walls" (collision fallback, not a decoration layer) sits between the
+// static-below decorations and the dynamic band, preserving the previous
+// ground(0) < walls(1) < avatar(2) ordering at the new, wider scale.
+const DEPTH_WALLS_FALLBACK = 500;
+
+// Minimal Tiled JSON shapes we read directly (Phaser's Tilemap doesn't
+// expose original layer order across tile + object layers together).
+interface TiledPropertyJSON { name: string; type: string; value: unknown }
+interface TiledObjectJSON {
+  name: string;
+  gid?: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  properties?: TiledPropertyJSON[];
+}
+interface TiledLayerJSON {
+  name: string;
+  type: string; // "tilelayer" | "objectgroup"
+  properties?: TiledPropertyJSON[];
+  objects?: TiledObjectJSON[];
+}
+interface TiledMapJSON {
+  tilewidth: number;
+  tileheight: number;
+  tilesets: { firstgid: number; tilewidth?: number; tileheight?: number }[];
+  layers: TiledLayerJSON[];
+}
+
+function layerProp(props: TiledPropertyJSON[] | undefined, name: string): unknown {
+  return props?.find((p) => p.name === name)?.value;
+}
+
+// Is this layer a decoration layer? Recognized by `layer_type=decoration`.
+// Backward-compat: a tile layer literally named "Ground" with no
+// `layer_type` property at all is still treated as a (static) decoration
+// layer, so maps predating this convention keep rendering.
+function isDecorationLayer(layer: TiledLayerJSON): boolean {
+  if (layerProp(layer.properties, "layer_type") === "decoration") return true;
+  return !layer.properties?.length && layer.type === "tilelayer" && layer.name.toLowerCase() === "ground";
+}
+
 // Time constant for remote-avatar exponential smoothing (ms). At a 20 Hz
 // server tick (50 ms), 80 ms lets the sprite catch up to a new target within
 // roughly two ticks without visibly lagging.
@@ -84,6 +139,14 @@ export class GameScene extends Phaser.Scene {
     super("GameScene");
   }
 
+  // Unified Y-sort depth for the shared dynamic band (see DEPTH_BAND_DYNAMIC
+  // above): band + fractional Y so avatars and dynamic decorations sort by
+  // base/feet position, but never cross into the static bands.
+  private dynamicDepth(baseYPixels: number): number {
+    const mapHeightPixels = this.mapH * TILE_SIZE || 1;
+    return DEPTH_BAND_DYNAMIC + baseYPixels / mapHeightPixels;
+  }
+
   private isBlocked(tx: number, ty: number): boolean {
     if (tx < 0 || tx >= this.mapW || ty < 0 || ty >= this.mapH) return true;
     return this.collisionGrid[ty]?.[tx] ?? false;
@@ -122,11 +185,18 @@ export class GameScene extends Phaser.Scene {
       this.load.tilemapTiledJSON("test-map", mapAssets.tiledJson);
       for (const ts of mapAssets.tilesets) {
         this.load.image(ts.name, ts.url);
+        // Also load as a spritesheet so individual tiles can be drawn as
+        // standalone sprites for object-layer decorations (see create()).
+        // Assumes a single, unspaced tileset grid matching the map's tile
+        // size — the same assumption the rest of the map pipeline makes.
+        this.load.spritesheet(`${ts.name}__tiles`, ts.url, { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
       }
     } else {
       // Fallback: static files served by Vite / nginx.
       this.load.tilemapTiledJSON("test-map", "/maps/test-map.json");
+      this.load.json("test-map-raw", "/maps/test-map.json");
       this.load.image("tileset", "/maps/tileset.png");
+      this.load.spritesheet("tileset__tiles", "/maps/tileset.png", { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
     }
 
     // Load character sprite sheets (768x192). Frames are 32x64 so each frame
@@ -145,15 +215,24 @@ export class GameScene extends Phaser.Scene {
     const mapAssets = this.registry.get("mapAssets") as MapAssets | null;
     const tilesetKey = mapAssets ? mapAssets.tilesets[0].name : "tileset";
     const tileset = map.addTilesetImage(tilesetKey, tilesetKey);
-    if (tileset) {
-      const ground = map.createLayer(0, tileset, 0, 0);
-      const walls = map.createLayer(1, tileset, 0, 0);
-      if (ground) ground.setDepth(0);
-      if (walls) walls.setDepth(1);
+    this.mapW = map.width;
+    this.mapH = map.height;
 
-      // Build collision grid from the walls layer.
-      this.mapW = map.width;
-      this.mapH = map.height;
+    // Raw Tiled JSON, needed to read layer order + custom properties across
+    // both tile and object layers together (Phaser splits them into
+    // separate arrays and doesn't preserve relative order or properties in
+    // a convenient form). See mapLoader.ts / preload() above.
+    const rawJson = (mapAssets?.tiledJson ?? this.cache.json.get("test-map-raw")) as TiledMapJSON;
+    const firstGid = rawJson?.tilesets?.[0]?.firstgid ?? 1;
+    const tilesFrameKey = `${tilesetKey}__tiles`;
+
+    if (tileset && rawJson) {
+      // "Walls" is a reserved collision-fallback layer, matched by name —
+      // not a decoration layer (see 21-map-design-guide.md).
+      const wallsLayerName = rawJson.layers.find((l) => l.type === "tilelayer" && l.name.toLowerCase() === "walls")?.name;
+      const walls = wallsLayerName ? map.createLayer(wallsLayerName, tileset, 0, 0) : null;
+      walls?.setDepth(DEPTH_WALLS_FALLBACK);
+
       if (walls) {
         this.collisionGrid = [];
         for (let y = 0; y < map.height; y++) {
@@ -163,6 +242,54 @@ export class GameScene extends Phaser.Scene {
             row.push(tile !== null && tile.index !== -1);
           }
           this.collisionGrid.push(row);
+        }
+      }
+
+      // Decoration layers: altitude = position in the Tiled layer list.
+      // sort_mode picks the band (see constants above and Part B of the
+      // design doc). Bands accumulate independently below/above the shared
+      // dynamic band depending on where each layer falls in the list
+      // relative to the first dynamic layer.
+      let belowBand = 0;
+      let aboveBand = 0;
+      let seenDynamic = false;
+      for (const layer of rawJson.layers) {
+        if (!isDecorationLayer(layer)) continue;
+        const sortMode = (layerProp(layer.properties, "sort_mode") as string) || "static";
+
+        if (layer.type === "tilelayer") {
+          const tiledLayer = map.createLayer(layer.name, tileset, 0, 0);
+          if (!tiledLayer) continue;
+          if (sortMode === "dynamic") {
+            seenDynamic = true;
+            // Per-tile Y-sort within a tile layer requires per-tile sprites
+            // (a Phaser TilemapLayer has one depth for the whole layer).
+            // Not yet implemented — render at a flat depth in the shared
+            // band so it still interleaves at the layer granularity rather
+            // than being silently dropped or crashing.
+            console.warn(`decoration layer "${layer.name}": sort_mode=dynamic on a tile layer only gets a flat depth (per-tile Y-sort isn't implemented yet)`);
+            tiledLayer.setDepth(DEPTH_BAND_DYNAMIC);
+          } else {
+            tiledLayer.setDepth(seenDynamic ? DEPTH_BAND_STATIC_ABOVE + aboveBand++ : belowBand++);
+          }
+          continue;
+        }
+
+        if (layer.type === "objectgroup") {
+          for (const obj of layer.objects ?? []) {
+            if (!obj.name || obj.gid === undefined) continue;
+            const frame = obj.gid - firstGid;
+            // Tiled tile-objects anchor at bottom-left (obj.x, obj.y is
+            // already the base/feet position — see Part B).
+            const sprite = this.add.sprite(obj.x, obj.y, tilesFrameKey, frame);
+            sprite.setOrigin(0, 1);
+            if (sortMode === "dynamic") {
+              seenDynamic = true;
+              sprite.setDepth(this.dynamicDepth(obj.y));
+            } else {
+              sprite.setDepth(seenDynamic ? DEPTH_BAND_STATIC_ABOVE + aboveBand++ : belowBand++);
+            }
+          }
         }
       }
     }
@@ -248,6 +375,7 @@ export class GameScene extends Phaser.Scene {
       local.predY = p.y;
       local.sprite.x = local.predX * TILE_SIZE + TILE_SIZE / 2;
       local.sprite.y = local.predY * TILE_SIZE + TILE_SIZE / 2;
+      local.sprite.setDepth(this.dynamicDepth(local.sprite.y));
 
       // Update walk animation based on input.
       const moving = this.inputState.up || this.inputState.down ||
@@ -268,6 +396,7 @@ export class GameScene extends Phaser.Scene {
       const prevX = avatar.sprite.x, prevY = avatar.sprite.y;
       avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
       avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
+      avatar.sprite.setDepth(this.dynamicDepth(avatar.sprite.y));
       // Animate based on whether the avatar is actually moving on screen.
       const dx = avatar.sprite.x - prevX, dy = avatar.sprite.y - prevY;
       const moving = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
@@ -317,7 +446,9 @@ export class GameScene extends Phaser.Scene {
       // 64px-tall frame: origin at 0.75 puts the feet at the tile bottom and
       // lets the taller-than-tile head extend up into the tile above.
       sprite.setOrigin(0.5, 0.75);
-      sprite.setDepth(2); // above ground (0) and walls (1)
+      // Depth is recomputed every frame in update() from the sprite's feet
+      // Y, so avatars Y-sort against dynamic decorations (see Part B).
+      sprite.setDepth(this.dynamicDepth(sprite.y));
       this.avatars.set(spawn.entityId, {
         sprite,
         entityId: spawn.entityId,
