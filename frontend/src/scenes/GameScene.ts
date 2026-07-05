@@ -307,6 +307,7 @@ export class GameScene extends Phaser.Scene {
       this.colorIndex++;
       const sprite = this.add.sprite(x + TILE_SIZE / 2, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
       sprite.setOrigin(0.5, 0.8); // feet near bottom of tile
+      sprite.setDepth(2); // above ground (0) and walls (1)
       this.avatars.set(spawn.entityId, {
         sprite,
         entityId: spawn.entityId,
