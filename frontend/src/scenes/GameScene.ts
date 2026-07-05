@@ -167,6 +167,15 @@ export class GameScene extends Phaser.Scene {
     return DEPTH_BAND_DYNAMIC + baseYPixels / mapHeightPixels;
   }
 
+  // Feet/bottom Y of a sprite in world space. `sprite.y` is the origin point,
+  // which for avatars (originY=0.75 on a 64px frame) sits ~16px above the
+  // feet. Sorting by `sprite.y` directly makes the avatar flip in front of a
+  // decoration only once the top half of the body has passed it; sorting by
+  // the feet Y makes the flip happen as soon as the feet cross the base.
+  private feetY(sprite: Phaser.GameObjects.Sprite): number {
+    return sprite.y + sprite.height * (1 - sprite.originY);
+  }
+
   private isBlocked(tx: number, ty: number): boolean {
     if (tx < 0 || tx >= this.mapW || ty < 0 || ty >= this.mapH) return true;
     return this.collisionGrid[ty]?.[tx] ?? false;
@@ -404,7 +413,7 @@ export class GameScene extends Phaser.Scene {
       local.predY = p.y;
       local.sprite.x = local.predX * TILE_SIZE + TILE_SIZE / 2;
       local.sprite.y = local.predY * TILE_SIZE + TILE_SIZE / 2;
-      local.sprite.setDepth(this.dynamicDepth(local.sprite.y));
+      local.sprite.setDepth(this.dynamicDepth(this.feetY(local.sprite)));
 
       // Update walk animation based on input.
       const moving = this.inputState.up || this.inputState.down ||
@@ -426,7 +435,7 @@ export class GameScene extends Phaser.Scene {
       const prevX = avatar.sprite.x, prevY = avatar.sprite.y;
       avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
       avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
-      avatar.sprite.setDepth(this.dynamicDepth(avatar.sprite.y));
+      avatar.sprite.setDepth(this.dynamicDepth(this.feetY(avatar.sprite)));
       // Animate based on whether the avatar is actually moving on screen.
       const dx = avatar.sprite.x - prevX, dy = avatar.sprite.y - prevY;
       const moving = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
@@ -510,7 +519,7 @@ export class GameScene extends Phaser.Scene {
       sprite.setOrigin(0.5, 0.75);
       // Depth is recomputed every frame in update() from the sprite's feet
       // Y, so avatars Y-sort against dynamic decorations (see Part B).
-      sprite.setDepth(this.dynamicDepth(sprite.y));
+      sprite.setDepth(this.dynamicDepth(this.feetY(sprite)));
       this.avatars.set(spawn.entityId, {
         sprite,
         entityId: spawn.entityId,
