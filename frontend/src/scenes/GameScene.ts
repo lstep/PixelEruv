@@ -1,4 +1,6 @@
 import Phaser from "phaser";
+import { fromBinary } from "@bufbuild/protobuf";
+import { AppearanceSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView } from "../net/WsClient";
 import type { MapAssets } from "../mapLoader";
 
@@ -120,6 +122,9 @@ interface Avatar {
   charKey: string;
   dir: number;
   moving: boolean;
+  // True for base entities (props) rendered as tile sprites — these don't
+  // animate or lerp, they just sit at their replicated position.
+  isProp: boolean;
   // Remote avatars: pixel-space lerp target (see LERP_TAU_MS).
   targetX: number;
   targetY: number;
@@ -146,6 +151,9 @@ export class GameScene extends Phaser.Scene {
   private collisionGrid: boolean[][] = [];
   private mapW = 20;
   private mapH = 20;
+  // Tilesets from the Tiled JSON, stored so handleReplication can resolve
+  // Appearance gids to tileset sheet + frame for base entity sprites.
+  private tilesets: TiledMapJSON["tilesets"] = [];
 
   constructor() {
     super("GameScene");
@@ -228,6 +236,7 @@ export class GameScene extends Phaser.Scene {
     const rawJson = (mapAssets?.tiledJson ?? this.cache.json.get("test-map-raw")) as TiledMapJSON;
     this.mapW = map.width;
     this.mapH = map.height;
+    this.tilesets = rawJson?.tilesets ?? [];
 
     // Add ALL tilesets so layers using any tileset render correctly. A map
     // can have multiple tilesets with different firstgids; createLayer must
@@ -413,6 +422,7 @@ export class GameScene extends Phaser.Scene {
     const t = 1 - Math.exp(-delta / LERP_TAU_MS);
     for (const avatar of this.avatars.values()) {
       if (avatar.entityId === this.myEntityId) continue;
+      if (avatar.isProp) continue; // props are static — no lerp or animation
       const prevX = avatar.sprite.x, prevY = avatar.sprite.y;
       avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
       avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
@@ -451,12 +461,44 @@ export class GameScene extends Phaser.Scene {
 
       let x = 10 * TILE_SIZE;
       let y = 10 * TILE_SIZE;
+      let gid = 0;
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
           // Position component
           const pos = decodePosition(comp.data);
           x = pos.x * TILE_SIZE;
           y = pos.y * TILE_SIZE;
+        } else if (comp.componentId === 3) {
+          // Appearance component — Tiled gid for tile-sprite rendering
+          const appearance = fromBinary(AppearanceSchema, comp.data);
+          gid = appearance.gid;
+        }
+      }
+
+      // Base entities (props) with a gid render as tile sprites; player
+      // avatars render as character sprites with walk/idle animations.
+      if (gid !== 0) {
+        const mapped = gidToFrame(gid, this.tilesets);
+        if (mapped) {
+          // Tiled tile-objects anchor at bottom-left (x, y is the base/feet
+          // position), matching how decoration object-layer sprites are drawn.
+          const sprite = this.add.sprite(x, y, mapped.sheet, mapped.frame);
+          sprite.setOrigin(0, 1);
+          sprite.setDepth(this.dynamicDepth(y));
+          this.avatars.set(spawn.entityId, {
+            sprite,
+            entityId: spawn.entityId,
+            charKey: mapped.sheet,
+            dir: 0,
+            moving: false,
+            isProp: true,
+            targetX: x,
+            targetY: y,
+            predX: 0,
+            predY: 0,
+          });
+          console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid}`);
+          continue;
         }
       }
 
@@ -475,6 +517,7 @@ export class GameScene extends Phaser.Scene {
         charKey,
         dir: 0,
         moving: false,
+        isProp: false,
         targetX: x + TILE_SIZE / 2,
         targetY: y + TILE_SIZE / 2,
         predX: x / TILE_SIZE,
@@ -493,6 +536,13 @@ export class GameScene extends Phaser.Scene {
       if (upd.componentId === 1) {
         // Position
         const pos = decodePosition(upd.data);
+        if (avatar.isProp) {
+          // Props use bottom-left anchoring (Tiled tile-object convention).
+          avatar.sprite.x = pos.x * TILE_SIZE;
+          avatar.sprite.y = pos.y * TILE_SIZE;
+          avatar.sprite.setDepth(this.dynamicDepth(avatar.sprite.y));
+          continue;
+        }
         const px = pos.x * TILE_SIZE + TILE_SIZE / 2;
         const py = pos.y * TILE_SIZE + TILE_SIZE / 2;
         if (upd.entityId === this.myEntityId) {

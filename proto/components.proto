@@ -25,3 +25,11 @@ message Position {
 message EntityState {
   string state = 1;
 }
+
+// Component ID 3 — Appearance
+// Carries the Tiled global tile ID (gid) for base entities authored on the
+// "Entities" object layer, so the frontend can render the correct tile sprite
+// (resolved via the map's tilesets) instead of a default character sprite.
+message Appearance {
+  uint32 gid = 1;          // Tiled global tile ID (0 = no sprite)
+}

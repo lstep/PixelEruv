@@ -31,6 +31,7 @@ type PropEntity struct {
 	EntityType     string
 	OwnerExtension string
 	TriggerRadius  float32
+	Gid            uint32 // Tiled global tile ID (for sprite rendering)
 }
 
 // tiledMapJSON is the minimal subset of the Tiled JSON format we read.
@@ -46,6 +47,7 @@ type tiledMapJSON struct {
 		Objects []struct {
 			Name       string `json:"name"`
 			Class      string `json:"class"`
+			Gid        uint32 `json:"gid"`
 			X          float64 `json:"x"`
 			Y          float64 `json:"y"`
 			Width      float64 `json:"width"`
@@ -275,9 +277,10 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 				continue
 			}
 			pe := &PropEntity{
-				ID: obj.Name,
-				X:  float32(obj.X) / tileW,
-				Y:  float32(obj.Y) / tileH,
+				ID:  obj.Name,
+				Gid: obj.Gid,
+				X:   float32(obj.X) / tileW,
+				Y:   float32(obj.Y) / tileH,
 			}
 			for _, prop := range obj.Properties {
 				switch prop.Name {

@@ -31,7 +31,7 @@
         "map1.tmx"
     ],
     "project": "map1.tiled-project",
-    "property.type": "string",
+    "property.type": "float",
     "recentFiles": [
         "map1.tmx"
     ],

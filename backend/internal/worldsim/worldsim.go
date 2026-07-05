@@ -27,6 +27,7 @@ import (
 const (
 	compPosition   = 1
 	compEntityState = 2
+	compAppearance = 3
 )
 
 type Entity struct {
@@ -40,6 +41,10 @@ type Entity struct {
 	EntityType     string
 	OwnerExtension string
 	TriggerRadius  float32
+	// Gid is the Tiled global tile ID for base entities (from the "Entities"
+	// object layer), sent as an Appearance component so the frontend can render
+	// the correct tile sprite. 0 for player avatars.
+	Gid uint32
 	// State is a generic opaque string (EntityState component) that
 	// extensions can set via an input-trigger reply, e.g. "on"/"off".
 	State      string
@@ -152,6 +157,7 @@ func (s *Simulator) loadBaseEntities() {
 			EntityType:     pe.EntityType,
 			OwnerExtension: pe.OwnerExtension,
 			TriggerRadius:  pe.TriggerRadius,
+			Gid:            pe.Gid,
 			spawnedTo:      make(map[string]bool),
 			currentZones:   make(map[string]bool),
 		}
@@ -188,6 +194,7 @@ func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
 			e.EntityType = pe.EntityType
 			e.OwnerExtension = pe.OwnerExtension
 			e.TriggerRadius = pe.TriggerRadius
+			e.Gid = pe.Gid
 			e.dirtyPosition = true
 		} else {
 			s.entities[pe.ID] = &Entity{
@@ -196,6 +203,7 @@ func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
 				EntityType:     pe.EntityType,
 				OwnerExtension: pe.OwnerExtension,
 				TriggerRadius:  pe.TriggerRadius,
+				Gid:            pe.Gid,
 				spawnedTo:      make(map[string]bool),
 				currentZones:   make(map[string]bool),
 			}
@@ -770,6 +778,10 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 			posBytes, _ := proto.Marshal(e.Position)
 			components := []*pb.ComponentData{
 				{ComponentId: compPosition, Data: posBytes},
+			}
+			if e.Gid != 0 {
+				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid})
+				components = append(components, &pb.ComponentData{ComponentId: compAppearance, Data: appearanceBytes})
 			}
 			if e.State != "" {
 				stateBytes, _ := proto.Marshal(&pb.EntityState{State: e.State})

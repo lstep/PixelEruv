@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" nextlayerid="6" nextobjectid="9">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" nextlayerid="7" nextobjectid="12">
  <editorsettings>
   <export target="map1.json" format="json"/>
  </editorsettings>
@@ -41,8 +41,8 @@
    <property name="layer_type" value="decoration"/>
   </properties>
   <data encoding="csv">
-547,548,549,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-563,564,565,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,477,0,0,0,
+547,548,549,0,0,0,0,0,0,0,0,0,394,395,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+563,564,565,0,0,0,0,0,0,0,0,0,410,411,0,0,0,0,0,0,0,0,0,0,0,0,477,0,0,0,
 579,580,581,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,493,0,0,0,
 0,0,0,0,0,841,842,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,509,0,0,0,
 0,0,0,0,0,857,858,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,447,572,0,0,0,0,0,
@@ -87,6 +87,14 @@
 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 </data>
  </layer>
+ <objectgroup id="6" name="Entities">
+  <object id="10" name="light-switch-1" gid="380" x="191.88" y="317.426" width="32" height="32">
+   <properties>
+    <property name="entity_type" value="light_switch"/>
+    <property name="trigger_radius" type="float" value="1.5"/>
+   </properties>
+  </object>
+ </objectgroup>
  <objectgroup id="4" name="Zones">
   <object id="1" name="meeting-room-1" x="671.278" y="63.7594" width="192.481" height="164.812">
    <properties>
