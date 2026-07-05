@@ -31,7 +31,8 @@ described over the wire.
 - **Wire format** for sending appearance to the World Simulator at login
   (referenced as a gap by `06-data-model-and-persistence.md` § 1).
 - Sprite-sheet layout and layered composition (body + hair + outfit +
-  accessory) and how Phaser composites them.
+  accessory) and how Phaser composites them. For the current limezu sheet
+  layout and its 32×64-frame quirk, see `22-limezu-sprites.md`.
 - Animation set naming (idle, walk, sit, sleep, emote) and how `PlayAnimation`
   (see `11-replication.md` § 2.4) references them.
 - Bubble types (speech, emoji, status) and their lifecycle/duration.
