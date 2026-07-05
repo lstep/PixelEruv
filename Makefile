@@ -78,6 +78,7 @@ debug-stop:
 	@echo "==> debug session stopped"
 
 # Start the Vite dev server with frontend OTel enabled.
+# Traces go to /v1/traces (proxied to motel by Vite) to avoid CORS.
 debug-frontend:
-	@echo "==> frontend at http://localhost:5173 (OTel enabled, traces to $(OTEL_ENDPOINT))"
-	cd frontend && VITE_OTEL_ENABLED=true VITE_OTEL_ENDPOINT=$(OTEL_ENDPOINT)/v1/traces npx vite
+	@echo "==> frontend at http://localhost:5173 (OTel enabled, traces proxied to $(OTEL_ENDPOINT))"
+	cd frontend && VITE_OTEL_ENABLED=true VITE_OTEL_ENDPOINT=/v1/traces npx vite
