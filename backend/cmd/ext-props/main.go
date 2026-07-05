@@ -130,6 +130,7 @@ func main() {
 		mu.Unlock()
 
 		if !resp.Handled {
+			logger.Info("no owned adjacent entity", "input", dispatch.Input, "adjacent", len(dispatch.AdjacentEntities))
 			return // don't own any adjacent entity — let the kernel time out
 		}
 		data, _ := json.Marshal(resp)
