@@ -69,8 +69,17 @@ func main() {
 	}
 	defer nc.Close()
 
-	// Find wall zones from the map.
-	wallZones := findWallZones(pbURL, mapID, logger)
+	// Find wall zones from the map (retry until PocketBase is ready).
+	var wallZones []string
+	for i := 0; i < 30; i++ {
+		zones, err := findWallZones(pbURL, mapID, logger)
+		if err == nil {
+			wallZones = zones
+			break
+		}
+		logger.Warn("waiting for pocketbase", "attempt", i+1, "err", err)
+		time.Sleep(time.Second)
+	}
 	logger.Info("found wall zones", "count", len(wallZones), "zones", wallZones)
 
 	// Build trigger registration message.
@@ -127,14 +136,13 @@ func main() {
 
 // findWallZones reads the Tiled map from PocketBase and returns zone IDs
 // that have zone_type "wall".
-func findWallZones(pbURL, mapName string, logger *slog.Logger) []string {
+func findWallZones(pbURL, mapName string, logger *slog.Logger) ([]string, error) {
 	pbURL = strings.TrimRight(pbURL, "/")
 
 	// Fetch map record.
 	resp, err := http.Get(fmt.Sprintf("%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1", pbURL, mapName))
 	if err != nil {
-		logger.Error("fetch map record", "err", err)
-		return nil
+		return nil, fmt.Errorf("fetch map record: %w", err)
 	}
 	defer resp.Body.Close()
 	var record struct {
@@ -145,12 +153,10 @@ func findWallZones(pbURL, mapName string, logger *slog.Logger) []string {
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-		logger.Error("decode map record", "err", err)
-		return nil
+		return nil, fmt.Errorf("decode map record: %w", err)
 	}
 	if len(record.Items) == 0 {
-		logger.Error("no map found", "map", mapName)
-		return nil
+		return nil, fmt.Errorf("no map found: %s", mapName)
 	}
 
 	r := record.Items[0]
@@ -159,20 +165,17 @@ func findWallZones(pbURL, mapName string, logger *slog.Logger) []string {
 	// Fetch Tiled JSON.
 	jresp, err := http.Get(jsonURL)
 	if err != nil {
-		logger.Error("fetch tiled json", "err", err)
-		return nil
+		return nil, fmt.Errorf("fetch tiled json: %w", err)
 	}
 	defer jresp.Body.Close()
 	body, err := io.ReadAll(jresp.Body)
 	if err != nil {
-		logger.Error("read tiled json", "err", err)
-		return nil
+		return nil, fmt.Errorf("read tiled json: %w", err)
 	}
 
 	var tiled tiledMapJSON
 	if err := json.Unmarshal(body, &tiled); err != nil {
-		logger.Error("parse tiled json", "err", err)
-		return nil
+		return nil, fmt.Errorf("parse tiled json: %w", err)
 	}
 
 	var wallZones []string
@@ -193,7 +196,7 @@ func findWallZones(pbURL, mapName string, logger *slog.Logger) []string {
 			}
 		}
 	}
-	return wallZones
+	return wallZones, nil
 }
 
 func envOr(key, fallback string) string {
