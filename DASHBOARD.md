@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-05 (session 4)
+Last updated: 2026-07-05 (session 5)
 
 ## Overview
 
@@ -43,6 +43,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Direction mapping: 0=down, 1=left, 2=right, 3=up
 - [x] 8-directional movement with wall sliding
 - [x] Collision: Walls tile layer (fallback) + extension gate triggers (zones)
+- [x] Collision evaluated at avatar feet (Position.Y + feet offset), not sprite origin — fixes wall collision being off by ~1 tile
 
 ### Zones & Extensions
 - [x] Parse Zones object layer from Tiled (rect, circle, polygon)

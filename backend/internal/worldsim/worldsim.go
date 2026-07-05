@@ -664,7 +664,10 @@ func (s *Simulator) tick() {
 		if e.currentZones == nil {
 			e.currentZones = make(map[string]bool)
 		}
-		newZones := s.zoneReg.ZonesAtPoint(e.Position.X, e.Position.Y)
+		// Evaluate zone membership at the avatar's feet (see
+		// avatarFeetYOffset) so enter/exit transitions match where the
+		// player visually crosses a zone boundary.
+		newZones := s.zoneReg.ZonesAtPoint(e.Position.X, e.Position.Y+avatarFeetYOffset)
 		newSet := make(map[string]bool, len(newZones))
 		for _, zid := range newZones {
 			newSet[zid] = true
@@ -952,22 +955,33 @@ func (s *Simulator) startPeriodicIntegrityCheck(ctx context.Context) {
 	}
 }
 
+// avatarFeetYOffset is the vertical offset from an avatar's Position.Y to its
+// feet in continuous tile coords. The frontend renders avatars with origin
+// (0.5, 0.75) on a 64px-tall frame placed at (pos.X*32+16, pos.Y*32+16), which
+// puts the feet at the bottom of the tile below Position — i.e. at
+// Position.Y + 1.0. Collision and zone transitions must be evaluated at the
+// feet, not at Position.Y (the sprite origin/upper-body), otherwise the player
+// stops with feet buried in a wall or stops a full tile short of it.
+const avatarFeetYOffset = 1.0
+
 // isPositionBlocked checks whether the player at position (px, py) in tile
 // coords is blocked. Zone collision is checked in continuous space (directly
-// against zone shapes) for sub-tile precision. Tile-layer collision uses the
-// tile grid as fallback.
+// against zone shapes) for sub-tile precision, evaluated at the avatar's feet
+// (Position.Y + avatarFeetYOffset). Tile-layer collision uses the tile grid
+// as fallback.
 func (s *Simulator) isPositionBlocked(px, py float32) bool {
-	// Zone gate triggers: check player's bounding box directly against
-	// zone shapes in continuous space. This handles polygons thinner than
-	// a tile that tile rasterization would miss.
+	fy := py + avatarFeetYOffset // feet Y in continuous tile coords
+	// Zone gate triggers: check a small box at the player's feet directly
+	// against zone shapes in continuous space. This handles polygons thinner
+	// than a tile that tile rasterization would miss.
 	if s.zoneReg != nil {
 		const r = 0.3 // player collision radius in tiles
 		points := [5][2]float32{
-			{px, py},         // center
-			{px - r, py - r}, // top-left
-			{px + r, py - r}, // top-right
-			{px - r, py + r}, // bottom-left
-			{px + r, py + r}, // bottom-right
+			{px, fy},         // feet center
+			{px - r, fy - r}, // top-left
+			{px + r, fy - r}, // top-right
+			{px - r, fy + r}, // bottom-left
+			{px + r, fy + r}, // bottom-right
 		}
 		for _, p := range points {
 			for _, zoneID := range s.zoneReg.ZonesAtPoint(p[0], p[1]) {
@@ -977,10 +991,10 @@ func (s *Simulator) isPositionBlocked(px, py float32) bool {
 			}
 		}
 	}
-	// Fallback: Walls tile layer collision (tile-based by nature).
+	// Fallback: Walls tile layer collision (tile-based by nature), at the feet.
 	if s.mapData != nil {
 		tx := int(px + 0.5)
-		ty := int(py + 0.5)
+		ty := int(fy + 0.5)
 		if s.mapData.IsBlocked(tx, ty) {
 			return true
 		}
