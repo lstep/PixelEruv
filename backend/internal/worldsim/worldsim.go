@@ -85,6 +85,10 @@ type Simulator struct {
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
 	clients  map[string]*Entity // client_id -> entity (player avatar)
+	// destroyedBaseEntities queues base entity IDs removed during a map
+	// reload, so the next replication tick can send DestroyEntity frames to
+	// all connected clients. Drained after each tick's replication loop.
+	destroyedBaseEntities []string
 
 	snapshotSeq uint32
 }
@@ -150,6 +154,51 @@ func (s *Simulator) loadBaseEntities() {
 			TriggerRadius:  pe.TriggerRadius,
 			spawnedTo:      make(map[string]bool),
 			currentZones:   make(map[string]bool),
+		}
+	}
+}
+
+// reloadBaseEntities reconciles the ECS base entities with the map's
+// "Entities" object layer after a map reload. Removes entities that no longer
+// exist (queuing them for destroy notification), updates existing ones, and
+// adds new ones. Caller must hold s.mu.
+func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
+	newIDs := make(map[string]bool, len(newEntities))
+	for _, pe := range newEntities {
+		newIDs[pe.ID] = true
+	}
+
+	// Remove base entities that no longer exist in the new map.
+	for id, e := range s.entities {
+		if e.NetworkSession != nil {
+			continue // player avatar, not a base entity
+		}
+		if !newIDs[id] {
+			delete(s.entities, id)
+			s.destroyedBaseEntities = append(s.destroyedBaseEntities, id)
+		}
+	}
+
+	// Add or update base entities from the new map.
+	for _, pe := range newEntities {
+		if e, ok := s.entities[pe.ID]; ok {
+			e.Position.X = pe.X
+			e.Position.Y = pe.Y
+			e.Position.MapId = s.mapID
+			e.EntityType = pe.EntityType
+			e.OwnerExtension = pe.OwnerExtension
+			e.TriggerRadius = pe.TriggerRadius
+			e.dirtyPosition = true
+		} else {
+			s.entities[pe.ID] = &Entity{
+				ID:             pe.ID,
+				Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: s.mapID},
+				EntityType:     pe.EntityType,
+				OwnerExtension: pe.OwnerExtension,
+				TriggerRadius:  pe.TriggerRadius,
+				spawnedTo:      make(map[string]bool),
+				currentZones:   make(map[string]bool),
+			}
 		}
 	}
 }
@@ -644,6 +693,9 @@ func (s *Simulator) tick() {
 		e.pendingAnimations = nil
 	}
 
+	// Drain the destroyed base entities queue — all clients have been replicated.
+	s.destroyedBaseEntities = nil
+
 	// Metric-as-log-attrs: tick duration, entity count, replication batches.
 	// motel has no /v1/metrics endpoint, so we emit these as span attributes +
 	// a structured log so they're queryable via log search.
@@ -752,6 +804,14 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		}
 	}
 
+	// Send destroy notifications for base entities removed during a map reload.
+	for _, id := range s.destroyedBaseEntities {
+		batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
+			EntityId:    id,
+			SnapshotSeq: s.snapshotSeq,
+		})
+	}
+
 	// Only publish if there's something to send
 	if len(batch.Spawns) == 0 && len(batch.Updates) == 0 && len(batch.Destroys) == 0 && len(batch.Animations) == 0 {
 		return false
@@ -855,6 +915,7 @@ func (s *Simulator) checkMapReload() {
 	s.mapData = newMapData
 	s.zoneReg = NewZoneRegistry(newMapData.Zones, newMapData.Width, newMapData.Height)
 	s.mapFilename = info.TiledJSONFilename
+	s.reloadBaseEntities(newMapData.Entities)
 	s.mu.Unlock()
 
 	// Run integrity check on the new map.
