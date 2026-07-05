@@ -250,16 +250,20 @@ const ZOOM_SENSITIVITY = 0.001;
 // The limezu characters are ~48px tall (taller than a 32px tile): the head
 // occupies the bottom of one 32px row and the body fills the next row. We
 // therefore slice the sheet into 32x64 frames (24 cols x 3 rows), so each
-// frame contains a complete head+body. Walk cycles are in frame-row 1:
-// right (c0-5), up (c6-11), left (c12-17), down (c18-23).
-// Dir field: 0=down, 1=left, 2=right, 3=up.
+// frame contains a complete head+body. The three frame-rows are:
+//   frame-row 0: idle  (cols 0-3, one per direction)
+//   frame-row 1: walk  (24 cols, 6 per direction: right c0-5, up c6-11,
+//                       left c12-17, down c18-23)
+//   frame-row 2: run   (same 24-col / 6-per-direction layout as walk)
+// The run row is used as the default movement animation. Dir field:
+// 0=down, 1=left, 2=right, 3=up.
 const FRAME_W = 32;
 const FRAME_H = 64;
 const COLS_PER_ROW = 24;
 // char_5 is excluded: its sheet is malformed (walk cycle only has right/up
 // directions; down/left frames are empty), so it renders as an empty sprite.
 const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4"];
-const WALK_ROW = 1;        // frame-row containing walk cycles (64px frames)
+const WALK_ROW = 2;        // frame-row used for the movement animation (run)
 const FRAMES_PER_DIR = 6;  // columns per direction
 const DIR_NAMES = ["down", "left", "right", "up"] as const;
 // Frame start indices for each direction (index = frameRow * COLS_PER_ROW + col).
@@ -599,9 +603,9 @@ export class GameScene extends Phaser.Scene {
       this.cameras.main.setZoom(z);
     });
 
-    // Create walk + idle animations for each character sheet. Walk cycles
-    // are in row 3. Idle uses the same frames at a slower rate for a subtle
-    // breathing effect.
+    // Create movement + idle animations for each character sheet. The
+    // movement animation uses WALK_ROW (the run cycle, frame-row 2). Idle
+    // reuses the same frames at a slower rate for a subtle breathing effect.
     for (const key of CHAR_SPRITES) {
       for (let dir = 0; dir < 4; dir++) {
         const start = DIR_FRAME_START[dir];

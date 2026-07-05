@@ -40,6 +40,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 ### Rendering & Movement
 - [x] 32x32 character sprites (6 characters, 4 directions, 6 walk frames)
 - [x] Walk animation (3fps) + idle animation (2fps, 4 frames)
+- [x] Run animation used as default movement (frame-row 2 of limezu sheet; visual-only, speed unchanged)
 - [x] Direction mapping: 0=down, 1=left, 2=right, 3=up
 - [x] 8-directional movement with wall sliding
 - [x] Collision: Walls tile layer (fallback) + extension gate triggers (zones)

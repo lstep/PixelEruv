@@ -65,7 +65,10 @@ Frame index = `frameRow * COLS_PER_ROW + col`. With 64px frames:
 |-----------|---------------|---------------------|
 | 0         | 0–1           | idle (cols 0–3 only)|
 | 1         | 2–3           | **walk** (all cols) |
-| 2         | 4–5           | other               |
+| 2         | 4–5           | **run** (all cols)  |
+
+The frontend currently uses frame-row 2 (run) as the default movement
+animation, controlled by `WALK_ROW` in `GameScene.ts`.
 
 Walk-cycle column layout (per direction, 6 frames each):
 
