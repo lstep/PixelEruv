@@ -65,7 +65,7 @@ type Simulator struct {
 	snapshotSeq uint32
 }
 
-func New(natsURL, mapID, pocketbaseURL string, tickHz int, logger *slog.Logger) (*Simulator, error) {
+func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, tickHz int, logger *slog.Logger) (*Simulator, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("worldsim"),
 		nats.ReconnectWait(2*time.Second),
@@ -86,7 +86,7 @@ func New(natsURL, mapID, pocketbaseURL string, tickHz int, logger *slog.Logger) 
 		nc:        nc,
 		mapID:     mapID,
 		mapData:   mapData,
-		userStore: NewUserStore(pocketbaseURL),
+		userStore: NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
 		tickHz:    tickHz,
 		tickDur:   time.Second / time.Duration(tickHz),
 		logger:    logger,

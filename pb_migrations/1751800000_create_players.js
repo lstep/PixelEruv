@@ -37,9 +37,9 @@ migrate((app) => {
     ],
     listRule: "",
     viewRule: "",
-    createRule: null,
-    updateRule: null,
-    deleteRule: null,
+    createRule: "",
+    updateRule: "",
+    deleteRule: "",
   });
 
   return app.save(collection);
