@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken } from "../auth";
@@ -114,6 +114,11 @@ export class WsClient {
         }
         case "pong":
           break;
+        case "actionResult": {
+          const ar = serverFrame.payload.value;
+          console.log(`action result: ok=${ar.ok} reason="${ar.reason}" seq=${ar.seq}`);
+          break;
+        }
         case "error":
           console.error("server error:", serverFrame.payload.value);
           break;
@@ -160,6 +165,36 @@ export class WsClient {
         }),
       );
       const frame = create(ClientFrameSchema, { payload: { case: "input", value: input } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
+    return this.seq;
+  }
+
+  // sendAction sends a discrete input trigger (e.g. "key:E") as an
+  // ActionFrame. Unlike sendInput (continuous movement), this is a single
+  // event; the server dispatches it to extensions registered for the input
+  // type and replies with an ActionResultFrame (handled in onmessage).
+  sendAction(input: string): number {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return 0;
+    this.seq++;
+    const span = tracer.startSpan("ws.send_action", {
+      attributes: {
+        "client.id": this.clientId ?? "",
+        "input.seq": this.seq,
+        "action.input": input,
+      },
+    });
+    try {
+      const action = context.with(trace.setSpan(context.active(), span), () =>
+        create(ActionFrameSchema, {
+          seq: this.seq,
+          input,
+          traceparent: traceparentFor(),
+        }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "action", value: action } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();

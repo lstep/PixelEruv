@@ -343,6 +343,14 @@ export class GameScene extends Phaser.Scene {
     kb.on("keydown-RIGHT", () => { this.inputState.right = true; this.inputDirty = true; });
     kb.on("keyup-RIGHT", () => { this.inputState.right = false; this.inputDirty = true; });
 
+    // Interact key — sends a discrete ActionFrame (not continuous movement
+    // state). Phaser fires keydown repeatedly while held; gate with a flag so
+    // each press fires exactly one ActionFrame. See 14-zones-and-interactions.md
+    // §3a and ext-props (key:E toggles adjacent light switches).
+    let eHeld = false;
+    kb.on("keydown-E", () => { if (!eHeld) { eHeld = true; this.ws?.sendAction("key:E"); } });
+    kb.on("keyup-E", () => { eHeld = false; });
+
     // Connect to Pusher via WebSocket.
     // In Docker (nginx on 8080): ws://host:8080/ws (proxied to pusher:8081)
     // In dev (vite on 5173): ws://host:8081/ws (direct to pusher)
