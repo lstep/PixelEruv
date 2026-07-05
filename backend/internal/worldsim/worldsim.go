@@ -421,7 +421,9 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 	handled := false
 	for _, extID := range extIDs {
 		subject := fmt.Sprintf("extension.%s.action", extID)
-		reply, err := s.nc.RequestWithContext(ctx, subject, payload)
+		reqCtx, cancel := context.WithTimeout(ctx, actionInputTimeout)
+		reply, err := s.nc.RequestWithContext(reqCtx, subject, payload)
+		cancel()
 		if err != nil {
 			// Timeout or no responder — extension may have chosen not to
 			// reply because it doesn't own any of the adjacent entities.
