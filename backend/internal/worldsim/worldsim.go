@@ -37,6 +37,9 @@ type Entity struct {
 	// entity. Per-client rather than global so a late-joining client gets
 	// spawns for entities that already exist.
 	spawnedTo map[string]bool
+	// currentZones tracks which zone IDs the entity is currently inside.
+	// Used to detect enter/exit transitions.
+	currentZones map[string]bool
 }
 
 type NetworkSession struct {
@@ -49,14 +52,16 @@ type NetworkSession struct {
 // --- World Sim ---
 
 type Simulator struct {
-	nc        *nats.Conn
-	mapID     string
-	mapData   *MapData
-	userStore *UserStore
-	tickHz    int
-	tickDur   time.Duration
-	logger    *slog.Logger
-	tracer    trace.Tracer
+	nc          *nats.Conn
+	mapID       string
+	mapData     *MapData
+	zoneReg     *ZoneRegistry
+	userStore   *UserStore
+	extMgr      *ExtensionManager
+	tickHz      int
+	tickDur     time.Duration
+	logger      *slog.Logger
+	tracer      trace.Tracer
 
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
@@ -75,18 +80,21 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
 
-	// Load map data (dimensions + collision grid) from PocketBase.
+	// Load map data (dimensions + collision grid + zones) from PocketBase.
 	mapData, err := LoadMap(pocketbaseURL, mapID)
 	if err != nil {
 		logger.Warn("failed to load map from pocketbase, using fallback bounds",
 			"err", err, "pocketbase", pocketbaseURL, "map", mapID)
+		mapData = &MapData{Width: 20, Height: 20}
 	}
 
 	s := &Simulator{
 		nc:        nc,
 		mapID:     mapID,
 		mapData:   mapData,
+		zoneReg:   NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
 		userStore: NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
+		extMgr:    NewExtensionManager(logger),
 		tickHz:    tickHz,
 		tickDur:   time.Second / time.Duration(tickHz),
 		logger:    logger,
@@ -152,10 +160,18 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe client.input: %w", err)
 	}
 
+	// Extension lifecycle subscriptions.
+	if err := s.extMgr.Subscribe(s.nc); err != nil {
+		return fmt.Errorf("extension subscribe: %w", err)
+	}
+
 	return nil
 }
 
 func (s *Simulator) Run(ctx context.Context) error {
+	// Start extension stale checker.
+	go s.extMgr.StartStaleChecker(ctx)
+
 	ticker := time.NewTicker(s.tickDur)
 	defer ticker.Stop()
 
@@ -212,7 +228,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) {
 			ClientID: clientID,
 			Input:    &pb.InputState{},
 		},
-		spawnedTo: make(map[string]bool),
+		spawnedTo:    make(map[string]bool),
+		currentZones: make(map[string]bool),
 	}
 	s.entities[entityID] = e
 	s.clients[clientID] = e
@@ -350,6 +367,29 @@ func (s *Simulator) tick() {
 		}
 	}
 
+	// --- Zone enter/exit detection ---
+	for _, e := range s.entities {
+		if e.currentZones == nil {
+			e.currentZones = make(map[string]bool)
+		}
+		newZones := s.zoneReg.ZonesAtPoint(e.Position.X, e.Position.Y)
+		newSet := make(map[string]bool, len(newZones))
+		for _, zid := range newZones {
+			newSet[zid] = true
+		}
+		for zid := range newSet {
+			if !e.currentZones[zid] {
+				s.publishZoneEvent(ctx, "zone.enter", e.ID, zid)
+			}
+		}
+		for zid := range e.currentZones {
+			if !newSet[zid] {
+				s.publishZoneEvent(ctx, "zone.exit", e.ID, zid)
+			}
+		}
+		e.currentZones = newSet
+	}
+
 	// --- Replication ---
 	// Lite MVP: replicate everything to everyone (no AOI filter).
 	replicated := 0
@@ -474,6 +514,17 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		return false
 	}
 	return true
+}
+
+// publishZoneEvent publishes a zone.enter or zone.exit event to NATS.
+// Extensions subscribe to these subjects to observe zone transitions.
+func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, zoneID string) {
+	subject := fmt.Sprintf("zone.%s", event)
+	data := fmt.Sprintf(`{"entity_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, zoneID, s.mapID)
+	if err := s.nc.Publish(subject, []byte(data)); err != nil {
+		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
+	}
+	s.logger.InfoContext(ctx, "zone event", "event", event, "entity", entityID, "zone", zoneID)
 }
 
 // subjectClientID extracts the client_id from a subject like "client.<id>.input".

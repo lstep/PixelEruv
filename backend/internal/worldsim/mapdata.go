@@ -10,20 +10,41 @@ import (
 )
 
 // MapData holds the spatial properties of a Tiled map needed by the
-// simulation: dimensions and a per-tile collision grid.
+// simulation: dimensions, collision grid, and zones.
 type MapData struct {
 	Width     int
 	Height    int
 	Collision [][]bool // [y][x] — true = blocked
+	Zones     []*Zone
 }
 
 // tiledMapJSON is the minimal subset of the Tiled JSON format we read.
 type tiledMapJSON struct {
-	Width  int  `json:"width"`
-	Height int  `json:"height"`
-	Layers []struct {
-		Name string   `json:"name"`
-		Data []uint32 `json:"data"`
+	Width      int  `json:"width"`
+	Height     int  `json:"height"`
+	TileWidth  int  `json:"tilewidth"`
+	TileHeight int  `json:"tileheight"`
+	Layers     []struct {
+		Name    string   `json:"name"`
+		Type    string   `json:"type"` // "tilelayer" or "objectgroup"
+		Data    []uint32 `json:"data"`
+		Objects []struct {
+			Name       string `json:"name"`
+			Class      string `json:"class"`
+			X          float64 `json:"x"`
+			Y          float64 `json:"y"`
+			Width      float64 `json:"width"`
+			Height     float64 `json:"height"`
+			Ellipse    bool   `json:"ellipse"`
+			Polygon    []struct {
+				X, Y float64 `json:"x"`
+			} `json:"polygon"`
+			Properties []struct {
+				Name  string      `json:"name"`
+				Type  string      `json:"type"`
+				Value interface{} `json:"value"`
+			} `json:"properties"`
+		} `json:"objects"`
 	} `json:"layers"`
 }
 
@@ -116,10 +137,80 @@ func loadMapOnce(pocketbaseURL, mapName string) (*MapData, error) {
 		break
 	}
 
+	// Parse zones from the "Zones" object layer.
+	var zones []*Zone
+	tileW := float32(tiled.TileWidth)
+	tileH := float32(tiled.TileHeight)
+	if tileW == 0 {
+		tileW = 32 // fallback
+	}
+	if tileH == 0 {
+		tileH = 32
+	}
+
+	for _, layer := range tiled.Layers {
+		if strings.ToLower(layer.Name) != "zones" || layer.Type != "objectgroup" {
+			continue
+		}
+		for _, obj := range layer.Objects {
+			if obj.Name == "" {
+				continue
+			}
+			z := &Zone{
+				ID:  obj.Name,
+				X:   float32(obj.X) / tileW,
+				Y:   float32(obj.Y) / tileH,
+				W:   float32(obj.Width) / tileW,
+				H:   float32(obj.Height) / tileH,
+			}
+
+			// Determine shape.
+			if obj.Ellipse {
+				if obj.Width != obj.Height {
+					return nil, fmt.Errorf("zone %q: ellipse must have width == height", obj.Name)
+				}
+				z.Shape = ShapeCircle
+				z.Radius = float32(obj.Width) / tileW / 2
+			} else if len(obj.Polygon) > 0 {
+				z.Shape = ShapePolygon
+				for _, p := range obj.Polygon {
+					z.Polygon = append(z.Polygon, [2]float32{
+						float32(p.X) / tileW,
+						float32(p.Y) / tileH,
+					})
+				}
+			} else {
+				z.Shape = ShapeRect
+			}
+
+			// Parse custom properties.
+			for _, prop := range obj.Properties {
+				switch prop.Name {
+				case "zone_type":
+					if s, ok := prop.Value.(string); ok {
+						z.ZoneType = s
+					}
+				case "is_exclusive":
+					if b, ok := prop.Value.(bool); ok {
+						z.IsExclusive = b
+					}
+				case "mobility":
+					if s, ok := prop.Value.(string); ok {
+						z.Mobility = s
+					}
+				}
+			}
+
+			zones = append(zones, z)
+		}
+		break
+	}
+
 	return &MapData{
 		Width:     tiled.Width,
 		Height:    tiled.Height,
 		Collision: collision,
+		Zones:     zones,
 	}, nil
 }
 

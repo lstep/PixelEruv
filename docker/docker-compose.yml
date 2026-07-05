@@ -81,6 +81,18 @@ services:
       - "8080:80"
     restart: unless-stopped
 
+  ext-demo:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: ext-demo
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+      EXTENSION_ID: "demo"
+    restart: unless-stopped
+
 volumes:
   pb_data:
   dex_data:
