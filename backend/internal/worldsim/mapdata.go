@@ -37,7 +37,8 @@ type tiledMapJSON struct {
 			Height     float64 `json:"height"`
 			Ellipse    bool   `json:"ellipse"`
 			Polygon    []struct {
-				X, Y float64 `json:"x"`
+				X float64 `json:"x"`
+				Y float64 `json:"y"`
 			} `json:"polygon"`
 			Properties []struct {
 				Name  string      `json:"name"`

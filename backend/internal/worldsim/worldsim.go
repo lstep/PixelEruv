@@ -639,9 +639,15 @@ func (s *Simulator) startPeriodicIntegrityCheck(ctx context.Context) {
 func (s *Simulator) isTileBlocked(tx, ty int) bool {
 	// Check zone gate triggers first (extension-driven walls).
 	if s.zoneReg != nil {
-		for _, zoneID := range s.zoneReg.ZonesAt(tx, ty) {
-			if s.extMgr.IsZoneBlocked(zoneID) {
-				return true
+		zones := s.zoneReg.ZonesAt(tx, ty)
+		if len(zones) > 0 {
+			for _, zoneID := range zones {
+				blocked := s.extMgr.IsZoneBlocked(zoneID)
+				s.logger.Info("zone gate check",
+					"tx", tx, "ty", ty, "zone", zoneID, "blocked", blocked)
+				if blocked {
+					return true
+				}
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package worldsim
 
 import (
 	"fmt"
+	"log"
 	"math"
 )
 
@@ -80,6 +81,7 @@ func NewZoneRegistry(zones []*Zone, mapW, mapH int) *ZoneRegistry {
 		tileSet: make(map[string]map[string]bool),
 	}
 	for _, z := range zones {
+		zoneTileCount := 0
 		if z.Mobility == "mobile" {
 			continue // mobile zones are evaluated per-tick, not rasterized
 		}
@@ -123,9 +125,12 @@ func NewZoneRegistry(zones []*Zone, mapW, mapH int) *ZoneRegistry {
 						r.tileSet[key] = make(map[string]bool)
 					}
 					r.tileSet[key][z.ID] = true
+					zoneTileCount++
 				}
 			}
 		}
+		log.Printf("[zone] rasterized zone %q (shape=%d): %d tiles, bbox=[%d,%d]-[%d,%d]",
+			z.ID, z.Shape, zoneTileCount, minX, minY, maxX, maxY)
 	}
 	return r
 }
