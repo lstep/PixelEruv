@@ -116,7 +116,20 @@ func main() {
 		logger.Error("subscribe map.updated", "err", err)
 	}
 
-	// Initial registration (retry until PocketBase is ready).
+	// worldsim.ready fires when worldsim's subscriptions are live (on startup
+	// and on restart). Re-register whenever it fires so we never race the
+	// initial publish.
+	readyCh := make(chan struct{}, 1)
+	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
+		logger.Info("worldsim ready, registering", "map", string(m.Data))
+		register()
+		select {
+		case readyCh <- struct{}{}:
+		default:
+		}
+	})
+
+	// Wait until PocketBase is up (register() reads the map from it).
 	for i := 0; i < 30; i++ {
 		zones, err := findWallZones(pbURL, mapID, logger)
 		if err == nil {
@@ -126,7 +139,16 @@ func main() {
 		logger.Warn("waiting for pocketbase", "attempt", i+1, "err", err)
 		time.Sleep(time.Second)
 	}
-	register()
+
+	// Wait for worldsim.ready before the initial registration. Fall back to
+	// registering directly after a timeout (e.g. worldsim was already up and
+	// we missed the broadcast on extension restart).
+	select {
+	case <-readyCh:
+	case <-time.After(10 * time.Second):
+		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
+		register()
+	}
 
 	// Heartbeat + re-register loop.
 	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)

@@ -301,6 +301,19 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe admin.map.integrity: %w", err)
 	}
 
+	// Announce readiness so extensions can register against a live subscriber
+	// instead of racing their initial publish (NATS Core drops publishes with
+	// no subscribers). Flush guarantees the broadcast is on the wire before
+	// the tick loop starts. Extensions also listen for this to re-register on
+	// worldsim restarts.
+	if err := s.nc.Publish("worldsim.ready", []byte(s.mapID)); err != nil {
+		s.logger.Warn("publish worldsim.ready", "err", err)
+	}
+	if err := s.nc.Flush(); err != nil {
+		return fmt.Errorf("flush worldsim.ready: %w", err)
+	}
+	s.logger.Info("worldsim ready", "map", s.mapID)
+
 	return nil
 }
 

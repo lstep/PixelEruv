@@ -131,6 +131,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-05 | Entity ownership via `owner_extension` property + `TriggerOwner` | Lets a generic extension and dedicated extensions claim map-authored props without colliding |
 | 2026-07-05 | Server-side WebSocket pings (not app-level ping frames) for keepalive | `coder/websocket` doesn't auto-ping; protocol-level pings get auto-pong from the browser with no client code. App-level `ClientFrame_Ping` already existed but was unused — protocol pings are simpler and keep the connection alive at the transport layer |
 | 2026-07-05 | Reconnect mints a fresh session (new entity id, spawn-point teleport) | True session resumption would need worldsim to reattach the entity to the new session; out of MVP scope. Player teleports to spawn on reconnect — flagged for a future task |
+| 2026-07-05 | `worldsim.ready` broadcast for extension registration | Extensions published registration before worldsim subscribed (NATS Core drops no-subscriber publishes), then waited up to 30s for the clock-phase-gated re-register window. worldsim now publishes `worldsim.ready` (with Flush) after its subscriptions are live; extensions wait for it (10s timeout fallback) and re-register on every fire, including worldsim restarts. Registration latency dropped from ~30s to ~2ms. |
 
 ## Test accounts
 

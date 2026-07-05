@@ -80,9 +80,34 @@ func main() {
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
 
-	// Send initial registration + heartbeat.
-	nc.Publish(regSubject, regData)
-	nc.Publish(hbSubject, []byte(extID))
+	// publishReg sends the registration + heartbeat pair.
+	publishReg := func() {
+		nc.Publish(regSubject, regData)
+		nc.Publish(hbSubject, []byte(extID))
+	}
+
+	// worldsim.ready fires when worldsim's subscriptions are live (on startup
+	// and on restart). Re-register whenever it fires so we never race the
+	// initial publish.
+	readyCh := make(chan struct{}, 1)
+	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
+		logger.Info("worldsim ready, registering", "map", string(m.Data))
+		publishReg()
+		select {
+		case readyCh <- struct{}{}:
+		default:
+		}
+	})
+
+	// Wait for worldsim.ready before the initial registration. Fall back to
+	// registering directly after a timeout (e.g. worldsim was already up and
+	// we missed the broadcast on extension restart).
+	select {
+	case <-readyCh:
+	case <-time.After(10 * time.Second):
+		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
+		publishReg()
+	}
 	logger.Info("registered", "id", extID, "heartbeat_s", heartbeatS)
 
 	// Heartbeat + re-register loop.
