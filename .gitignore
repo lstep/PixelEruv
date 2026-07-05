@@ -33,3 +33,7 @@ dist/
 
 # PocketBase
 pb_data/
+
+# Tileset art packs (large, third-party — not committed)
+assets/moderninteriors-win/
+assets/Modern_Office_Revamped_v1/
