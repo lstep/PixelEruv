@@ -8,6 +8,12 @@ export default defineConfig({
         target: "ws://localhost:8081",
         ws: true,
       },
+      // Proxy OTLP trace exports to motel so the browser makes same-origin
+      // requests (motel doesn't send CORS headers). Only used in dev.
+      "/v1/traces": {
+        target: "http://127.0.0.1:27686",
+        changeOrigin: true,
+      },
     },
   },
   build: {
