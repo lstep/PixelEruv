@@ -119,10 +119,18 @@ depth = BAND_BASE(layer) + (baseY_pixels / mapHeightPixels)
 
 #### Anchoring multi-tile-tall objects
 
-Tiled tile-objects anchor at their **bottom-left corner** — the same
-convention avatar sprites use. For a tree spanning 3.5 tiles in height,
-`obj.y` from the Tiled JSON is already the base/feet Y. No adjustment
-needed.
+Tiled tile-objects anchor at their **bottom-left corner** — `obj.y` from the
+Tiled JSON is already the base/feet Y. No adjustment needed.
+
+> **Avatar convention differs.** Player avatars are *not* anchored at their
+> feet: `Position.Y` is the sprite origin (upper-body area), and the feet
+> render at `Position.Y + 1.0` (origin `0.5/0.75` on a 64px frame). The
+> worldsim evaluates collision and zone transitions at the feet
+> (`Position.Y + avatarFeetYOffset`, see `worldsim.go`), so wall zones and
+> the Walls tile layer block the player where the feet actually are, not
+> where `Position` sits. When authoring wall zones meant to block the
+> player, draw them where the **feet** should be stopped, not where the
+> sprite origin would be.
 
 For correct occlusion, author the object's **collision footprint narrower
 than its visual sprite** (e.g. collision only on the trunk's base tile, not
@@ -395,8 +403,11 @@ worldsim. Players cannot walk into wall zones.
 
 > **Note:** Zone collision is checked in continuous space directly against
 > the zone shape (point-in-polygon for polygons, bounding-box for rects,
-> distance for circles). This means walls thinner than a tile work
-> correctly — no tile grid approximation.
+> distance for circles), evaluated at the avatar's **feet**
+> (`Position.Y + avatarFeetYOffset`, see "Anchoring multi-tile-tall
+> objects" above). This means walls thinner than a tile work correctly —
+> no tile grid approximation — and a wall zone blocks the player where the
+> feet enter it, not where the sprite origin sits.
 
 9. **Verify** in the worldsim logs:
    ```bash

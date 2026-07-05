@@ -81,6 +81,11 @@ const LERP_TAU_MS = 80;
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
+// Vertical offset from Position.Y to the avatar's feet in tile coords.
+// Avatars render with origin (0.5, 0.75) on a 64px frame placed at
+// (pos*32+16, pos*32+16), so feet sit at Position.Y + 1.0. Collision is
+// evaluated at the feet — must match worldsim.go avatarFeetYOffset.
+const FEET_Y_OFFSET = 1.0;
 
 // Character sprite sheets — one per player, cycled. Each sheet is 768x192.
 // The limezu characters are ~48px tall (taller than a 32px tile): the head
@@ -198,11 +203,14 @@ export class GameScene extends Phaser.Scene {
     let newX = Math.max(0, Math.min(this.mapW - 1, x + dx * SPEED_TILES_PER_TICK * ticks));
     let newY = Math.max(0, Math.min(this.mapH - 1, y + dy * SPEED_TILES_PER_TICK * ticks));
 
-    // Slide along walls: try X and Y independently. Use +0.5 because the
-    // sprite center is at position*TILE_SIZE + TILE_SIZE/2, so the tile the
-    // center is in is floor(position + 0.5).
-    if (this.isBlocked(Math.floor(newX + 0.5), Math.floor(y + 0.5))) newX = x;
-    if (this.isBlocked(Math.floor(newX + 0.5), Math.floor(newY + 0.5))) newY = y;
+    // Slide along walls: try X and Y independently. Collision is evaluated at
+    // the avatar's feet, which render at Position.Y + FEET_Y_OFFSET (origin
+    // 0.5/0.75 on a 64px frame → feet one tile below Position). This must
+    // match the server's isPositionBlocked (worldsim.go, avatarFeetYOffset)
+    // or the local avatar visually clips into walls before reconciliation.
+    const fy = (y: number) => Math.floor(y + FEET_Y_OFFSET + 0.5);
+    if (this.isBlocked(Math.floor(newX + 0.5), fy(y))) newX = x;
+    if (this.isBlocked(Math.floor(newX + 0.5), fy(newY))) newY = y;
 
     return { x: newX, y: newY };
   }
