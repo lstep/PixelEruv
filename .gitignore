@@ -20,6 +20,14 @@ mono_crash.*.json
 
 # Go
 backend/internal/pb/*.pb.go
+# Stray binaries from `go build ./cmd/<name>` (no -o) — drops at module root.
+# The Makefile builds into dist/bin/ (covered by dist/ above); these cover
+# the case where someone builds directly in backend/.
+backend/pusher
+backend/worldsim
+backend/ext-demo
+backend/ext-walls
+backend/ext-props
 
 # Node
 frontend/node_modules/
