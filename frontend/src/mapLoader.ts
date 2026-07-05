@@ -58,10 +58,13 @@ export async function loadMapAssets(): Promise<MapAssets> {
   // Build tileset URLs. PocketBase renames uploaded files (e.g.
   // tileset.png → tileset_97mrhuar0u.png) and lowercases the original name,
   // so we match each Tiled tileset to its PB file by normalized stem.
+  // Tiled may store the image as a relative path (e.g. "dir/tileset.png"),
+  // so we match on the basename only.
   const pbTilesets: string[] = record.tilesets || [];
   const tilesets: TilesetAsset[] = (tiled.tilesets || []).map(
     (ts: { name: string; image: string }) => {
-      const stem = ts.image.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const basename = ts.image.split("/").pop() ?? ts.image;
+      const stem = basename.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
       const pbFile =
         pbTilesets.find((f) => f.toLowerCase().replace(/[^a-z0-9]/g, "").startsWith(stem)) ??
         ts.image;
