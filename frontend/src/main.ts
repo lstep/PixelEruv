@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { GameScene } from "./scenes/GameScene";
 import { initOtel, tracer } from "./otel";
 import { loadMapAssets, type MapAssets } from "./mapLoader";
+import { handleAuthCallback, getIdToken, redirectToLogin, isLoggedIn } from "./auth";
 
 // Initialize OpenTelemetry before any instrumented code runs. No-op when
 // VITE_OTEL_ENABLED != "true".
@@ -21,6 +22,18 @@ const config: Phaser.Types.Core.GameConfig = {
 // preload() has the URLs ready. Falls back to static files in /maps/ if
 // PocketBase is unavailable (e.g. not yet set up in dev).
 async function bootstrap(): Promise<void> {
+  // Handle OAuth callback from Dex.
+  if (window.location.pathname === "/auth/callback") {
+    handleAuthCallback();
+    return; // handleAuthCallback redirects
+  }
+
+  // Require login before starting the game.
+  if (!isLoggedIn()) {
+    redirectToLogin();
+    return;
+  }
+
   let mapAssets: MapAssets | null = null;
   const span = tracer.startSpan("map.load", { attributes: { "map.source": "pocketbase" } });
   try {

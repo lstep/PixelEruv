@@ -3,6 +3,7 @@ import { context, trace } from "@opentelemetry/api";
 import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
+import { getIdToken } from "../auth";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
@@ -49,7 +50,7 @@ export class WsClient {
         // Build the auth frame inside the span's active context so
         // traceparentFor() serializes this span's context for the backend.
         const auth = context.with(trace.setSpan(context.active(), authSpan), () =>
-          create(AuthFrameSchema, { idToken: "dev", traceparent: traceparentFor() }),
+          create(AuthFrameSchema, { idToken: getIdToken() ?? "dev", traceparent: traceparentFor() }),
         );
         const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
         this.ws!.send(toBinary(ClientFrameSchema, frame));

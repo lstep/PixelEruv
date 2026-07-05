@@ -30,6 +30,7 @@ type Server struct {
 	nc       *nats.Conn
 	logger   *slog.Logger
 	tracer   trace.Tracer
+	auth     *AuthValidator
 	sessions sync.Map // client_id -> *session
 }
 
@@ -40,7 +41,7 @@ type session struct {
 	closeOnce sync.Once
 }
 
-func New(wsAddr, natsURL string, logger *slog.Logger) (*Server, error) {
+func New(wsAddr, natsURL, dexURL, dexClientID string, logger *slog.Logger) (*Server, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("pusher"),
 		nats.ReconnectWait(2*time.Second),
@@ -54,6 +55,7 @@ func New(wsAddr, natsURL string, logger *slog.Logger) (*Server, error) {
 		nc:     nc,
 		logger: logger,
 		tracer: otel.Tracer("pusher"),
+		auth:   NewAuthValidator(dexURL, dexClientID),
 	}, nil
 }
 
@@ -62,6 +64,11 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/ws", s.handleWS)
 
 	srv := &http.Server{Addr: s.wsAddr, Handler: mux}
+
+	// Start JWKS refresh loop if Dex is configured.
+	if s.auth != nil && s.auth.issuer != "" {
+		go s.auth.startKeyRefresh(ctx)
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -121,10 +128,33 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	)
 	defer authSpan.End()
 
-	// Dummy auth — accept any token.
+	// Validate the id_token via Dex JWKS. If DEX_URL is not set, fall back
+	// to dummy auth for local dev without Dex.
+	var sub string
+	if s.auth != nil && s.auth.issuer != "" {
+		sub, err = s.auth.ValidateToken(auth.GetIdToken())
+		if err != nil {
+			authSpan.RecordError(err)
+			authSpan.SetStatus(codes.Error, "token validation")
+			s.logger.Warn("token validation failed", "err", err)
+			errResult := &pb.ServerFrame{
+				Payload: &pb.ServerFrame_AuthResult{
+					AuthResult: &pb.AuthResultFrame{Ok: false},
+				},
+			}
+			errBytes, _ := proto.Marshal(errResult)
+			c.Write(authCtx, websocket.MessageBinary, errBytes)
+			c.Close(websocket.StatusPolicyViolation, "auth failed")
+			return
+		}
+		authSpan.SetAttributes(attribute.String("user.sub", sub))
+	} else {
+		sub = "dev"
+	}
+
 	clientID := generateClientID()
-	span.SetAttributes(attribute.String("client.id", clientID))
-	authSpan.SetAttributes(attribute.String("client.id", clientID))
+	span.SetAttributes(attribute.String("client.id", clientID), attribute.String("user.sub", sub))
+	authSpan.SetAttributes(attribute.String("client.id", clientID), attribute.String("user.sub", sub))
 	sess := &session{clientID: clientID, conn: c}
 
 	// Subscribe to replication + control subjects for this client.
@@ -151,7 +181,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		sess.sub.Unsubscribe()
 		s.sessions.Delete(clientID)
-		s.publishLifecycle(authCtx, "client.disconnected", clientID)
+		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
 	}()
 
 	// Send AuthResultFrame.
@@ -174,7 +204,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Publish client.connected so World Sim provisions the entity.
-	s.publishLifecycle(authCtx, "client.connected", clientID)
+	s.publishLifecycle(authCtx, "client.connected", clientID, sub)
 
 	s.logger.Info("client connected", "client", clientID)
 
@@ -224,8 +254,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 
 // publishLifecycle publishes a client.connected/disconnected event carrying
 // the current span context so worldsim's provision/despawn spans parent here.
-func (s *Server) publishLifecycle(ctx context.Context, subject, clientID string) {
-	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID})
+func (s *Server) publishLifecycle(ctx context.Context, subject, clientID, sub string) {
+	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub})
 	m := &nats.Msg{Subject: subject, Data: msg}
 	otelinternal.Inject(ctx, m)
 	if err := s.nc.PublishMsg(m); err != nil {

@@ -1,0 +1,35 @@
+issuer: http://localhost:5556/dex
+
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+web:
+  http: 0.0.0.0:5556
+
+telemetry:
+  http: 0.0.0.0:5558
+
+# Local-password connector — users defined inline.
+enablePasswordDB: true
+
+staticClients:
+  - id: pixeleruv
+    redirectURIs:
+      - "http://localhost:5173/auth/callback"
+      - "http://localhost:8080/auth/callback"
+    name: "PixelEruv"
+    secret: pixeleruv-secret
+
+# Local users (bcrypt hashes).
+# admin / password123
+staticPasswords:
+  - email: "admin@pixeleruv.local"
+    hash: "$2y$05$A9yKrrXYQZyvO5zeZ75Dk.QKxavGPWs/WcDXzk6uwZagMRVbbK7/W"
+    username: "admin"
+    userID: "admin"
+  - email: "player@pixeleruv.local"
+    hash: "$2y$05$A9yKrrXYQZyvO5zeZ75Dk.QKxavGPWs/WcDXzk6uwZagMRVbbK7/W"
+    username: "player"
+    userID: "player"
