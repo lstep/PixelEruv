@@ -165,12 +165,25 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("extension subscribe: %w", err)
 	}
 
+	// Admin: map integrity check on demand.
+	if _, err := s.nc.Subscribe("admin.map.integrity", func(m *nats.Msg) {
+		s.runIntegrityCheck()
+	}); err != nil {
+		return fmt.Errorf("subscribe admin.map.integrity: %w", err)
+	}
+
 	return nil
 }
 
 func (s *Simulator) Run(ctx context.Context) error {
 	// Start extension stale checker.
 	go s.extMgr.StartStaleChecker(ctx)
+
+	// Run map integrity check at startup.
+	s.runIntegrityCheck()
+
+	// Periodic integrity check (every 5 minutes).
+	go s.startPeriodicIntegrityCheck(ctx)
 
 	ticker := time.NewTicker(s.tickDur)
 	defer ticker.Stop()
@@ -514,6 +527,26 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		return false
 	}
 	return true
+}
+
+// runIntegrityCheck validates the current map and logs any issues.
+func (s *Simulator) runIntegrityCheck() {
+	results := CheckMapIntegrity(s.mapData)
+	LogIntegrityResults(s.logger, results, s.mapID)
+}
+
+// startPeriodicIntegrityCheck runs the integrity check every 5 minutes.
+func (s *Simulator) startPeriodicIntegrityCheck(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.runIntegrityCheck()
+		}
+	}
 }
 
 // isTileBlocked returns true if the tile is blocked by either the Walls
