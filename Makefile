@@ -28,6 +28,8 @@ build:
 	@mkdir -p $(DIST_BIN)
 	cd backend && go build -o ../$(DIST_BIN)/pusher ./cmd/pusher
 	cd backend && go build -o ../$(DIST_BIN)/worldsim ./cmd/worldsim
+	cd backend && go build -o ../$(DIST_BIN)/ext-demo ./cmd/ext-demo
+	cd backend && go build -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
 
 # Build frontend static assets into dist/web/
 web:
