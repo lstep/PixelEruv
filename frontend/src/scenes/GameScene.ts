@@ -13,8 +13,14 @@ const LERP_TAU_MS = 80;
 const SPEED_TILES_PER_TICK = 0.8;
 const TICK_MS = 50; // 20 Hz server tick
 
-// Avatar colors — cycle through for different players
-const AVATAR_COLORS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0x1abc9c];
+// Character sprite sheets — one per player, cycled. Each sheet is 768x192
+// (24 cols x 6 rows of 32px tiles). Walk cycles are in row 3: down (c0-5),
+// left (c6-11), right (c12-17), up (c18-23). Dir field: 0=down, 1=left,
+// 2=right, 3=up.
+const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4", "char_5"];
+const WALK_ROW = 3;        // row containing walk cycles
+const FRAMES_PER_DIR = 6;  // columns per direction
+const DIR_NAMES = ["down", "left", "right", "up"] as const;
 
 interface InputState { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }
 
@@ -27,8 +33,11 @@ interface InputEvent {
 }
 
 interface Avatar {
-  sprite: Phaser.GameObjects.Arc;
+  sprite: Phaser.GameObjects.Sprite;
   entityId: string;
+  charKey: string;
+  dir: number;
+  moving: boolean;
   // Remote avatars: pixel-space lerp target (see LERP_TAU_MS).
   targetX: number;
   targetY: number;
@@ -104,6 +113,14 @@ export class GameScene extends Phaser.Scene {
       this.load.tilemapTiledJSON("test-map", "/maps/test-map.json");
       this.load.image("tileset", "/maps/tileset.png");
     }
+
+    // Load character sprite sheets (768x192, 32px frames).
+    for (const key of CHAR_SPRITES) {
+      this.load.spritesheet(key, `/sprites/${key}.png`, {
+        frameWidth: TILE_SIZE,
+        frameHeight: TILE_SIZE,
+      });
+    }
   }
 
   create(): void {
@@ -136,6 +153,20 @@ export class GameScene extends Phaser.Scene {
 
     // Camera bounds
     this.cameras.main.setBounds(0, 0, this.mapW * TILE_SIZE, this.mapH * TILE_SIZE);
+
+    // Create walk animations for each character sheet. Row 3 has the walk
+    // cycles: down (c0-5), left (c6-11), right (c12-17), up (c18-23).
+    for (const key of CHAR_SPRITES) {
+      for (let dir = 0; dir < 4; dir++) {
+        const start = (WALK_ROW * 24) + dir * FRAMES_PER_DIR;
+        this.anims.create({
+          key: `${key}_walk_${DIR_NAMES[dir]}`,
+          frames: this.anims.generateFrameNumbers(key, { start, end: start + FRAMES_PER_DIR - 1 }),
+          frameRate: 10,
+          repeat: -1,
+        });
+      }
+    }
 
     // Input — keyboard
     const kb = this.input.keyboard;
@@ -193,6 +224,16 @@ export class GameScene extends Phaser.Scene {
       local.predY = p.y;
       local.sprite.x = local.predX * TILE_SIZE + TILE_SIZE / 2;
       local.sprite.y = local.predY * TILE_SIZE + TILE_SIZE / 2;
+
+      // Update walk animation based on input.
+      const moving = this.inputState.up || this.inputState.down ||
+                     this.inputState.left || this.inputState.right;
+      let dir = local.dir;
+      if (this.inputState.left) dir = 1;
+      else if (this.inputState.right) dir = 2;
+      else if (this.inputState.up) dir = 3;
+      else if (this.inputState.down) dir = 0;
+      this.updateAvatarAnim(local, dir, moving);
     }
 
     // Exponential smoothing toward the latest replicated position for remote
@@ -200,8 +241,39 @@ export class GameScene extends Phaser.Scene {
     const t = 1 - Math.exp(-delta / LERP_TAU_MS);
     for (const avatar of this.avatars.values()) {
       if (avatar.entityId === this.myEntityId) continue;
+      const prevX = avatar.sprite.x, prevY = avatar.sprite.y;
       avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
       avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
+      // Animate based on whether the avatar is actually moving on screen.
+      const dx = avatar.sprite.x - prevX, dy = avatar.sprite.y - prevY;
+      const moving = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
+      if (moving) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+          this.updateAvatarAnim(avatar, dx > 0 ? 2 : 1, true);
+        } else {
+          this.updateAvatarAnim(avatar, dy > 0 ? 0 : 3, true);
+        }
+      } else {
+        this.updateAvatarAnim(avatar, avatar.dir, false);
+      }
+    }
+  }
+
+  // Play or stop the walk animation for an avatar based on direction and
+  // movement state. When stopped, freeze on the first walk frame (idle pose).
+  private updateAvatarAnim(avatar: Avatar, dir: number, moving: boolean): void {
+    if (dir !== avatar.dir || moving !== avatar.moving) {
+      avatar.dir = dir;
+      avatar.moving = moving;
+      const animKey = `${avatar.charKey}_walk_${DIR_NAMES[dir]}`;
+      if (moving) {
+        avatar.sprite.play(animKey, true);
+      } else {
+        avatar.sprite.stop();
+        // Set to first frame of the walk cycle for this direction (idle pose).
+        const frame = (WALK_ROW * 24) + dir * FRAMES_PER_DIR;
+        avatar.sprite.setFrame(frame);
+      }
     }
   }
 
@@ -221,13 +293,16 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      const color = AVATAR_COLORS[this.colorIndex % AVATAR_COLORS.length];
+      const charKey = CHAR_SPRITES[this.colorIndex % CHAR_SPRITES.length];
       this.colorIndex++;
-      const sprite = this.add.circle(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 12, color, 1);
-      sprite.setStrokeStyle(2, 0x000000, 0.5);
+      const sprite = this.add.sprite(x + TILE_SIZE / 2, y + TILE_SIZE / 2, charKey, WALK_ROW * 24);
+      sprite.setOrigin(0.5, 0.8); // feet near bottom of tile
       this.avatars.set(spawn.entityId, {
         sprite,
         entityId: spawn.entityId,
+        charKey,
+        dir: 0,
+        moving: false,
         targetX: x + TILE_SIZE / 2,
         targetY: y + TILE_SIZE / 2,
         predX: x / TILE_SIZE,
