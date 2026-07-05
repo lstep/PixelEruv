@@ -70,25 +70,24 @@ func main() {
 		logger.Info("zone exit", "entity", ev.EntityID, "zone", ev.ZoneID, "map", ev.MapID)
 	})
 
-	// Register with the worldsim.
+	// Register with the worldsim and re-register periodically (NATS Core
+	// pub/sub is fire-and-forget, so the first publish may be lost if the
+	// subscriber isn't ready yet).
 	regData, _ := json.Marshal(registerMsg{
 		ExtensionID:        extID,
 		HeartbeatIntervalS: heartbeatS,
 	})
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
-	if err := nc.Publish(regSubject, regData); err != nil {
-		logger.Error("register publish", "err", err)
-		os.Exit(1)
-	}
+	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
+
+	// Send initial registration + heartbeat.
+	nc.Publish(regSubject, regData)
+	nc.Publish(hbSubject, []byte(extID))
 	logger.Info("registered", "id", extID, "heartbeat_s", heartbeatS)
 
-	// Heartbeat loop.
-	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
+	// Heartbeat + re-register loop.
 	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
 	defer ticker.Stop()
-
-	// Send first heartbeat immediately.
-	nc.Publish(hbSubject, []byte(extID))
 
 	for {
 		select {
@@ -97,6 +96,10 @@ func main() {
 			return
 		case <-ticker.C:
 			nc.Publish(hbSubject, []byte(extID))
+			// Re-register every 3rd heartbeat (idempotent on worldsim side).
+			if time.Now().Unix()%int64(heartbeatS*3) < int64(heartbeatS) {
+				nc.Publish(regSubject, regData)
+			}
 		}
 	}
 }
