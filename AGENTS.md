@@ -80,3 +80,4 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - Use ginkgo for testing
 - Before planning, query memory for stable facts about this repo. At the end, save only durable facts that will help future sessions. Do not save secrets, logs, guesses, or one-off errors.
+- Tiens à jour un DASHBOARD.md : avancement, ce qui reste, décisions prises. Mets-le à jour à la fin de chaque session.
