@@ -62,6 +62,7 @@ type Simulator struct {
 	pocketbaseURL string
 	tickHz       int
 	tickDur      time.Duration
+	tickCount    uint64
 	logger       *slog.Logger
 	tracer       trace.Tracer
 
@@ -436,12 +437,17 @@ func (s *Simulator) tick() {
 		attribute.Int("tick.replicated_clients", replicated),
 		attribute.Int("tick.snapshot_seq", int(s.snapshotSeq)),
 	)
-	s.logger.InfoContext(ctx, "tick",
-		"duration_ms", durMs,
-		"entity_count", len(s.entities),
-		"replicated_clients", replicated,
-		"snapshot_seq", s.snapshotSeq,
-	)
+	// Log tick summary every 5 seconds (every 300th tick at 60Hz) to avoid
+	// flooding the logs. Span attributes are always set for tracing.
+	s.tickCount++
+	if s.tickCount%300 == 0 {
+		s.logger.InfoContext(ctx, "tick",
+			"duration_ms", durMs,
+			"entity_count", len(s.entities),
+			"replicated_clients", replicated,
+			"snapshot_seq", s.snapshotSeq,
+		)
+	}
 }
 
 // replicateToClient builds and publishes a replication batch for one client.
