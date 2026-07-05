@@ -55,13 +55,16 @@ export async function loadMapAssets(): Promise<MapAssets> {
   const tiledJson: object = await jsonResp.json();
   const tiled = tiledJson as TiledMap;
 
-  // Build tileset URLs by matching the image filenames referenced in the JSON
-  // against the files uploaded to the record.
+  // Build tileset URLs. PocketBase renames uploaded files (e.g.
+  // tileset.png → tileset_97mrhuar0u.png), so we match each Tiled tileset to
+  // its PB file by filename stem, not exact name.
+  const pbTilesets: string[] = record.tilesets || [];
   const tilesets: TilesetAsset[] = (tiled.tilesets || []).map(
-    (ts: { name: string; image: string }) => ({
-      name: ts.name,
-      url: `${fileBase}/${ts.image}`,
-    }),
+    (ts: { name: string; image: string }) => {
+      const stem = ts.image.replace(/\.[^.]+$/, "");
+      const pbFile = pbTilesets.find((f) => f.startsWith(stem)) ?? ts.image;
+      return { name: ts.name, url: `${fileBase}/${pbFile}` };
+    },
   );
 
   return { tiledJson, tilesets };
