@@ -181,14 +181,20 @@ Tiled JSON ──┐
    tileset PNGs, and renders all tile layers with Phaser.
 2. **WorldSim** fetches the same JSON, builds:
    - A collision grid from the "Walls" tile layer (fallback)
-   - A zone registry from the "Zones" object layer (pre-rasterized for O(1)
-     point-in-zone lookup)
+   - A zone registry from the "Zones" object layer (continuous-space
+     point-in-zone checks — no tile rasterization)
 3. **Extensions** read the map independently (e.g. ext-walls finds
    `zone_type=wall` zones and registers block gate triggers with the
    worldsim via NATS).
-4. During gameplay, the worldsim evaluates gate triggers on zone tiles
-   during movement, and publishes `zone.enter` / `zone.exit` events when
+4. During gameplay, the worldsim evaluates gate triggers by checking the
+   player's position directly against zone shapes in continuous space
+   (no tile grid), and publishes `zone.enter` / `zone.exit` events when
    entities cross zone boundaries.
+5. **Hot-reload**: the worldsim polls PocketBase every 30 seconds for map
+   changes (detected by filename change). When the map is updated, it
+   reloads the map, rebuilds the zone registry, and publishes a
+   `map.updated` NATS event. Extensions (like ext-walls) subscribe to
+   this event and re-read the map automatically. No restart needed.
 
 ## How-to: common operations
 
@@ -233,6 +239,11 @@ worldsim. Players cannot walk into wall zones.
      ```bash
      docker compose -f docker/docker-compose.yml restart worldsim ext-walls
      ```
+
+> **Note:** Zone collision is checked in continuous space directly against
+> the zone shape (point-in-polygon for polygons, bounding-box for rects,
+> distance for circles). This means walls thinner than a tile work
+> correctly — no tile grid approximation.
 
 9. **Verify** in the worldsim logs:
    ```bash
@@ -342,7 +353,8 @@ checks. They must be circles.
 
 > **Note:** The entity referenced by `follows_entity_id` must exist in the
 > ECS (either a base entity from Tiled or one spawned by an extension).
-> Mobile zones are not pre-rasterized — they're evaluated per-tick.
+> Mobile zones are evaluated per-tick via distance checks against the
+> following entity's position.
 
 **Attributes used:**
 

@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-05 (session 2)
+Last updated: 2026-07-05 (session 3)
 
 ## Overview
 
@@ -45,7 +45,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 
 ### Zones & Extensions
 - [x] Parse Zones object layer from Tiled (rect, circle, polygon)
-- [x] Pre-rasterize static zones for O(1) point-in-zone lookup
+- [x] Continuous-space zone checks (no tile rasterization) for collision and enter/exit
 - [x] Enter/exit detection → NATS `zone.enter` / `zone.exit` events
 - [x] Extension protocol: `extension.<id>.register`, `.heartbeat`, `.register_triggers`
 - [x] Gate triggers: `block` / `allow` (cached locally, evaluated during movement)
@@ -53,6 +53,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] ext-walls: reads map, finds `zone_type=wall`, registers block triggers
 - [x] ext-demo: logs zone enter/exit events
 - [x] Walls migrated to extension system (Walls tile layer = fallback only)
+- [x] Map hot-reload: worldsim detects map changes in PocketBase every 30s, publishes `map.updated` NATS event
+- [x] ext-walls subscribes to `map.updated`, re-reads map and re-registers triggers
 
 ### Integrity & Documentation
 - [x] Map integrity checker: validation at startup, every 5 min, and on demand (`admin.map.integrity` via NATS)
@@ -98,6 +100,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-05 | Periodic extension re-registration | NATS Core is fire-and-forget; first publish may be lost |
 | 2026-07-05 | Walls migrated to extensions (gate triggers) | Kernel architecture with no gameplay logic; Walls tile layer kept as fallback |
 | 2026-07-05 | Integrity checker at startup + periodic + on demand | Detects map corruption/inconsistencies early and during runtime |
+| 2026-07-05 | Continuous-space zone checks (no tile rasterization) | Tile rasterization produces gaps for shapes thinner than a tile; direct point-in-shape tests are exact |
+| 2026-07-05 | Map hot-reload via filename comparison | PocketBase generates new filenames on re-upload; worldsim polls every 30s and publishes `map.updated` to extensions |
 
 ## Test accounts
 
