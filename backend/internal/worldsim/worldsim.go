@@ -932,6 +932,17 @@ func (s *Simulator) runMovementSystem() {
 			if s.isMoveBlocked(newX, e.Position.Y, newX, newY) {
 				newY = e.Position.Y
 			}
+			// Diagonal guard: if both axes moved, check the full diagonal
+			// segment. The X-then-Y decomposition can skip a wall that the
+			// diagonal crosses but neither axis-aligned segment does (the
+			// X move jumps past a thin wall, then the Y move sits outside
+			// its X range). If the diagonal is blocked, revert Y to slide
+			// along the X axis.
+			if newX != e.Position.X && newY != e.Position.Y {
+				if s.isMoveBlocked(e.Position.X, e.Position.Y, newX, newY) {
+					newY = e.Position.Y
+				}
+			}
 		} else {
 			// Fallback: no map data, use hardcoded bounds.
 			newX = clamp(newX, 1, 18)
@@ -970,6 +981,14 @@ func (s *Simulator) runMovementSystem() {
 // stops with feet buried in a wall or stops a full tile short of it.
 const avatarFeetYOffset = 1.0
 
+// playerCollisionRadius is the half-width of the player's collision box in
+// tiles, centered on the feet. The sprite is 1 tile wide, but a smaller
+// radius (0.3) gives a tighter feel and lets the player squeeze through
+// 1-tile gaps. Zone shapes are expanded by this radius (Minkowski sum)
+// before the swept segment test, so the feet center stops `radius` tiles
+// before the wall edge instead of at it.
+const playerCollisionRadius float32 = 0.3
+
 // isMoveBlocked checks whether the movement segment from (oldX, oldY) to
 // (newX, newY) in tile coords is blocked. Zone collision uses swept
 // (segment-vs-shape) tests in continuous space, evaluated at the avatar's
@@ -981,8 +1000,12 @@ func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
 	// Translate to feet space.
 	ofy := oldY + avatarFeetYOffset
 	nfy := newY + avatarFeetYOffset
+	r := playerCollisionRadius
 
 	// Zone gate triggers: swept segment-vs-shape against each blocked zone.
+	// Each shape is expanded by the player collision radius (Minkowski sum)
+	// so the feet center stops `r` tiles before the wall edge, matching the
+	// old 5-point sampling box width.
 	if s.zoneReg != nil {
 		for _, z := range s.zoneReg.zones {
 			if !s.extMgr.IsZoneBlocked(z.ID) {
@@ -990,20 +1013,27 @@ func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
 			}
 			switch z.Shape {
 			case ShapeRect:
-				if segmentIntersectsRect(oldX, ofy, newX, nfy, z.X, z.Y, z.W, z.H) {
+				if segmentIntersectsRect(oldX, ofy, newX, nfy,
+					z.X-r, z.Y-r, z.W+2*r, z.H+2*r) {
 					return true
 				}
 			case ShapeCircle:
 				cx, cy := z.X+z.Radius, z.Y+z.Radius
-				if segmentIntersectsCircle(oldX, ofy, newX, nfy, cx, cy, z.Radius) {
+				if segmentIntersectsCircle(oldX, ofy, newX, nfy, cx, cy, z.Radius+r) {
 					return true
 				}
 			case ShapePolygon:
+				// Expand the polygon's bounding box by the radius. This is an
+				// over-approximation (the expanded box is larger than the
+				// true Minkowski sum of polygon + circle), so it may stop the
+				// player slightly early near concave corners — safe but not
+				// precise. A true polygon+circle Minkowski sum would require
+				// offsetting each edge along its outward normal.
 				abs := make([][2]float32, len(z.Polygon))
 				for i, v := range z.Polygon {
 					abs[i] = [2]float32{v[0] + z.X, v[1] + z.Y}
 				}
-				if segmentIntersectsPolygon(oldX, ofy, newX, nfy, abs) {
+				if segmentIntersectsPolygonExpanded(oldX, ofy, newX, nfy, abs, r) {
 					return true
 				}
 			}

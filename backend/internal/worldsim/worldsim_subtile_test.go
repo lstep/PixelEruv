@@ -29,22 +29,23 @@ func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 	}
 
 	// isMoveBlocked takes (oldX, oldY, newX, newY) in Position coords;
-	// feet Y = Position.Y + 1.0. Wall covers feet-Y [5.0, 5.2].
+	// feet Y = Position.Y + 1.0. Wall covers feet-Y [5.0, 5.2], expanded by
+	// playerCollisionRadius (0.3) → effective [4.7, 5.5].
 	cases := []struct {
 		name      string
 		oldY, newY float32
 		wantBlock bool
 	}{
-		{"segment below wall (feet 4.5->4.7)", 3.5, 3.7, false},
-		{"segment ends at wall top (feet 4.7->5.0)", 3.7, 4.0, true},
+		{"segment below expanded wall (feet 4.3->4.6)", 3.3, 3.6, false},
+		{"segment ends at expanded wall top (feet 4.6->4.7)", 3.6, 3.7, true},
 		{"segment crosses wall (feet 4.8->5.5)", 3.8, 4.5, true},
 		{"segment starts inside wall (feet 5.1->5.5)", 4.1, 4.5, true},
-		{"segment above wall (feet 5.5->5.7)", 4.5, 4.7, false},
+		{"segment above expanded wall (feet 5.6->5.8)", 4.6, 4.8, false},
 	}
 	for _, c := range cases {
 		got := s.isMoveBlocked(5.0, c.oldY, 5.0, c.newY)
 		if got != c.wantBlock {
-			t.Errorf("%s: isMoveBlocked(5.0, %v, 5.0, %v) = %v, want %v (feet %v->%v, wall [5.0,5.2])",
+			t.Errorf("%s: isMoveBlocked(5.0, %v, 5.0, %v) = %v, want %v (feet %v->%v, wall [5.0,5.2] expanded to [4.7,5.5])",
 				c.name, c.oldY, c.newY, got, c.wantBlock, c.oldY+1.0, c.newY+1.0)
 		}
 	}

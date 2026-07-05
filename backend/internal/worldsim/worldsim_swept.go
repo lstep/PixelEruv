@@ -139,3 +139,88 @@ func segmentsIntersect(ax, ay, bx, by, cx, cy, dx, dy float32) bool {
 func cross(cx, cy, dx, dy, px, py float32) float32 {
 	return (dx-cx)*(py-cy) - (dy-cy)*(px-cx)
 }
+
+// segmentIntersectsPolygonExpanded tests the segment against a polygon
+// expanded by radius r (Minkowski sum of polygon + disc of radius r). This
+// is done by testing the segment against the original polygon (catches
+// crossings and containment) plus testing the segment against each edge
+// expanded as a capsule (segment + disc), approximated by testing the
+// segment against a circle of radius r at each edge endpoint, plus the
+// edge itself. For a true capsule test we'd need segment-to-segment
+// distance, but the endpoint-circle + edge-intersection approximation is
+// safe (over-approximates slightly near vertices).
+func segmentIntersectsPolygonExpanded(x0, y0, x1, y1 float32, poly [][2]float32, r float32) bool {
+	// Original polygon test: crossings + containment.
+	if segmentIntersectsPolygon(x0, y0, x1, y1, poly) {
+		return true
+	}
+	// Expanded test: for each edge, check if the movement segment comes
+	// within r of the edge. Approximate by checking the segment against a
+	// circle of radius r at each polygon vertex (covers the rounded caps of
+	// the Minkowski sum) and against the edge itself (already done above).
+	// The edge-interior gap (parallel segments within r) is not covered by
+	// vertex circles alone, so also test the segment against the edge's
+	// nearest point via a segment-segment distance check.
+	n := len(poly)
+	for i := 0; i < n; i++ {
+		ax, ay := poly[i][0], poly[i][1]
+		// Vertex cap: circle of radius r at each vertex.
+		if segmentIntersectsCircle(x0, y0, x1, y1, ax, ay, r) {
+			return true
+		}
+		// Edge interior: nearest point on movement segment to this edge.
+		bx, by := poly[(i+1)%n][0], poly[(i+1)%n][1]
+		if segmentSegmentDistLE(x0, y0, x1, y1, ax, ay, bx, by, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// segmentSegmentDistLE reports whether the shortest distance between segment
+// P0-P1 and segment Q0-Q1 is <= r. Used for the polygon expansion (testing
+// if the movement segment comes within the player radius of a polygon edge).
+func segmentSegmentDistLE(p0x, p0y, p1x, p1y, q0x, q0y, q1x, q1y, r float32) bool {
+	// If the segments intersect, distance is 0.
+	if segmentsIntersect(p0x, p0y, p1x, p1y, q0x, q0y, q1x, q1y) {
+		return true
+	}
+	// Otherwise, the minimum distance is the min of the distances from each
+	// endpoint to the other segment. (For non-intersecting segments in 2D,
+	// the closest pair involves at least one endpoint.)
+	r2 := r * r
+	if pointSegmentDistSq(p0x, p0y, q0x, q0y, q1x, q1y) <= r2 {
+		return true
+	}
+	if pointSegmentDistSq(p1x, p1y, q0x, q0y, q1x, q1y) <= r2 {
+		return true
+	}
+	if pointSegmentDistSq(q0x, q0y, p0x, p0y, p1x, p1y) <= r2 {
+		return true
+	}
+	if pointSegmentDistSq(q1x, q1y, p0x, p0y, p1x, p1y) <= r2 {
+		return true
+	}
+	return false
+}
+
+// pointSegmentDistSq returns the squared distance from point P to segment A-B.
+func pointSegmentDistSq(px, py, ax, ay, bx, by float32) float32 {
+	dx := bx - ax
+	dy := by - ay
+	lensq := dx*dx + dy*dy
+	t := float32(0)
+	if lensq > 0 {
+		t = ((px-ax)*dx + (py-ay)*dy) / lensq
+	}
+	if t < 0 {
+		t = 0
+	} else if t > 1 {
+		t = 1
+	}
+	cx := ax + t*dx
+	cy := ay + t*dy
+	ddx := px - cx
+	ddy := py - cy
+	return ddx*ddx + ddy*ddy
+}

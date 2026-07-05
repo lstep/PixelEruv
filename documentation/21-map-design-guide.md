@@ -407,10 +407,11 @@ worldsim. Players cannot walk into wall zones.
 > objects" above). The movement segment from the player's old position to
 > the new position is tested against each zone shape (slab method for
 > rects, point-segment distance for circles, edge intersection for
-> polygons). This means a wall zone blocks the player where the feet
-> enter it, not where the sprite origin sits — no tile grid approximation
-> — and walls of any thickness work correctly, including walls thinner
-> than a tile or thinner than the per-tick movement distance. (The Walls
+> polygons), with shapes expanded by a 0.3-tile player collision radius
+> (Minkowski sum) so the sprite doesn't visually overlap the wall before
+> stopping. A diagonal guard prevents corner-skip through thin walls.
+> Walls of any thickness work correctly, including walls thinner than a
+> tile or thinner than the per-tick movement distance. (The Walls
 > tile-layer fallback is tile-grid-based and cannot represent sub-tile
 > walls.)
 
