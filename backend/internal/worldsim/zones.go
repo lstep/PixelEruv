@@ -10,7 +10,10 @@ const (
 )
 
 // Zone is a region on the map with spatial and metadata properties.
-// All coordinates are in tile units (continuous, not grid-aligned).
+// All coordinates are in tile units (continuous, not grid-aligned) —
+// e.g. X=5.5 means 5.5 tiles, not tile index 5. Positions are float and
+// movement is sub-tile (0.4 tiles/tick); "tile units" is the scale, not
+// the granularity.
 type Zone struct {
 	ID         string
 	Shape      ZoneShape
