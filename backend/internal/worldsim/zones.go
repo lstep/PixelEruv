@@ -84,10 +84,32 @@ func NewZoneRegistry(zones []*Zone, mapW, mapH int) *ZoneRegistry {
 			continue // mobile zones are evaluated per-tick, not rasterized
 		}
 		// Rasterize: check every tile in the zone's bounding box.
-		minX := int(math.Floor(float64(z.X)))
-		minY := int(math.Floor(float64(z.Y)))
-		maxX := int(math.Ceil(float64(z.X + z.W)))
-		maxY := int(math.Ceil(float64(z.Y + z.H)))
+		// For polygons, Tiled stores width=0/height=0, so compute the
+		// bounding box from the vertices instead.
+		bxMin, byMin, bxMax, byMax := z.X, z.Y, z.X+z.W, z.Y+z.H
+		if z.Shape == ShapePolygon && len(z.Polygon) > 0 {
+			bxMin, byMin = z.Polygon[0][0]+z.X, z.Polygon[0][1]+z.Y
+			bxMax, byMax = bxMin, byMin
+			for _, v := range z.Polygon {
+				ax, ay := v[0]+z.X, v[1]+z.Y
+				if ax < bxMin {
+					bxMin = ax
+				}
+				if ay < byMin {
+					byMin = ay
+				}
+				if ax > bxMax {
+					bxMax = ax
+				}
+				if ay > byMax {
+					byMax = ay
+				}
+			}
+		}
+		minX := int(math.Floor(float64(bxMin)))
+		minY := int(math.Floor(float64(byMin)))
+		maxX := int(math.Ceil(float64(bxMax)))
+		maxY := int(math.Ceil(float64(byMax)))
 		for ty := minY; ty < maxY && ty < mapH; ty++ {
 			for tx := minX; tx < maxX && tx < mapW; tx++ {
 				if tx < 0 || ty < 0 {
