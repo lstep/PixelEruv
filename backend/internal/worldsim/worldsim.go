@@ -282,11 +282,13 @@ func (s *Simulator) tick() {
 			newY = clamp(newY, 0, float32(s.mapData.Height-1))
 
 			// Collision check: try X and Y independently so the avatar
-			// slides along walls instead of sticking.
-			if s.mapData.IsBlocked(int(newX), int(e.Position.Y)) {
+			// slides along walls instead of sticking. Use +0.5 because the
+			// sprite center is at position*TILE_SIZE + TILE_SIZE/2, so the
+			// tile the center is in is floor(position + 0.5).
+			if s.mapData.IsBlocked(int(newX+0.5), int(e.Position.Y+0.5)) {
 				newX = e.Position.X
 			}
-			if s.mapData.IsBlocked(int(newX), int(newY)) {
+			if s.mapData.IsBlocked(int(newX+0.5), int(newY+0.5)) {
 				newY = e.Position.Y
 			}
 		} else {

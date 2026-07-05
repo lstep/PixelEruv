@@ -82,9 +82,11 @@ export class GameScene extends Phaser.Scene {
     let newX = Math.max(0, Math.min(this.mapW - 1, x + dx * SPEED_TILES_PER_TICK * ticks));
     let newY = Math.max(0, Math.min(this.mapH - 1, y + dy * SPEED_TILES_PER_TICK * ticks));
 
-    // Slide along walls: try X and Y independently.
-    if (this.isBlocked(Math.floor(newX), Math.floor(y))) newX = x;
-    if (this.isBlocked(Math.floor(newX), Math.floor(newY))) newY = y;
+    // Slide along walls: try X and Y independently. Use +0.5 because the
+    // sprite center is at position*TILE_SIZE + TILE_SIZE/2, so the tile the
+    // center is in is floor(position + 0.5).
+    if (this.isBlocked(Math.floor(newX + 0.5), Math.floor(y + 0.5))) newX = x;
+    if (this.isBlocked(Math.floor(newX + 0.5), Math.floor(newY + 0.5))) newY = y;
 
     return { x: newX, y: newY };
   }
