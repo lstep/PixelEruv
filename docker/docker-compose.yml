@@ -11,7 +11,7 @@ services:
 
   pocketbase:
     build:
-      context: ../..
+      context: ..
       dockerfile: docker/pocketbase.Dockerfile
     ports:
       - "8090:8090"
@@ -21,7 +21,7 @@ services:
 
   pusher:
     build:
-      context: ../..
+      context: ..
       dockerfile: docker/backend.Dockerfile
       target: pusher
     depends_on:
@@ -41,7 +41,7 @@ services:
 
   worldsim:
     build:
-      context: ../..
+      context: ..
       dockerfile: docker/backend.Dockerfile
       target: worldsim
     depends_on:
@@ -56,7 +56,7 @@ services:
 
   frontend:
     build:
-      context: ../..
+      context: ..
       dockerfile: docker/frontend.Dockerfile
     depends_on:
       - pusher
