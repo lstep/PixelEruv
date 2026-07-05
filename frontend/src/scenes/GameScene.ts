@@ -275,19 +275,15 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // Play or stop the walk animation for an avatar based on direction and
-  // movement state. When stopped, freeze on the first walk frame (idle pose).
+  // Play walk or idle animation for an avatar based on direction and
+  // movement state.
   private updateAvatarAnim(avatar: Avatar, dir: number, moving: boolean): void {
-    if (dir !== avatar.dir || moving !== avatar.moving) {
-      avatar.dir = dir;
-      avatar.moving = moving;
-      const animKey = `${avatar.charKey}_walk_${DIR_NAMES[dir]}`;
-      if (moving) {
-        avatar.sprite.play(animKey, true);
-      } else {
-        avatar.sprite.play(`${avatar.charKey}_idle_${DIR_NAMES[dir]}`, true);
-      }
-    }
+    avatar.dir = dir;
+    avatar.moving = moving;
+    const animKey = moving
+      ? `${avatar.charKey}_walk_${DIR_NAMES[dir]}`
+      : `${avatar.charKey}_idle_${DIR_NAMES[dir]}`;
+    avatar.sprite.play(animKey, true);
   }
 
   private handleReplication(batch: ReplicationBatchView): void {
@@ -321,6 +317,8 @@ export class GameScene extends Phaser.Scene {
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
       });
+      // Start idle animation immediately.
+      sprite.play(`${charKey}_idle_down`, true);
       console.log(`spawned ${spawn.entityId} at (${x}, ${y})`);
     }
 
