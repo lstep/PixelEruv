@@ -30,7 +30,7 @@ async function bootstrap(): Promise<void> {
 
   // Require login before starting the game.
   if (!isLoggedIn()) {
-    redirectToLogin();
+    await redirectToLogin();
     return;
   }
 

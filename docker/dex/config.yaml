@@ -20,7 +20,7 @@ staticClients:
       - "http://localhost:5173/auth/callback"
       - "http://localhost:8080/auth/callback"
     name: "PixelEruv"
-    secret: pixeleruv-secret
+    public: true
 
 # Local users (bcrypt hashes).
 # admin / password123
