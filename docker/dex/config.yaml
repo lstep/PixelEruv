@@ -22,14 +22,14 @@ staticClients:
     name: "PixelEruv"
     public: true
 
-# Local users (bcrypt hashes).
+# Local users (bcrypt hashes, cost 10).
 # admin / password123
 staticPasswords:
   - email: "admin@pixeleruv.local"
-    hash: "$2y$05$A9yKrrXYQZyvO5zeZ75Dk.QKxavGPWs/WcDXzk6uwZagMRVbbK7/W"
+    hash: "$2y$10$pHMQMM3ZIvITxyWoRfIIPu681k03OI9GIQQBfYWTbTmjQzaQyPzbS"
     username: "admin"
     userID: "admin"
   - email: "player@pixeleruv.local"
-    hash: "$2y$05$A9yKrrXYQZyvO5zeZ75Dk.QKxavGPWs/WcDXzk6uwZagMRVbbK7/W"
+    hash: "$2y$10$pHMQMM3ZIvITxyWoRfIIPu681k03OI9GIQQBfYWTbTmjQzaQyPzbS"
     username: "player"
     userID: "player"
