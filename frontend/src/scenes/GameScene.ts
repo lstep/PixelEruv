@@ -170,7 +170,7 @@ export class GameScene extends Phaser.Scene {
         this.anims.create({
           key: `${key}_walk_${DIR_NAMES[dir]}`,
           frames: this.anims.generateFrameNumbers(key, { start, end: start + FRAMES_PER_DIR - 1 }),
-          frameRate: 10,
+          frameRate: 6,
           repeat: -1,
         });
       }
