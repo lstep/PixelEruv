@@ -13,21 +13,28 @@ const LERP_TAU_MS = 80;
 const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
 
-// Character sprite sheets — one per player, cycled. Each sheet is 768x192
-// (24 cols x 6 rows of 32px tiles). Walk cycles are in row 3: down (c0-5),
-// left (c6-11), right (c12-17), up (c18-23). Dir field: 0=down, 1=left,
-// 2=right, 3=up.
-const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4", "char_5"];
-const WALK_ROW = 3;        // row containing walk cycles
+// Character sprite sheets — one per player, cycled. Each sheet is 768x192.
+// The limezu characters are ~48px tall (taller than a 32px tile): the head
+// occupies the bottom of one 32px row and the body fills the next row. We
+// therefore slice the sheet into 32x64 frames (24 cols x 3 rows), so each
+// frame contains a complete head+body. Walk cycles are in frame-row 1:
+// right (c0-5), up (c6-11), left (c12-17), down (c18-23).
+// Dir field: 0=down, 1=left, 2=right, 3=up.
+const FRAME_W = 32;
+const FRAME_H = 64;
+const COLS_PER_ROW = 24;
+// char_5 is excluded: its sheet is malformed (walk cycle only has right/up
+// directions; down/left frames are empty), so it renders as an empty sprite.
+const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4"];
+const WALK_ROW = 1;        // frame-row containing walk cycles (64px frames)
 const FRAMES_PER_DIR = 6;  // columns per direction
 const DIR_NAMES = ["down", "left", "right", "up"] as const;
-// Frame start indices in row 3 for each direction. The limezu sheet column
-// order is: right (c0-5), up (c6-11), left (c12-17), down (c18-23).
+// Frame start indices for each direction (index = frameRow * COLS_PER_ROW + col).
 const DIR_FRAME_START = [
-  (WALK_ROW * 24) + 18, // down
-  (WALK_ROW * 24) + 12, // left
-  (WALK_ROW * 24) + 0,  // right
-  (WALK_ROW * 24) + 6,  // up
+  (WALK_ROW * COLS_PER_ROW) + 18, // down
+  (WALK_ROW * COLS_PER_ROW) + 12, // left
+  (WALK_ROW * COLS_PER_ROW) + 0,  // right
+  (WALK_ROW * COLS_PER_ROW) + 6,  // up
 ];
 
 interface InputState { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }
@@ -122,11 +129,12 @@ export class GameScene extends Phaser.Scene {
       this.load.image("tileset", "/maps/tileset.png");
     }
 
-    // Load character sprite sheets (768x192, 32px frames).
+    // Load character sprite sheets (768x192). Frames are 32x64 so each frame
+    // captures the full ~48px-tall character (see FRAME_H comment above).
     for (const key of CHAR_SPRITES) {
       this.load.spritesheet(key, `/sprites/${key}.png`, {
-        frameWidth: TILE_SIZE,
-        frameHeight: TILE_SIZE,
+        frameWidth: FRAME_W,
+        frameHeight: FRAME_H,
       });
     }
   }
@@ -306,7 +314,9 @@ export class GameScene extends Phaser.Scene {
       const charKey = CHAR_SPRITES[this.colorIndex % CHAR_SPRITES.length];
       this.colorIndex++;
       const sprite = this.add.sprite(x + TILE_SIZE / 2, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
-      sprite.setOrigin(0.5, 0.8); // feet near bottom of tile
+      // 64px-tall frame: origin at 0.75 puts the feet at the tile bottom and
+      // lets the taller-than-tile head extend up into the tile above.
+      sprite.setOrigin(0.5, 0.75);
       sprite.setDepth(2); // above ground (0) and walls (1)
       this.avatars.set(spawn.entityId, {
         sprite,
