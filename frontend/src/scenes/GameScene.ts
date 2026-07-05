@@ -21,6 +21,14 @@ const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4", "char_5"
 const WALK_ROW = 3;        // row containing walk cycles
 const FRAMES_PER_DIR = 6;  // columns per direction
 const DIR_NAMES = ["down", "left", "right", "up"] as const;
+// Frame start indices in row 3 for each direction. The limezu sheet column
+// order is: right (c0-5), up (c6-11), left (c12-17), down (c18-23).
+const DIR_FRAME_START = [
+  (WALK_ROW * 24) + 18, // down
+  (WALK_ROW * 24) + 12, // left
+  (WALK_ROW * 24) + 0,  // right
+  (WALK_ROW * 24) + 6,  // up
+];
 
 interface InputState { up: boolean; down: boolean; left: boolean; right: boolean; run: boolean }
 
@@ -158,7 +166,7 @@ export class GameScene extends Phaser.Scene {
     // cycles: down (c0-5), left (c6-11), right (c12-17), up (c18-23).
     for (const key of CHAR_SPRITES) {
       for (let dir = 0; dir < 4; dir++) {
-        const start = (WALK_ROW * 24) + dir * FRAMES_PER_DIR;
+        const start = DIR_FRAME_START[dir];
         this.anims.create({
           key: `${key}_walk_${DIR_NAMES[dir]}`,
           frames: this.anims.generateFrameNumbers(key, { start, end: start + FRAMES_PER_DIR - 1 }),
@@ -271,7 +279,7 @@ export class GameScene extends Phaser.Scene {
       } else {
         avatar.sprite.stop();
         // Set to first frame of the walk cycle for this direction (idle pose).
-        const frame = (WALK_ROW * 24) + dir * FRAMES_PER_DIR;
+        const frame = DIR_FRAME_START[dir];
         avatar.sprite.setFrame(frame);
       }
     }
@@ -295,7 +303,7 @@ export class GameScene extends Phaser.Scene {
 
       const charKey = CHAR_SPRITES[this.colorIndex % CHAR_SPRITES.length];
       this.colorIndex++;
-      const sprite = this.add.sprite(x + TILE_SIZE / 2, y + TILE_SIZE / 2, charKey, WALK_ROW * 24);
+      const sprite = this.add.sprite(x + TILE_SIZE / 2, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
       sprite.setOrigin(0.5, 0.8); // feet near bottom of tile
       this.avatars.set(spawn.entityId, {
         sprite,
