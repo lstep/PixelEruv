@@ -51,6 +51,7 @@ type NetworkSession struct {
 type Simulator struct {
 	nc      *nats.Conn
 	mapID   string
+	mapData *MapData
 	tickHz  int
 	tickDur time.Duration
 	logger  *slog.Logger
@@ -63,7 +64,7 @@ type Simulator struct {
 	snapshotSeq uint32
 }
 
-func New(natsURL, mapID string, tickHz int, logger *slog.Logger) (*Simulator, error) {
+func New(natsURL, mapID, pocketbaseURL string, tickHz int, logger *slog.Logger) (*Simulator, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("worldsim"),
 		nats.ReconnectWait(2*time.Second),
@@ -73,9 +74,17 @@ func New(natsURL, mapID string, tickHz int, logger *slog.Logger) (*Simulator, er
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
 
+	// Load map data (dimensions + collision grid) from PocketBase.
+	mapData, err := LoadMap(pocketbaseURL, mapID)
+	if err != nil {
+		logger.Warn("failed to load map from pocketbase, using fallback bounds",
+			"err", err, "pocketbase", pocketbaseURL, "map", mapID)
+	}
+
 	s := &Simulator{
 		nc:       nc,
 		mapID:    mapID,
+		mapData:  mapData,
 		tickHz:   tickHz,
 		tickDur:  time.Second / time.Duration(tickHz),
 		logger:   logger,
@@ -169,9 +178,16 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID string) {
 	}
 
 	entityID := "e_" + clientID[2:] // derive from client_id
+
+	// Spawn at map center (or nearest non-wall tile).
+	spawnX, spawnY := float32(10), float32(10)
+	if s.mapData != nil {
+		spawnX, spawnY = s.mapData.FindSpawn()
+	}
+
 	e := &Entity{
 		ID:       entityID,
-		Position: &pb.Position{X: 10, Y: 10, MapId: s.mapID, Dir: 0},
+		Position: &pb.Position{X: spawnX, Y: spawnY, MapId: s.mapID, Dir: 0},
 		NetworkSession: &NetworkSession{
 			ClientID: clientID,
 			Input:    &pb.InputState{},
@@ -260,9 +276,24 @@ func (s *Simulator) tick() {
 		newX := e.Position.X + dx*speed
 		newY := e.Position.Y + dy*speed
 
-		// Simple bounds check (map is 20x20, walls at border)
-		newX = clamp(newX, 1, 18)
-		newY = clamp(newY, 1, 18)
+		if s.mapData != nil {
+			// Clamp to map bounds.
+			newX = clamp(newX, 0, float32(s.mapData.Width-1))
+			newY = clamp(newY, 0, float32(s.mapData.Height-1))
+
+			// Collision check: try X and Y independently so the avatar
+			// slides along walls instead of sticking.
+			if s.mapData.IsBlocked(int(newX), int(e.Position.Y)) {
+				newX = e.Position.X
+			}
+			if s.mapData.IsBlocked(int(newX), int(newY)) {
+				newY = e.Position.Y
+			}
+		} else {
+			// Fallback: no map data, use hardcoded bounds.
+			newX = clamp(newX, 1, 18)
+			newY = clamp(newY, 1, 18)
+		}
 
 		if newX != e.Position.X || newY != e.Position.Y {
 			e.Position.X = newX

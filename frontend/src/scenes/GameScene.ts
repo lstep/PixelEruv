@@ -3,8 +3,6 @@ import { WsClient, decodePosition, ReplicationBatchView } from "../net/WsClient"
 import type { MapAssets } from "../mapLoader";
 
 const TILE_SIZE = 32;
-const MAP_W = 20;
-const MAP_H = 20;
 
 // Time constant for remote-avatar exponential smoothing (ms). At a 20 Hz
 // server tick (50 ms), 80 ms lets the sprite catch up to a new target within
@@ -14,8 +12,6 @@ const LERP_TAU_MS = 80;
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.8;
 const TICK_MS = 50; // 20 Hz server tick
-const MAP_MIN = 1;
-const MAP_MAX = 18;
 
 // Avatar colors — cycle through for different players
 const AVATAR_COLORS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0x1abc9c];
@@ -42,22 +38,8 @@ interface Avatar {
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
-// server's movement math (worldsim.go: speed, diagonal normalize, clamp).
-function applyMovement(x: number, y: number, state: InputState, ticks: number): { x: number; y: number } {
-  let dx = 0, dy = 0;
-  if (state.up) dy -= 1;
-  if (state.down) dy += 1;
-  if (state.left) dx -= 1;
-  if (state.right) dx += 1;
-  if (dx !== 0 && dy !== 0) {
-    dx *= 0.7071;
-    dy *= 0.7071;
-  }
-  if (dx === 0 && dy === 0) return { x, y };
-  x = Math.max(MAP_MIN, Math.min(MAP_MAX, x + dx * SPEED_TILES_PER_TICK * ticks));
-  y = Math.max(MAP_MIN, Math.min(MAP_MAX, y + dy * SPEED_TILES_PER_TICK * ticks));
-  return { x, y };
-}
+// server's movement math (worldsim.go: speed, diagonal normalize, collision).
+// Uses the collision grid for wall blocking and map bounds.
 
 export class GameScene extends Phaser.Scene {
   private ws: WsClient | null = null;
@@ -69,9 +51,42 @@ export class GameScene extends Phaser.Scene {
   // Un-acked inputs for the local avatar, newest last. Replayed against the
   // server's authoritative position on each reconciliation.
   private pendingInputs: InputEvent[] = [];
+  // Collision grid from the Tiled "Walls" layer. [y][x] = true means blocked.
+  private collisionGrid: boolean[][] = [];
+  private mapW = 20;
+  private mapH = 20;
 
   constructor() {
     super("GameScene");
+  }
+
+  private isBlocked(tx: number, ty: number): boolean {
+    if (tx < 0 || tx >= this.mapW || ty < 0 || ty >= this.mapH) return true;
+    return this.collisionGrid[ty]?.[tx] ?? false;
+  }
+
+  // Apply `ticks` worth of movement from (x, y) under `state`, matching the
+  // server's movement math (worldsim.go: speed, diagonal normalize, collision).
+  private applyMovement(x: number, y: number, state: InputState, ticks: number): { x: number; y: number } {
+    let dx = 0, dy = 0;
+    if (state.up) dy -= 1;
+    if (state.down) dy += 1;
+    if (state.left) dx -= 1;
+    if (state.right) dx += 1;
+    if (dx !== 0 && dy !== 0) {
+      dx *= 0.7071;
+      dy *= 0.7071;
+    }
+    if (dx === 0 && dy === 0) return { x, y };
+
+    let newX = Math.max(0, Math.min(this.mapW - 1, x + dx * SPEED_TILES_PER_TICK * ticks));
+    let newY = Math.max(0, Math.min(this.mapH - 1, y + dy * SPEED_TILES_PER_TICK * ticks));
+
+    // Slide along walls: try X and Y independently.
+    if (this.isBlocked(Math.floor(newX), Math.floor(y))) newX = x;
+    if (this.isBlocked(Math.floor(newX), Math.floor(newY))) newY = y;
+
+    return { x: newX, y: newY };
   }
 
   preload(): void {
@@ -100,10 +115,25 @@ export class GameScene extends Phaser.Scene {
       const walls = map.createLayer(1, tileset, 0, 0);
       if (ground) ground.setDepth(0);
       if (walls) walls.setDepth(1);
+
+      // Build collision grid from the walls layer.
+      this.mapW = map.width;
+      this.mapH = map.height;
+      if (walls) {
+        this.collisionGrid = [];
+        for (let y = 0; y < map.height; y++) {
+          const row: boolean[] = [];
+          for (let x = 0; x < map.width; x++) {
+            const tile = walls.getTileAt(x, y);
+            row.push(tile !== null && tile.index !== -1);
+          }
+          this.collisionGrid.push(row);
+        }
+      }
     }
 
     // Camera bounds
-    this.cameras.main.setBounds(0, 0, MAP_W * TILE_SIZE, MAP_H * TILE_SIZE);
+    this.cameras.main.setBounds(0, 0, this.mapW * TILE_SIZE, this.mapH * TILE_SIZE);
 
     // Input — keyboard
     const kb = this.input.keyboard;
@@ -156,7 +186,7 @@ export class GameScene extends Phaser.Scene {
     const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
     if (local) {
       const ticks = delta / TICK_MS;
-      const p = applyMovement(local.predX, local.predY, this.inputState, ticks);
+      const p = this.applyMovement(local.predX, local.predY, this.inputState, ticks);
       local.predX = p.x;
       local.predY = p.y;
       local.sprite.x = local.predX * TILE_SIZE + TILE_SIZE / 2;
@@ -226,7 +256,7 @@ export class GameScene extends Phaser.Scene {
             const ev = this.pendingInputs[i];
             const next = this.pendingInputs[i + 1];
             const durMs = next ? next.time - ev.time : now - ev.time;
-            const r = applyMovement(x, y, ev.state, Math.max(0, durMs / TICK_MS));
+            const r = this.applyMovement(x, y, ev.state, Math.max(0, durMs / TICK_MS));
             x = r.x; y = r.y;
           }
           avatar.predX = x;

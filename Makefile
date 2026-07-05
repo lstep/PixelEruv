@@ -55,6 +55,7 @@ debug: debug-nats debug-pocketbase
 	@echo "==> starting worldsim + pusher with OTel enabled (Ctrl-C to stop)"
 	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
 		NATS_URL=nats://127.0.0.1:$(NATS_PORT) TICK_HZ=10 \
+		POCKETBASE_URL=http://127.0.0.1:8090 \
 		./$(DIST_BIN)/worldsim &
 	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
 		NATS_URL=nats://127.0.0.1:$(NATS_PORT) WS_ADDR=:8081 \

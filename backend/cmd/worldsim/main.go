@@ -16,6 +16,7 @@ func main() {
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	tickHz := envInt("TICK_HZ", 20)
 	mapID := envOr("MAP_ID", "test-map")
+	pocketbaseURL := envOr("POCKETBASE_URL", "http://localhost:8090")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -30,7 +31,7 @@ func main() {
 		shutdown(sctx)
 	}()
 
-	sim, err := worldsim.New(natsURL, mapID, tickHz, logger)
+	sim, err := worldsim.New(natsURL, mapID, pocketbaseURL, tickHz, logger)
 	if err != nil {
 		log.Fatalf("worldsim init: %v", err)
 	}

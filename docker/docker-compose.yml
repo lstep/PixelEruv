@@ -50,6 +50,7 @@ services:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"
       MAP_ID: "test-map"
+      POCKETBASE_URL: "http://pocketbase:8090"
       OTEL_ENABLED: "false"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
     restart: unless-stopped
