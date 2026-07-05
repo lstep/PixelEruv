@@ -225,10 +225,12 @@ worldsim. Players cannot walk into wall zones.
 
 7. **Upload to PocketBase** (see [Uploading](#uploading-to-pocketbase)).
 
-8. **Restart ext-walls** so it re-reads the map:
+8. **Restart worldsim and ext-walls** so they re-read the map:
    ```bash
-   docker compose -f docker/docker-compose.yml restart ext-walls
+   docker compose -f docker/docker-compose.yml restart worldsim ext-walls
    ```
+   > Both services load the map at startup and don't re-read it when
+   > PocketBase is updated. You must restart them after uploading a new map.
 
 9. **Verify** in the worldsim logs:
    ```bash
