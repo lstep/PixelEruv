@@ -14,7 +14,8 @@ import (
 func main() {
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	wsAddr := envOr("WS_ADDR", ":8081")
-	dexURL := envOr("DEX_URL", "")
+	dexIssuer := envOr("DEX_ISSUER", envOr("DEX_URL", ""))
+	dexJwksURL := envOr("DEX_JWKS_URL", "")
 	dexClientID := envOr("DEX_CLIENT_ID", "pixeleruv")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -30,7 +31,7 @@ func main() {
 		shutdown(sctx)
 	}()
 
-	srv, err := pusher.New(wsAddr, natsURL, dexURL, dexClientID, logger)
+	srv, err := pusher.New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID, logger)
 	if err != nil {
 		log.Fatalf("pusher init: %v", err)
 	}

@@ -59,7 +59,7 @@ debug: debug-nats debug-pocketbase
 		./$(DIST_BIN)/worldsim &
 	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
 		NATS_URL=nats://127.0.0.1:$(NATS_PORT) WS_ADDR=:8081 \
-		DEX_URL=http://127.0.0.1:5556/dex DEX_CLIENT_ID=pixeleruv \
+		DEX_ISSUER=http://127.0.0.1:5556/dex DEX_CLIENT_ID=pixeleruv \
 		./$(DIST_BIN)/pusher
 	@$(MAKE) debug-stop
 

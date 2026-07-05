@@ -18,9 +18,9 @@ import (
 
 // AuthValidator validates OIDC id_tokens against Dex's JWKS.
 type AuthValidator struct {
-	issuer   string
+	issuer   string // expected iss claim (matches Dex config)
+	jwksURL  string // URL to fetch JWKS from (may differ from issuer in Docker)
 	clientID string
-	jwksURL  string
 	keys     map[string]*rsa.PublicKey
 	mu       sync.RWMutex
 }
@@ -37,11 +37,11 @@ type jwksResponse struct {
 	Keys []jwkKey `json:"keys"`
 }
 
-func NewAuthValidator(dexURL, clientID string) *AuthValidator {
+func NewAuthValidator(issuer, jwksURL, clientID string) *AuthValidator {
 	return &AuthValidator{
-		issuer:   dexURL,
+		issuer:   issuer,
+		jwksURL:  jwksURL,
 		clientID: clientID,
-		jwksURL:  dexURL + "/keys",
 		keys:     make(map[string]*rsa.PublicKey),
 	}
 }

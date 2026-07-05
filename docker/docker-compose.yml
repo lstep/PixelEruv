@@ -39,7 +39,8 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       WS_ADDR: ":8081"
-      DEX_URL: "http://dex:5556/dex"
+      DEX_ISSUER: "http://localhost:5556/dex"
+      DEX_JWKS_URL: "http://dex:5556/dex/keys"
       DEX_CLIENT_ID: "pixeleruv"
       # OpenTelemetry — off by default. Set OTEL_ENABLED=true and point
       # OTEL_EXPORTER_OTLP_ENDPOINT at a reachable collector to enable.

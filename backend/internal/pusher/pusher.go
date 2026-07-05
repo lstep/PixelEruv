@@ -41,7 +41,7 @@ type session struct {
 	closeOnce sync.Once
 }
 
-func New(wsAddr, natsURL, dexURL, dexClientID string, logger *slog.Logger) (*Server, error) {
+func New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID string, logger *slog.Logger) (*Server, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("pusher"),
 		nats.ReconnectWait(2*time.Second),
@@ -50,12 +50,19 @@ func New(wsAddr, natsURL, dexURL, dexClientID string, logger *slog.Logger) (*Ser
 	if err != nil {
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
+	var auth *AuthValidator
+	if dexIssuer != "" {
+		if dexJwksURL == "" {
+			dexJwksURL = dexIssuer + "/keys"
+		}
+		auth = NewAuthValidator(dexIssuer, dexJwksURL, dexClientID)
+	}
 	return &Server{
 		wsAddr: wsAddr,
 		nc:     nc,
 		logger: logger,
 		tracer: otel.Tracer("pusher"),
-		auth:   NewAuthValidator(dexURL, dexClientID),
+		auth:   auth,
 	}, nil
 }
 
