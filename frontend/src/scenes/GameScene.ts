@@ -42,12 +42,24 @@ interface TiledLayerJSON {
 interface TiledMapJSON {
   tilewidth: number;
   tileheight: number;
-  tilesets: { firstgid: number; tilewidth?: number; tileheight?: number }[];
+  tilesets: { firstgid: number; name: string; tilewidth?: number; tileheight?: number; tilecount?: number }[];
   layers: TiledLayerJSON[];
 }
 
 function layerProp(props: TiledPropertyJSON[] | undefined, name: string): unknown {
   return props?.find((p) => p.name === name)?.value;
+}
+
+// Find the tileset that contains a given Tiled gid, and return the
+// spritesheet frame index for that tile within that tileset.
+function gidToFrame(gid: number, tilesets: TiledMapJSON["tilesets"]): { frame: number; sheet: string } | null {
+  for (let i = tilesets.length - 1; i >= 0; i--) {
+    const ts = tilesets[i];
+    if (gid >= ts.firstgid) {
+      return { frame: gid - ts.firstgid, sheet: `${ts.name}__tiles` };
+    }
+  }
+  return null;
 }
 
 // Is this layer a decoration layer? Recognized by `layer_type=decoration`.
@@ -213,24 +225,23 @@ export class GameScene extends Phaser.Scene {
     // Render the Tiled map
     const map = this.make.tilemap({ key: "test-map" });
     const mapAssets = this.registry.get("mapAssets") as MapAssets | null;
-    const tilesetKey = mapAssets ? mapAssets.tilesets[0].name : "tileset";
-    const tileset = map.addTilesetImage(tilesetKey, tilesetKey);
+    const rawJson = (mapAssets?.tiledJson ?? this.cache.json.get("test-map-raw")) as TiledMapJSON;
     this.mapW = map.width;
     this.mapH = map.height;
 
-    // Raw Tiled JSON, needed to read layer order + custom properties across
-    // both tile and object layers together (Phaser splits them into
-    // separate arrays and doesn't preserve relative order or properties in
-    // a convenient form). See mapLoader.ts / preload() above.
-    const rawJson = (mapAssets?.tiledJson ?? this.cache.json.get("test-map-raw")) as TiledMapJSON;
-    const firstGid = rawJson?.tilesets?.[0]?.firstgid ?? 1;
-    const tilesFrameKey = `${tilesetKey}__tiles`;
+    // Add ALL tilesets so layers using any tileset render correctly. A map
+    // can have multiple tilesets with different firstgids; createLayer must
+    // be passed the tileset(s) that contain the layer's tile GIDs.
+    const allTilesets = (mapAssets ? mapAssets.tilesets : [{ name: "tileset" }]).map(
+      (ts) => map.addTilesetImage(ts.name, ts.name),
+    );
+    const validTilesets = allTilesets.filter((t) => t !== null);
 
-    if (tileset && rawJson) {
+    if (validTilesets.length > 0 && rawJson) {
       // "Walls" is a reserved collision-fallback layer, matched by name —
       // not a decoration layer (see 21-map-design-guide.md).
       const wallsLayerName = rawJson.layers.find((l) => l.type === "tilelayer" && l.name.toLowerCase() === "walls")?.name;
-      const walls = wallsLayerName ? map.createLayer(wallsLayerName, tileset, 0, 0) : null;
+      const walls = wallsLayerName ? map.createLayer(wallsLayerName, validTilesets, 0, 0) : null;
       walls?.setDepth(DEPTH_WALLS_FALLBACK);
 
       if (walls) {
@@ -258,7 +269,7 @@ export class GameScene extends Phaser.Scene {
         const sortMode = (layerProp(layer.properties, "sort_mode") as string) || "static";
 
         if (layer.type === "tilelayer") {
-          const tiledLayer = map.createLayer(layer.name, tileset, 0, 0);
+          const tiledLayer = map.createLayer(layer.name, validTilesets, 0, 0);
           if (!tiledLayer) continue;
           if (sortMode === "dynamic") {
             seenDynamic = true;
@@ -277,11 +288,12 @@ export class GameScene extends Phaser.Scene {
 
         if (layer.type === "objectgroup") {
           for (const obj of layer.objects ?? []) {
-            if (!obj.name || obj.gid === undefined) continue;
-            const frame = obj.gid - firstGid;
+            if (obj.gid === undefined) continue;
+            const mapped = gidToFrame(obj.gid, rawJson.tilesets);
+            if (!mapped) continue;
             // Tiled tile-objects anchor at bottom-left (obj.x, obj.y is
             // already the base/feet position — see Part B).
-            const sprite = this.add.sprite(obj.x, obj.y, tilesFrameKey, frame);
+            const sprite = this.add.sprite(obj.x, obj.y, mapped.sheet, mapped.frame);
             sprite.setOrigin(0, 1);
             if (sortMode === "dynamic") {
               seenDynamic = true;

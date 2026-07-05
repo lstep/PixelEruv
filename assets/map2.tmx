@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" nextlayerid="6" nextobjectid="9">
  <editorsettings>
-  <export format="json"/>
+  <export target="map1.json" format="json"/>
  </editorsettings>
  <tileset firstgid="1" name="room-builder-office" tilewidth="32" tileheight="32" tilecount="224" columns="16">
   <image source="Room_Builder_Office_32x32.png" width="512" height="448"/>
@@ -10,6 +10,9 @@
   <image source="Modern_Office_32x32.png" width="512" height="1696"/>
  </tileset>
  <layer id="1" name="Ground" width="30" height="20">
+  <properties>
+   <property name="layer_type" value="decoration"/>
+  </properties>
   <data encoding="csv">
 177,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,178,179,
 181,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,182,356,182,182,182,182,182,183,
@@ -34,6 +37,9 @@
 </data>
  </layer>
  <layer id="5" name="Objects" width="30" height="20">
+  <properties>
+   <property name="layer_type" value="decoration"/>
+  </properties>
   <data encoding="csv">
 547,548,549,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
 563,564,565,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,477,0,0,0,
