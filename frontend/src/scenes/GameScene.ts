@@ -52,6 +52,51 @@ function layerProp(props: TiledPropertyJSON[] | undefined, name: string): unknow
   return props?.find((p) => p.name === name)?.value;
 }
 
+// Wall zone in tile coordinates, parsed from the Tiled "Zones" object layer.
+// Used for client-side prediction of zone collision (matching the server's
+// swept segment-vs-rect test) so the local avatar doesn't predict through
+// wall zones and rubber-band on reconciliation.
+interface WallZone { x: number; y: number; w: number; h: number }
+
+// segmentIntersectsRect reports whether the segment from (x0,y0) to (x1,y1)
+// intersects the axis-aligned rect [rx, rx+rw] x [ry, ry+rh]. Uses the slab
+// method — ported from worldsim_swept.go to match the server's collision
+// exactly.
+function segmentIntersectsRect(x0: number, y0: number, x1: number, y1: number, rx: number, ry: number, rw: number, rh: number): boolean {
+  const rx1 = rx + rw;
+  const ry1 = ry + rh;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+
+  let t0 = 0, t1 = 1;
+
+  // X slab.
+  if (dx === 0) {
+    if (x0 < rx || x0 > rx1) return false;
+  } else {
+    let ta = (rx - x0) / dx;
+    let tb = (rx1 - x0) / dx;
+    if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
+    if (ta > t0) t0 = ta;
+    if (tb < t1) t1 = tb;
+    if (t0 > t1) return false;
+  }
+
+  // Y slab.
+  if (dy === 0) {
+    if (y0 < ry || y0 > ry1) return false;
+  } else {
+    let ta = (ry - y0) / dy;
+    let tb = (ry1 - y0) / dy;
+    if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
+    if (ta > t0) t0 = ta;
+    if (tb < t1) t1 = tb;
+    if (t0 > t1) return false;
+  }
+
+  return t0 <= t1;
+}
+
 // Find the tileset that contains a given Tiled gid, and return the
 // spritesheet frame index for that tile within that tileset.
 function gidToFrame(gid: number, tilesets: TiledMapJSON["tilesets"]): { frame: number; sheet: string } | null {
@@ -86,6 +131,12 @@ const TICK_MS = 50; // 20 Hz server tick
 // (pos*32+16, pos*32+16), so feet sit at Position.Y + 1.0. Collision is
 // evaluated at the feet — must match worldsim.go avatarFeetYOffset.
 const FEET_Y_OFFSET = 1.0;
+
+// Player collision radius in tiles — must match worldsim.go
+// playerCollisionRadius. Zone shapes are expanded by this radius before
+// the swept segment test so the feet center stops `r` tiles before the
+// wall edge.
+const PLAYER_COLLISION_RADIUS = 0.3;
 
 // Camera zoom bounds and default. The wheel handler adjusts zoom within
 // [ZOOM_MIN, ZOOM_MAX]; ZOOM_SENSITIVITY converts DOM wheel deltaY (~100
@@ -163,6 +214,10 @@ export class GameScene extends Phaser.Scene {
   private pendingInputs: InputEvent[] = [];
   // Collision grid from the Tiled "Walls" layer. [y][x] = true means blocked.
   private collisionGrid: boolean[][] = [];
+  // Wall zones from the Tiled "Zones" object layer with zone_type=wall.
+  // Used for client-side prediction of zone collision, matching the server's
+  // swept segment-vs-rect test.
+  private wallZones: WallZone[] = [];
   private mapW = 20;
   private mapH = 20;
   // Tilesets from the Tiled JSON, stored so handleReplication can resolve
@@ -216,14 +271,38 @@ export class GameScene extends Phaser.Scene {
     // the avatar's feet, which render at Position.Y + FEET_Y_OFFSET (origin
     // 0.5/0.75 on a 64px frame → feet one tile below Position). This must
     // match the server's feet offset (worldsim.go, avatarFeetYOffset) or the
-    // local avatar visually clips into walls before reconciliation. The
-    // frontend only checks the Walls tile-layer grid here (zones are
-    // server-side); tile-grid collision can't tunnel at 0.4 tiles/tick.
+    // local avatar visually clips into walls before reconciliation.
+    //
+    // Two collision sources, matching the server's isMoveBlocked:
+    //   1. Walls tile-layer grid (point check at destination tile)
+    //   2. Wall zones from the Zones object layer (swept segment-vs-rect,
+    //      expanded by PLAYER_COLLISION_RADIUS)
     const fy = (y: number) => Math.floor(y + FEET_Y_OFFSET + 0.5);
-    if (this.isBlocked(Math.floor(newX + 0.5), fy(y))) newX = x;
-    if (this.isBlocked(Math.floor(newX + 0.5), fy(newY))) newY = y;
+    if (this.isBlocked(Math.floor(newX + 0.5), fy(y)) ||
+        this.isZoneBlocked(x, y, newX, y)) newX = x;
+    if (this.isBlocked(Math.floor(newX + 0.5), fy(newY)) ||
+        this.isZoneBlocked(newX, y, newX, newY)) newY = y;
 
     return { x: newX, y: newY };
+  }
+
+  // isZoneBlocked checks whether the movement segment from (oldX, oldY) to
+  // (newX, newY) intersects any wall zone, evaluated at the avatar's feet
+  // (Position.Y + FEET_Y_OFFSET). Each zone rect is expanded by
+  // PLAYER_COLLISION_RADIUS (Minkowski sum) so the feet center stops `r`
+  // tiles before the wall edge. Matches the server's isMoveBlocked zone
+  // collision (worldsim.go).
+  private isZoneBlocked(oldX: number, oldY: number, newX: number, newY: number): boolean {
+    if (this.wallZones.length === 0) return false;
+    const ofy = oldY + FEET_Y_OFFSET;
+    const nfy = newY + FEET_Y_OFFSET;
+    const r = PLAYER_COLLISION_RADIUS;
+    for (const z of this.wallZones) {
+      if (segmentIntersectsRect(oldX, ofy, newX, nfy, z.x - r, z.y - r, z.w + 2 * r, z.h + 2 * r)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   preload(): void {
@@ -340,6 +419,29 @@ export class GameScene extends Phaser.Scene {
             }
           }
         }
+      }
+    }
+
+    // Parse wall zones from the "Zones" object layer for client-side
+    // collision prediction. Matches the server's zone collision (ext-walls
+    // registers block triggers for zone_type=wall). The client predicts
+    // against these so the local avatar doesn't predict through wall zones
+    // and rubber-band on reconciliation.
+    if (rawJson) {
+      const tileW = rawJson.tilewidth || TILE_SIZE;
+      const tileH = rawJson.tileheight || TILE_SIZE;
+      for (const layer of rawJson.layers) {
+        if (layer.name.toLowerCase() !== "zones" || layer.type !== "objectgroup") continue;
+        for (const obj of layer.objects ?? []) {
+          if (layerProp(obj.properties, "zone_type") !== "wall") continue;
+          this.wallZones.push({
+            x: obj.x / tileW,
+            y: obj.y / tileH,
+            w: obj.width / tileW,
+            h: obj.height / tileH,
+          });
+        }
+        break;
       }
     }
 

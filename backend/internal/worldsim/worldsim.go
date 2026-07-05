@@ -979,6 +979,13 @@ func (s *Simulator) runMovementSystem() {
 					e.Position.Dir = 3 // up
 				}
 			}
+		} else if dx != 0 || dy != 0 {
+			// Movement was attempted but fully blocked (e.g. walking
+			// directly into a wall). Mark dirty so the client gets a
+			// position correction even though the position didn't change —
+			// otherwise the client's prediction runs ahead through the
+			// wall and never gets snapped back.
+			e.dirtyPosition = true
 		}
 	}
 }

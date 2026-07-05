@@ -11,10 +11,14 @@ initOtel();
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: "game",
-  width: 640,
-  height: 640,
+  width: "100%",
+  height: "100%",
   pixelArt: true,
   backgroundColor: "#1a1a2e",
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+  },
   scene: [GameScene],
 };
 
