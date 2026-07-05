@@ -276,14 +276,15 @@ export class GameScene extends Phaser.Scene {
   }
 
   // Play walk or idle animation for an avatar based on direction and
-  // movement state.
+  // movement state. Only switches animation when the target changes.
   private updateAvatarAnim(avatar: Avatar, dir: number, moving: boolean): void {
-    avatar.dir = dir;
-    avatar.moving = moving;
-    const animKey = moving
+    const targetKey = moving
       ? `${avatar.charKey}_walk_${DIR_NAMES[dir]}`
       : `${avatar.charKey}_idle_${DIR_NAMES[dir]}`;
-    avatar.sprite.play(animKey, true);
+    if (dir === avatar.dir && moving === avatar.moving) return;
+    avatar.dir = dir;
+    avatar.moving = moving;
+    avatar.sprite.play(targetKey, true);
   }
 
   private handleReplication(batch: ReplicationBatchView): void {
