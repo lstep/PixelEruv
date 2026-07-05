@@ -1,0 +1,112 @@
+<svg width="100%" viewBox="0 0 1200 900" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Pixel Eruv — Depth Layers and Y-Sort Bands</title>
+  <desc>An exploded "peelable onion" side view of the rendering depth stack, bottom to top: static decoration layers below the player (bands 0, 1, 2...), a single shared dynamic band (1000) where avatars and Y-sortable decorations (furniture, trees) interleave by base/feet Y position, and static overlay layers above the player (bands 2000+) such as canopy or roof overlays. Each slab shows its Tiled layer_type/sort_mode properties and example contents.</desc>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0L10 5L0 10z" fill="#b45309"/>
+    </marker>
+  </defs>
+
+  <rect width="1200" height="900" fill="#fafaf9"/>
+
+  <!-- Title -->
+  <text x="600" y="30" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Depth Layers and Y-Sort Bands</text>
+  <text x="600" y="52" text-anchor="middle" font-size="13" fill="#64748b">Exploded side view — layers peeled apart to show draw order, bottom (back) to top (front)</text>
+
+  <!-- Vertical draw-order axis on the left -->
+  <line x1="90" y1="100" x2="90" y2="800" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="70" y="100" text-anchor="middle" font-size="11" fill="#64748b" transform="rotate(-90 70 450)">draw order: back → front</text>
+
+  <!-- ============================================ -->
+  <!-- BAND: static, above player (canopy/roof) -->
+  <!-- ============================================ -->
+  <g>
+    <rect x="140" y="120" width="1000" height="110" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="160" y="144" font-size="14" font-weight="700" fill="#4c1d95">Static band 2000+  ·  layer_type=decoration, sort_mode=static</text>
+    <text x="160" y="164" font-size="12" fill="#5b21b6">Always drawn ABOVE avatars and the dynamic band, regardless of Y position.</text>
+    <text x="160" y="184" font-size="12" fill="#5b21b6">Example layers: "Canopy" (tree tops), "Roof" (building overlays that hide the interior from outside)</text>
+    <text x="160" y="204" font-size="11" fill="#7c3aed">depth = 2000 + layer_index  (fixed per layer; ignores object Y)</text>
+  </g>
+
+  <!-- ============================================ -->
+  <!-- BAND: dynamic, shared with avatars -->
+  <!-- ============================================ -->
+  <g>
+    <rect x="140" y="270" width="1000" height="200" rx="10" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+    <text x="160" y="294" font-size="14" font-weight="700" fill="#1e3a8a">Shared dynamic band ~1000  ·  layer_type=decoration, sort_mode=dynamic</text>
+    <text x="160" y="314" font-size="12" fill="#1e40af">Avatars AND dynamic decorations occupy the SAME band and Y-sort against each other every frame.</text>
+    <text x="160" y="334" font-size="11" fill="#2563eb">depth = 1000 + (baseY_pixels / mapHeightPixels)</text>
+
+    <!-- Row of Y-sorted content, ordered left-to-right by increasing base Y (top of screen -> bottom) -->
+    <g>
+      <rect x="176" y="356" width="150" height="90" rx="6" fill="#fff" stroke="#2563eb" stroke-width="1"/>
+      <text x="251" y="374" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Tree (object)</text>
+      <text x="251" y="390" text-anchor="middle" font-size="10" fill="#64748b">base anchor = obj.y</text>
+      <text x="251" y="404" text-anchor="middle" font-size="10" fill="#64748b">(bottom-left of sprite)</text>
+      <text x="251" y="420" text-anchor="middle" font-size="10" fill="#64748b">baseY = 3.2 tiles</text>
+      <text x="251" y="436" text-anchor="middle" font-size="10" fill="#b45309" font-weight="600">depth ≈ 1000.32</text>
+    </g>
+
+    <g>
+      <rect x="346" y="356" width="150" height="90" rx="6" fill="#fff" stroke="#2563eb" stroke-width="1"/>
+      <text x="421" y="374" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Player avatar</text>
+      <text x="421" y="390" text-anchor="middle" font-size="10" fill="#64748b">base anchor = feet</text>
+      <text x="421" y="404" text-anchor="middle" font-size="10" fill="#64748b">(origin 0.5, 0.75)</text>
+      <text x="421" y="420" text-anchor="middle" font-size="10" fill="#64748b">baseY = 4.0 tiles</text>
+      <text x="421" y="436" text-anchor="middle" font-size="10" fill="#b45309" font-weight="600">depth ≈ 1000.40</text>
+    </g>
+
+    <g>
+      <rect x="516" y="356" width="150" height="90" rx="6" fill="#fff" stroke="#2563eb" stroke-width="1"/>
+      <text x="591" y="374" text-anchor="middle" font-size="11" font-weight="700" fill="#0f172a">Interactive box</text>
+      <text x="591" y="390" text-anchor="middle" font-size="10" fill="#64748b">base anchor = obj.y</text>
+      <text x="591" y="404" text-anchor="middle" font-size="10" fill="#64748b">(from Part C)</text>
+      <text x="591" y="420" text-anchor="middle" font-size="10" fill="#64748b">baseY = 4.5 tiles</text>
+      <text x="591" y="436" text-anchor="middle" font-size="10" fill="#b45309" font-weight="600">depth ≈ 1000.45</text>
+    </g>
+
+    <text x="756" y="392" font-size="11" fill="#1e40af">Sorted by baseY:</text>
+    <text x="756" y="410" font-size="11" fill="#1e40af">tree (3.2) &lt; player (4.0) &lt; box (4.5)</text>
+    <text x="756" y="428" font-size="11" fill="#1e40af">→ tree draws first, player next,</text>
+    <text x="756" y="444" font-size="11" fill="#1e40af">box last (frontmost)</text>
+  </g>
+
+  <!-- ============================================ -->
+  <!-- BAND: static, below player -->
+  <!-- ============================================ -->
+  <g>
+    <rect x="140" y="500" width="1000" height="130" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+    <text x="160" y="524" font-size="14" font-weight="700" fill="#14532d">Static bands 0, 1, 2...  ·  layer_type=decoration, sort_mode=static (default)</text>
+    <text x="160" y="544" font-size="12" fill="#166534">Always drawn BELOW avatars and the dynamic band. One band per layer, ordered by</text>
+    <text x="160" y="562" font-size="12" fill="#166534">the layer's position in the Tiled layer stack.</text>
+    <text x="160" y="586" font-size="11" fill="#166534">band 2: "Floor detail" (rugs, cracks)   band 1: "Shadows"   band 0: "Ground" (base floor tiles)</text>
+    <text x="160" y="606" font-size="11" fill="#15803d">depth = layer_index  (fixed per layer; ignores object Y)</text>
+  </g>
+
+  <!-- ============================================ -->
+  <!-- BASE: Walls layer (not a decoration layer) -->
+  <!-- ============================================ -->
+  <g>
+    <rect x="140" y="650" width="1000" height="70" rx="10" fill="#f1f5f9" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="160" y="674" font-size="13" font-weight="700" fill="#334155">"Walls" tile layer — not a decoration layer (no layer_type property)</text>
+    <text x="160" y="694" font-size="11" fill="#64748b">Collision fallback only, as today. Rendered at a fixed low depth, independent of the decoration bands above.</text>
+  </g>
+
+  <!-- Connecting arrow showing stacking direction -->
+  <path d="M 1160 700 C 1180 550, 1180 300, 1160 150" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrow)"/>
+  <text x="1190" y="430" font-size="11" fill="#64748b" transform="rotate(90 1190 430)">layer list order in Tiled</text>
+
+  <!-- Legend / formula box -->
+  <g>
+    <rect x="140" y="740" width="1000" height="130" rx="10" fill="#fff7ed" stroke="#b45309" stroke-width="1.5"/>
+    <text x="160" y="764" font-size="13" font-weight="700" fill="#7c2d12">Unified depth formula</text>
+    <text x="160" y="786" font-size="12" fill="#7c2d12" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">depth = BAND_BASE(layer) + (baseY_pixels / mapHeightPixels)</text>
+    <text x="160" y="808" font-size="11" fill="#7c2d12">BAND_BASE: static layers before the dynamic layers in the list → 0, 1, 2, ... · dynamic layers + avatars → 1000 (shared) · static layers</text>
+    <text x="160" y="824" font-size="11" fill="#7c2d12">after the dynamic layers in the list → 2000 + layer_index. Fractional part only matters within the shared dynamic band.</text>
+    <text x="160" y="848" font-size="11" fill="#92400e">See documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md — Part B.</text>
+  </g>
+</svg>

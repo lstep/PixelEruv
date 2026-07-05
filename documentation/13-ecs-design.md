@@ -91,7 +91,23 @@ The full set will be finalised in `13-ecs-design.md`.
 | `BehaviorTreeSystem` | (deprecated in kernel) | NPC AI is implemented by extensions. The kernel does not run AI systems. | Extension |
 | `ZoneSystem` | (deprecated in kernel) | Zone behavior (exclusivity, knock-to-join, timers) is implemented by extensions via zone triggers. The kernel stores zone shapes and routes zone-entry triggers to the owning extension. | Extension |
 
-## 6. Open questions for `13-ecs-design.md`
+## 6. Entity ownership claiming (map-authored props)
+
+**[RESOLVED]** For base entities defined in the Tiled map (see
+`10-world-simulator.md` §5a), ownership is claimed via an `owner_extension`
+custom property on the object plus the server-only `TriggerOwner` component:
+each extension reads the map at startup, and for entities whose
+`owner_extension` matches its own ID (or is unset, for a generic catch-all
+extension), it adds `TriggerOwner{trigger_id, extension_id}`. This lets a
+generic extension (e.g. `ext-props`, claiming many simple props) and a
+dedicated extension (e.g. `ext-vault-door`, claiming one specific entity)
+both register for the same input trigger (`14-zones-and-interactions.md`
+§3a) without colliding — each self-filters by checking `TriggerOwner` before
+acting. See
+`documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
+Part C for the full interaction flow.
+
+## 7. Open questions for `13-ecs-design.md`
 
 - Archetype vs. sparse-set: which fits our access patterns better?
 - How does the ECS interact with NATS subject partitioning for area-of-interest

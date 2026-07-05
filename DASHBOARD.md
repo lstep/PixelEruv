@@ -60,6 +60,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Map integrity checker: validation at startup, every 5 min, and on demand (`admin.map.integrity` via NATS)
 - [x] Map design guide documentation (`documentation/21-map-design-guide.md`): layers, properties, shapes, upload
 - [x] SVG diagram of layer structure and data flow (`documentation/map-design-guide.html`)
+- [x] Design (not yet implemented): decoration layers, Y-sort depth bands, and interactive map-authored entities — `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md` + `documentation/depth-layers-diagram.svg`
 
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls
@@ -77,8 +78,9 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 ### Medium priority
 - [ ] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
 - [ ] **AOI filter**: only replicate entities within client radius + same zone
-- [ ] **Input triggers**: clicks/keys → broadcast to extensions (NPC interactions, objects)
+- [ ] **Input triggers**: clicks/keys → broadcast to extensions (NPC interactions, objects) — design ready, see `documentation/plans/2026-07-01-inventory-equipment-action-triggers-design.md` and `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
 - [ ] **Exclusive zones**: visual + audio isolation for members
+- [ ] **Decoration layers + Y-sort**: multiple `layer_type=decoration` layers with `static`/`dynamic` sort modes, replacing the hardcoded single `Ground` layer — design ready, see `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
 
 ### Low priority
 - [ ] **Knock-to-join**: meeting rooms with owner and admission
@@ -102,6 +104,10 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-05 | Integrity checker at startup + periodic + on demand | Detects map corruption/inconsistencies early and during runtime |
 | 2026-07-05 | Continuous-space zone checks (no tile rasterization) | Tile rasterization produces gaps for shapes thinner than a tile; direct point-in-shape tests are exact |
 | 2026-07-05 | Map hot-reload via filename comparison | PocketBase generates new filenames on re-upload; worldsim polls every 30s and publishes `map.updated` to extensions |
+| 2026-07-05 | Decoration layers recognized by `layer_type` property, not name | Removes the hardcoded `"Ground"` name; supports multiple decoration layers |
+| 2026-07-05 | Layer altitude = Tiled layer stack order (no explicit numeric property) | Simplest mental model: reordering layers in Tiled changes altitude |
+| 2026-07-05 | Per-layer `sort_mode` (`static`/`dynamic`) for Y-sort | Most decorations never need to interleave with the player; only tall/walkable-around objects do |
+| 2026-07-05 | Entity ownership via `owner_extension` property + `TriggerOwner` | Lets a generic extension and dedicated extensions claim map-authored props without colliding |
 
 ## Test accounts
 

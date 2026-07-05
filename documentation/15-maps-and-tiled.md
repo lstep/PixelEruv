@@ -19,6 +19,11 @@ how object layering and traversal work.
   `Traversable`, see `13-ecs-design.md`).
 - Zone polygons are authored in Tiled and live in JetStream KV (see
   `14-zones-and-interactions.md`).
+- Decoration layers are recognized by the custom layer property
+  `layer_type=decoration` (any layer name, tile layer or object layer), not
+  by a hardcoded `"Ground"` name. A per-layer `sort_mode` property
+  (`static`/`dynamic`) controls Y-sorting against avatars — see
+  `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`.
 
 ## MVP: uploading a map via PocketBase
 
@@ -68,6 +73,15 @@ The `maps` collection is created automatically by the migration in
 
 ## Open questions
 
-- **[OPEN] Draw-order / Y-sort algorithm** with multi-layer objects.
-- **[OPEN] Tiled custom-property → ECS component convention.**
+- **[RESOLVED]** Draw-order / Y-sort algorithm with multi-layer objects — see
+  `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
+  and `documentation/depth-layers-diagram.svg`. Summary: any layer with
+  `layer_type=decoration` (any name) is recognized; altitude is the layer's
+  position in the Tiled layer stack; a per-layer `sort_mode` (`static` or
+  `dynamic`) decides whether it Y-sorts against avatars or stays at a fixed
+  band. Not yet implemented in the lite MVP code.
+- **[OPEN] Tiled custom-property → ECS component convention.** Partially
+  resolved for interactive props (`owner_extension`, `interactable`,
+  `trigger_radius` → `Interactable`/`TriggerOwner`) — see the design doc
+  above, Part C.
 - **[OPEN] Map streaming** — load whole map vs. stream by AOI for large maps.
