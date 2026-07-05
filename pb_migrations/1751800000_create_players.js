@@ -1,7 +1,7 @@
 /// <reference path="../pb_data/types.d.ts" />
 migrate((app) => {
   const collection = new Collection({
-    name: "users",
+    name: "players",
     type: "base",
     fields: [
       {
@@ -44,6 +44,6 @@ migrate((app) => {
 
   return app.save(collection);
 }, (app) => {
-  const collection = app.findCollectionByNameOrId("users");
+  const collection = app.findCollectionByNameOrId("players");
   return app.delete(collection);
 });

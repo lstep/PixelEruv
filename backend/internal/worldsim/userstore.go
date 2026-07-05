@@ -68,7 +68,7 @@ func (s *UserStore) SavePosition(entityID string, x, y float32) error {
 	}
 
 	body := fmt.Sprintf(`{"pos_x":%g,"pos_y":%g}`, x, y)
-	url := fmt.Sprintf("%s/api/collections/users/records/%s", s.pocketbaseURL, user.ID)
+	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
 	req, err := http.NewRequest("PATCH", url, strings.NewReader(body))
 	if err != nil {
 		return err
@@ -87,7 +87,7 @@ func (s *UserStore) SavePosition(entityID string, x, y float32) error {
 }
 
 func (s *UserStore) findBySub(sub string) (*UserRecord, error) {
-	url := fmt.Sprintf("%s/api/collections/users/records?filter=(oidc_sub=\"%s\")&perPage=1", s.pocketbaseURL, sub)
+	url := fmt.Sprintf("%s/api/collections/players/records?filter=(oidc_sub=\"%s\")&perPage=1", s.pocketbaseURL, sub)
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
@@ -108,7 +108,7 @@ func (s *UserStore) findBySub(sub string) (*UserRecord, error) {
 }
 
 func (s *UserStore) findByEntityID(entityID string) (*UserRecord, error) {
-	url := fmt.Sprintf("%s/api/collections/users/records?filter=(entity_id=\"%s\")&perPage=1", s.pocketbaseURL, entityID)
+	url := fmt.Sprintf("%s/api/collections/players/records?filter=(entity_id=\"%s\")&perPage=1", s.pocketbaseURL, entityID)
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func (s *UserStore) findByEntityID(entityID string) (*UserRecord, error) {
 func (s *UserStore) create(user *UserRecord) error {
 	body := fmt.Sprintf(`{"oidc_sub":"%s","entity_id":"%s","pos_x":%g,"pos_y":%g}`,
 		user.OidcSub, user.EntityID, user.PosX, user.PosY)
-	url := fmt.Sprintf("%s/api/collections/users/records", s.pocketbaseURL)
+	url := fmt.Sprintf("%s/api/collections/players/records", s.pocketbaseURL)
 	resp, err := http.Post(url, "application/json", strings.NewReader(body))
 	if err != nil {
 		return err
