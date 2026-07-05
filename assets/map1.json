@@ -63,9 +63,55 @@
          "width":30,
          "x":0,
          "y":0
+        }, 
+        {
+         "draworder":"topdown",
+         "id":4,
+         "name":"Zones",
+         "objects":[
+                {
+                 "height":298.345864661654,
+                 "id":1,
+                 "name":"meeting-room-1",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"is_exclusive",
+                         "type":"bool",
+                         "value":true
+                        }, 
+                        {
+                         "name":"zone_type",
+                         "type":"string",
+                         "value":"meeting"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":128.721804511278,
+                 "x":214.135338345865,
+                 "y":175.639097744361
+                }, 
+                {
+                 "height":0,
+                 "id":2,
+                 "name":"",
+                 "opacity":1,
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":0,
+                 "x":489.624060150376,
+                 "y":843.308270676692
+                }],
+         "opacity":1,
+         "type":"objectgroup",
+         "visible":true,
+         "x":0,
+         "y":0
         }],
- "nextlayerid":3,
- "nextobjectid":1,
+ "nextlayerid":5,
+ "nextobjectid":4,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",
@@ -74,7 +120,7 @@
         {
          "columns":16,
          "firstgid":1,
-         "image":"Modern_Office_Revamped_v1\/1_Room_Builder_Office\/Room_Builder_Office_32x32.png",
+         "image":"Room_Builder_Office_32x32.png",
          "imageheight":448,
          "imagewidth":512,
          "margin":0,
@@ -87,7 +133,7 @@
         {
          "columns":16,
          "firstgid":225,
-         "image":"Modern_Office_Revamped_v1\/Modern_Office_32x32.png",
+         "image":"Modern_Office_32x32.png",
          "imageheight":1696,
          "imagewidth":512,
          "margin":0,

@@ -1,18 +1,39 @@
 {
-    "activeFile": "",
+    "activeFile": "map1.tmx",
     "expandedProjectPaths": [
+        "."
     ],
     "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
+        "": {
+            "scaleInEditor": 1
+        },
+        "map1.tmx": {
+            "scale": 0.8312499999999999,
+            "selectedLayer": 2,
+            "viewCenter": {
+                "x": 636.9924812030076,
+                "y": 502.2556390977444
+            }
+        },
+        "map1.tmx#modern-office": {
+            "scaleInDock": 1
+        },
+        "map1.tmx#room-builder-office": {
+            "scaleInDock": 1
+        }
     },
     "last.exportedFilePath": "/Users/lstep/Workspace/GIT/PixelEruv.o/assets",
-    "last.imagePath": "/Users/lstep/Workspace/GIT/PixelEruv.o/assets/Modern_Office_Revamped_v1",
+    "last.imagePath": "/Users/lstep/Workspace/GIT/PixelEruv.o/assets",
     "map.lastUsedExportFilter": "JSON map files (*.tmj *.json)",
     "map.lastUsedFormat": "tmx",
     "openFiles": [
+        "map1.tmx"
     ],
     "project": "map1.tiled-project",
+    "property.type": "string",
     "recentFiles": [
+        "map1.tmx"
     ],
     "tileset.embedInMap": true
 }

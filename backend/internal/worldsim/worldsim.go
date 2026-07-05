@@ -333,10 +333,10 @@ func (s *Simulator) tick() {
 			// slides along walls instead of sticking. Use +0.5 because the
 			// sprite center is at position*TILE_SIZE + TILE_SIZE/2, so the
 			// tile the center is in is floor(position + 0.5).
-			if s.mapData.IsBlocked(int(newX+0.5), int(e.Position.Y+0.5)) {
+			if s.isTileBlocked(int(newX+0.5), int(e.Position.Y+0.5)) {
 				newX = e.Position.X
 			}
-			if s.mapData.IsBlocked(int(newX+0.5), int(newY+0.5)) {
+			if s.isTileBlocked(int(newX+0.5), int(newY+0.5)) {
 				newY = e.Position.Y
 			}
 		} else {
@@ -514,6 +514,25 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		return false
 	}
 	return true
+}
+
+// isTileBlocked returns true if the tile is blocked by either the Walls
+// tile layer (fallback) or a zone with a block gate trigger from an
+// active extension.
+func (s *Simulator) isTileBlocked(tx, ty int) bool {
+	// Check zone gate triggers first (extension-driven walls).
+	if s.zoneReg != nil {
+		for _, zoneID := range s.zoneReg.ZonesAt(tx, ty) {
+			if s.extMgr.IsZoneBlocked(zoneID) {
+				return true
+			}
+		}
+	}
+	// Fallback: Walls tile layer collision.
+	if s.mapData != nil && s.mapData.IsBlocked(tx, ty) {
+		return true
+	}
+	return false
 }
 
 // publishZoneEvent publishes a zone.enter or zone.exit event to NATS.

@@ -93,6 +93,20 @@ services:
       EXTENSION_ID: "demo"
     restart: unless-stopped
 
+  ext-walls:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: ext-walls
+    depends_on:
+      - nats
+      - pocketbase
+    environment:
+      NATS_URL: "nats://nats:4222"
+      POCKETBASE_URL: "http://pocketbase:8090"
+      MAP_ID: "test-map"
+    restart: unless-stopped
+
 volumes:
   pb_data:
   dex_data:

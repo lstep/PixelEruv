@@ -11,6 +11,23 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// GateBehavior determines whether movement into a zone is allowed.
+type GateBehavior int
+
+const (
+	GateBlock  GateBehavior = iota // block movement
+	GateAllow                      // allow movement
+)
+
+// GateTrigger is a zone gate trigger registered by an extension.
+// The worldsim caches these locally and evaluates them during movement
+// without a NATS round-trip.
+type GateTrigger struct {
+	ZoneID      string
+	Behavior    GateBehavior
+	ExtensionID string
+}
+
 // Extension is a registered extension process on the NATS bus.
 type Extension struct {
 	ID              string
@@ -22,13 +39,15 @@ type Extension struct {
 type ExtensionManager struct {
 	mu         sync.Mutex
 	extensions map[string]*Extension
+	gateTriggers map[string]*GateTrigger // zone_id -> trigger
 	logger     *slog.Logger
 }
 
 func NewExtensionManager(logger *slog.Logger) *ExtensionManager {
 	return &ExtensionManager{
-		extensions: make(map[string]*Extension),
-		logger:     logger,
+		extensions:   make(map[string]*Extension),
+		gateTriggers: make(map[string]*GateTrigger),
+		logger:       logger,
 	}
 }
 
@@ -100,6 +119,72 @@ func (m *ExtensionManager) IsRegistered(id string) bool {
 	return time.Since(ext.LastHeartbeat) <= 3*ext.HeartbeatInterval
 }
 
+// triggerMsg is the payload for extension.<id>.register_triggers.
+type triggerMsg struct {
+	ExtensionID string `json:"extension_id"`
+	GateTriggers []struct {
+		ZoneID   string `json:"zone_id"`
+		Behavior string `json:"behavior"` // "block" or "allow"
+	} `json:"gate_triggers"`
+}
+
+// RegisterTriggers processes a trigger registration message from an extension.
+func (m *ExtensionManager) RegisterTriggers(data []byte) error {
+	var msg triggerMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return fmt.Errorf("parse triggers: %w", err)
+	}
+	if msg.ExtensionID == "" {
+		return fmt.Errorf("missing extension_id")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, gt := range msg.GateTriggers {
+		if gt.ZoneID == "" {
+			continue
+		}
+		var behavior GateBehavior
+		switch gt.Behavior {
+		case "block":
+			behavior = GateBlock
+		case "allow":
+			behavior = GateAllow
+		default:
+			m.logger.Warn("unknown gate behavior", "behavior", gt.Behavior, "zone", gt.ZoneID)
+			continue
+		}
+		m.gateTriggers[gt.ZoneID] = &GateTrigger{
+			ZoneID:      gt.ZoneID,
+			Behavior:    behavior,
+			ExtensionID: msg.ExtensionID,
+		}
+		m.logger.Info("gate trigger registered",
+			"extension", msg.ExtensionID, "zone", gt.ZoneID, "behavior", gt.Behavior)
+	}
+	return nil
+}
+
+// IsZoneBlocked returns true if the zone has a block gate trigger from a
+// registered (non-stale) extension.
+func (m *ExtensionManager) IsZoneBlocked(zoneID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	gt, ok := m.gateTriggers[zoneID]
+	if !ok {
+		return false
+	}
+	// Only honor triggers from active extensions.
+	ext, exists := m.extensions[gt.ExtensionID]
+	if !exists {
+		return false
+	}
+	if time.Since(ext.LastHeartbeat) > 3*ext.HeartbeatInterval {
+		return false // stale extension — don't block
+	}
+	return gt.Behavior == GateBlock
+}
+
 // Subscribe sets up NATS subscriptions for extension lifecycle events.
 func (m *ExtensionManager) Subscribe(nc *nats.Conn) error {
 	// Wildcard subscription: extension.<id>.register
@@ -117,6 +202,15 @@ func (m *ExtensionManager) Subscribe(nc *nats.Conn) error {
 		m.Heartbeat(extID)
 	}); err != nil {
 		return fmt.Errorf("subscribe heartbeat: %w", err)
+	}
+
+	// Wildcard subscription: extension.<id>.register_triggers
+	if _, err := nc.Subscribe("extension.*.register_triggers", func(msg *nats.Msg) {
+		if err := m.RegisterTriggers(msg.Data); err != nil {
+			m.logger.Warn("trigger registration failed", "err", err, "subject", msg.Subject)
+		}
+	}); err != nil {
+		return fmt.Errorf("subscribe register_triggers: %w", err)
 	}
 
 	return nil
