@@ -38,7 +38,13 @@ func (z *Zone) Contains(px, py float32) bool {
 		dx, dy := px-cx, py-cy
 		return dx*dx+dy*dy <= z.Radius*z.Radius
 	case ShapePolygon:
-		return pointInPolygon(px, py, z.Polygon)
+		// Polygon vertices are stored relative to (z.X, z.Y) in tile coords.
+		// Translate to absolute coords for the point-in-polygon test.
+		abs := make([][2]float32, len(z.Polygon))
+		for i, v := range z.Polygon {
+			abs[i] = [2]float32{v[0] + z.X, v[1] + z.Y}
+		}
+		return pointInPolygon(px, py, abs)
 	}
 	return false
 }
