@@ -190,6 +190,202 @@ Tiled JSON ──┐
    during movement, and publishes `zone.enter` / `zone.exit` events when
    entities cross zone boundaries.
 
+## How-to: common operations
+
+These step-by-step tutorials cover the most common map editing tasks.
+
+### How to: create a wall (extension-driven)
+
+Walls can be defined as zones with `zone_type=wall`. The ext-walls
+extension reads these zones and registers block gate triggers with the
+worldsim. Players cannot walk into wall zones.
+
+1. **Select the "Zones" object layer** in the Layers panel (create it first
+   if it doesn't exist: Layer → Add Object Layer, name it `Zones`).
+
+2. **Draw a rectangle** over the wall area using the Insert Rectangle tool
+   (press `R`). The rectangle should cover the tiles you want to block.
+
+3. **Name the zone**: right-click the rectangle → Object Properties. Set
+   the **Name** field to a unique identifier, e.g. `wall-north`.
+   > The name is the `zone_id` — it must be unique within the map.
+
+4. **Add the `zone_type` property**: in the Object Properties panel, click
+   the `+` button to add a custom property:
+   - Name: `zone_type`
+   - Type: `String`
+   - Value: `wall`
+
+5. **(Optional) Remove the corresponding tiles from the "Walls" tile layer**
+   if you had drawn them there before. This avoids double-blocking (both
+   the tile layer fallback and the extension gate trigger). The tile layer
+   is a fallback — if the walls extension is running, the zone takes over.
+
+6. **Save and export** as JSON (File → Export As… → `*.json`).
+
+7. **Upload to PocketBase** (see [Uploading](#uploading-to-pocketbase)).
+
+8. **Restart ext-walls** so it re-reads the map:
+   ```bash
+   docker compose -f docker/docker-compose.yml restart ext-walls
+   ```
+
+9. **Verify** in the worldsim logs:
+   ```bash
+   docker logs pixeleruv-worldsim-1 2>&1 | grep "gate trigger"
+   # Should show: gate trigger registered extension=walls zone=wall-north behavior=block
+   ```
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `wall-north` (unique) | yes | Becomes the `zone_id` |
+| `zone_type` | `wall` | yes | Tells ext-walls to register a block trigger |
+| Shape | Rectangle | yes | Use rectangle for walls (simplest) |
+| `is_exclusive` | (not set) | no | Walls are not exclusive zones |
+| `mobility` | (not set, defaults to `static`) | no | Walls don't move |
+
+### How to: create a meeting room
+
+Meeting rooms are exclusive zones where the first entrant becomes the owner
+and subsequent visitors must knock to enter. (Note: the full knock-to-join
+logic is not yet implemented — this sets up the zone metadata so a future
+extension can handle it.)
+
+1. **Select the "Zones" object layer**.
+
+2. **Draw a rectangle** over the room area (press `R`).
+
+3. **Name the zone**: e.g. `meeting-room-1`.
+
+4. **Add custom properties**:
+   - `zone_type` = `meeting` (String)
+   - `is_exclusive` = `true` (Boolean)
+
+5. **Save, export, upload** as usual.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `meeting-room-1` (unique) | yes | Becomes the `zone_id` |
+| `zone_type` | `meeting` | yes | Identifies this as a meeting room |
+| `is_exclusive` | `true` | yes | AOI filter excludes non-members; audio isolation |
+| Shape | Rectangle | yes | Cover the entire room area |
+
+### How to: create a water area
+
+Water zones are visual/environmental areas. They don't block movement but
+can trigger audio effects (water ambient sound) in a future extension.
+
+1. **Select the "Zones" object layer**.
+
+2. **Draw a shape** over the water area. You can use:
+   - Rectangle (`R`) for square/rectangular water
+   - Ellipse (`E`) for a pond (hold Shift to make it a perfect circle)
+   - Polygon (`P`) for irregular shorelines (click points, Enter to finish)
+
+3. **Name the zone**: e.g. `water-pond-1`.
+
+4. **Add the `zone_type` property**: `zone_type` = `water` (String).
+
+5. **Save, export, upload** as usual.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `water-pond-1` (unique) | yes | Becomes the `zone_id` |
+| `zone_type` | `water` | yes | Identifies this as a water area |
+| Shape | Any (rect/circle/polygon) | yes | Use whatever fits the shape |
+| `is_exclusive` | (not set) | no | Water is not exclusive |
+
+### How to: create a silent zone
+
+Silent zones suppress audio for everyone inside. Useful for libraries,
+focus areas, or quiet rooms.
+
+1. **Select the "Zones" object layer**.
+
+2. **Draw a rectangle** over the quiet area.
+
+3. **Name the zone**: e.g. `library-quiet-zone`.
+
+4. **Add the `zone_type` property**: `zone_type` = `silent` (String).
+
+5. **Save, export, upload** as usual.
+
+### How to: create a mobile zone (e.g. NPC vision cone)
+
+Mobile zones follow an entity and are evaluated per-tick via distance
+checks. They must be circles.
+
+1. **Select the "Zones" object layer**.
+
+2. **Draw an ellipse** (press `E`) over the entity. The ellipse **must be
+   a perfect circle** (width == height). Hold Shift while drawing, or set
+   width and height to the same value in the properties.
+
+3. **Name the zone**: e.g. `guard-vision-1`.
+
+4. **Add custom properties**:
+   - `zone_type` = `work` (or any relevant type — String)
+   - `mobility` = `mobile` (String)
+   - `follows_entity_id` = `guard-1` (String) — the entity ID the zone follows
+
+5. **Save, export, upload** as usual.
+
+> **Note:** The entity referenced by `follows_entity_id` must exist in the
+> ECS (either a base entity from Tiled or one spawned by an extension).
+> Mobile zones are not pre-rasterized — they're evaluated per-tick.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `guard-vision-1` (unique) | yes | Becomes the `zone_id` |
+| `zone_type` | (any) | no | Hint for the owning extension |
+| `mobility` | `mobile` | yes | Enables per-tick distance evaluation |
+| `follows_entity_id` | `guard-1` | yes | Entity ID the zone follows |
+| Shape | Circle (ellipse w==h) | yes | Mobile zones must be circles |
+
+### How to: add a new tileset to the map
+
+1. **In Tiled**: Map → Map Properties → Tilesets → click `+` to add a
+   tileset. Browse to your PNG file. Set tile size to 32×32.
+
+2. **Draw tiles** on the Ground or Walls layer using the new tileset.
+
+3. **Export** the map as JSON. The tileset is embedded inline automatically.
+
+4. **Upload to PocketBase**: edit the existing `maps` record and add the
+   new tileset PNG to the `tilesets` file field. The filename must match
+   the `image` field in the JSON.
+
+### How to: verify map integrity
+
+After editing and uploading a map, you can run the integrity checker to
+catch common issues (missing layers, duplicate zone IDs, invalid shapes,
+etc.):
+
+```bash
+# Trigger an integrity check via NATS
+nats -s nats://localhost:4222 pub admin.map.integrity ""
+
+# View results
+docker logs pixeleruv-worldsim-1 2>&1 | grep "integrity"
+```
+
+The checker also runs automatically at worldsim startup and every 5
+minutes. Issues are logged at three levels:
+
+| Level | Meaning | Examples |
+|---|---|---|
+| ERROR | Blocks normal operation | Nil map, invalid dimensions, duplicate zone IDs, zero-size zones, polygon < 3 vertices, mobile zone not a circle |
+| WARN | Suspicious but not fatal | No Walls layer, zone outside map bounds, unknown zone_type, exclusive zone without zone_type, spawn on blocked tile |
+| INFO | Informational | Check passed with 0 issues |
+
 ## Common mistakes
 
 | Mistake | Symptom | Fix |
