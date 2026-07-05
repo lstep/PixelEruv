@@ -38,6 +38,7 @@ up:
 
 down:
 	docker compose -f $(COMPOSE_FILE) down
+	@docker rm -f $(NATS_CONTAINER) >/dev/null 2>&1 || true
 
 logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
