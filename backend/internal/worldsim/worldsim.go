@@ -49,13 +49,14 @@ type NetworkSession struct {
 // --- World Sim ---
 
 type Simulator struct {
-	nc      *nats.Conn
-	mapID   string
-	mapData *MapData
-	tickHz  int
-	tickDur time.Duration
-	logger  *slog.Logger
-	tracer  trace.Tracer
+	nc        *nats.Conn
+	mapID     string
+	mapData   *MapData
+	userStore *UserStore
+	tickHz    int
+	tickDur   time.Duration
+	logger    *slog.Logger
+	tracer    trace.Tracer
 
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
@@ -82,15 +83,16 @@ func New(natsURL, mapID, pocketbaseURL string, tickHz int, logger *slog.Logger) 
 	}
 
 	s := &Simulator{
-		nc:       nc,
-		mapID:    mapID,
-		mapData:  mapData,
-		tickHz:   tickHz,
-		tickDur:  time.Second / time.Duration(tickHz),
-		logger:   logger,
-		tracer:   otel.Tracer("worldsim"),
-		entities: make(map[string]*Entity),
-		clients:  make(map[string]*Entity),
+		nc:        nc,
+		mapID:     mapID,
+		mapData:   mapData,
+		userStore: NewUserStore(pocketbaseURL),
+		tickHz:    tickHz,
+		tickDur:   time.Second / time.Duration(tickHz),
+		logger:    logger,
+		tracer:    otel.Tracer("worldsim"),
+		entities:  make(map[string]*Entity),
+		clients:   make(map[string]*Entity),
 	}
 
 	if err := s.subscribe(); err != nil {
@@ -112,8 +114,8 @@ func (s *Simulator) subscribe() error {
 			s.logger.Warn("client.connected unmarshal", "err", err)
 			return
 		}
-		span.SetAttributes(attribute.String("client.id", ar.ClientId))
-		s.provisionClient(ctx, ar.ClientId)
+		span.SetAttributes(attribute.String("client.id", ar.ClientId), attribute.String("user.sub", ar.GetSub()))
+		s.provisionClient(ctx, ar.ClientId, ar.GetSub())
 	}); err != nil {
 		return fmt.Errorf("subscribe client.connected: %w", err)
 	}
@@ -169,7 +171,10 @@ func (s *Simulator) Run(ctx context.Context) error {
 }
 
 // provisionClient creates a player avatar entity for the given client.
-func (s *Simulator) provisionClient(ctx context.Context, clientID string) {
+// If the user has a record in PocketBase (by oidc_sub), their persistent
+// entity_id and last position are restored. Otherwise a new user record
+// is created.
+func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -177,12 +182,27 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID string) {
 		return
 	}
 
-	entityID := "e_" + clientID[2:] // derive from client_id
-
-	// Spawn at map center (or nearest non-wall tile).
+	defaultEntityID := "e_" + clientID[2:]
 	spawnX, spawnY := float32(10), float32(10)
 	if s.mapData != nil {
 		spawnX, spawnY = s.mapData.FindSpawn()
+	}
+
+	entityID := defaultEntityID
+
+	// Look up or create the user in PocketBase for persistent identity.
+	if s.userStore != nil && sub != "" && sub != "dev" {
+		user, err := s.userStore.FindOrCreateUser(sub, defaultEntityID)
+		if err != nil {
+			s.logger.WarnContext(ctx, "user store lookup failed, using defaults",
+				"err", err, "sub", sub)
+		} else {
+			entityID = user.EntityID
+			// Restore saved position if it's valid (not 0,0 — the default).
+			if user.PosX != 0 || user.PosY != 0 {
+				spawnX, spawnY = user.PosX, user.PosY
+			}
+		}
 	}
 
 	e := &Entity{
@@ -198,21 +218,32 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID string) {
 	s.clients[clientID] = e
 
 	s.logger.InfoContext(ctx, "provisioned entity",
-		"entity", entityID, "client", clientID,
+		"entity", entityID, "client", clientID, "sub", sub,
 		"x", e.Position.X, "y", e.Position.Y)
 }
 
 func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	e, ok := s.clients[clientID]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
-	s.logger.InfoContext(ctx, "despawned entity", "entity", e.ID, "client", clientID)
+	posX, posY := e.Position.X, e.Position.Y
+	entityID := e.ID
+	s.mu.Unlock()
+
+	// Save position to PocketBase outside the lock (network I/O).
+	if s.userStore != nil {
+		if err := s.userStore.SavePosition(entityID, posX, posY); err != nil {
+			s.logger.WarnContext(ctx, "failed to save user position", "err", err, "entity", entityID)
+		}
+	}
+
+	s.logger.InfoContext(ctx, "despawned entity", "entity", entityID, "client", clientID)
 }
 
 func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {
