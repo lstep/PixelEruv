@@ -350,13 +350,14 @@ func (s *Simulator) tick() {
 			newY = clamp(newY, 0, float32(s.mapData.Height-1))
 
 			// Collision check: try X and Y independently so the avatar
-			// slides along walls instead of sticking. Use +0.5 because the
-			// sprite center is at position*TILE_SIZE + TILE_SIZE/2, so the
-			// tile the center is in is floor(position + 0.5).
-			if s.isTileBlocked(int(newX+0.5), int(e.Position.Y+0.5)) {
+			// slides along walls instead of sticking. Check a 3x3 grid of
+			// sample points around the player position to catch partial
+			// tile overlaps (especially important for polygon zones where
+			// the wall may cover only part of a tile).
+			if s.isPositionBlocked(newX, e.Position.Y) {
 				newX = e.Position.X
 			}
-			if s.isTileBlocked(int(newX+0.5), int(newY+0.5)) {
+			if s.isPositionBlocked(newX, newY) {
 				newY = e.Position.Y
 			}
 		} else {
@@ -633,21 +634,40 @@ func (s *Simulator) startPeriodicIntegrityCheck(ctx context.Context) {
 	}
 }
 
+// isPositionBlocked checks whether the player at position (px, py) in tile
+// coords is blocked. It samples multiple points around the player's
+// bounding box to catch partial tile overlaps (especially for polygon zones
+// where the wall may cover only part of a tile).
+func (s *Simulator) isPositionBlocked(px, py float32) bool {
+	// Player is treated as a small box (~0.3 tiles radius from center).
+	// Sample the center and 4 corners to catch edge overlaps.
+	const r = 0.3
+	points := [5][2]float32{
+		{px, py},       // center
+		{px - r, py - r}, // top-left
+		{px + r, py - r}, // top-right
+		{px - r, py + r}, // bottom-left
+		{px + r, py + r}, // bottom-right
+	}
+	for _, p := range points {
+		tx := int(p[0] + 0.5)
+		ty := int(p[1] + 0.5)
+		if s.isTileBlocked(tx, ty) {
+			return true
+		}
+	}
+	return false
+}
+
 // isTileBlocked returns true if the tile is blocked by either the Walls
 // tile layer (fallback) or a zone with a block gate trigger from an
 // active extension.
 func (s *Simulator) isTileBlocked(tx, ty int) bool {
 	// Check zone gate triggers first (extension-driven walls).
 	if s.zoneReg != nil {
-		zones := s.zoneReg.ZonesAt(tx, ty)
-		if len(zones) > 0 {
-			for _, zoneID := range zones {
-				blocked := s.extMgr.IsZoneBlocked(zoneID)
-				s.logger.Info("zone gate check",
-					"tx", tx, "ty", ty, "zone", zoneID, "blocked", blocked)
-				if blocked {
-					return true
-				}
+		for _, zoneID := range s.zoneReg.ZonesAt(tx, ty) {
+			if s.extMgr.IsZoneBlocked(zoneID) {
+				return true
 			}
 		}
 	}
