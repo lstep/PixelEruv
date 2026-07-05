@@ -150,19 +150,11 @@ func (r *ZoneRegistry) ZonesAt(tx, ty int) []string {
 }
 
 // ZonesAtPoint returns zones containing the point (px, py) in tile coords.
-// Checks both rasterized static zones and mobile zones.
+// This checks all zones directly in continuous space (no tile rasterization),
+// so it works correctly for shapes thinner than a tile (e.g. polygon walls).
 func (r *ZoneRegistry) ZonesAtPoint(px, py float32) []string {
 	var result []string
-	// Check rasterized static zones via tile lookup.
-	tx, ty := int(math.Floor(float64(px))), int(math.Floor(float64(py)))
-	for id := range r.tileSet[tileKey(tx, ty)] {
-		result = append(result, id)
-	}
-	// Check mobile zones with distance.
 	for _, z := range r.zones {
-		if z.Mobility != "mobile" {
-			continue
-		}
 		if z.Contains(px, py) {
 			result = append(result, z.ID)
 		}

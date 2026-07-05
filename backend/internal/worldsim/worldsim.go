@@ -635,45 +635,37 @@ func (s *Simulator) startPeriodicIntegrityCheck(ctx context.Context) {
 }
 
 // isPositionBlocked checks whether the player at position (px, py) in tile
-// coords is blocked. It samples multiple points around the player's
-// bounding box to catch partial tile overlaps (especially for polygon zones
-// where the wall may cover only part of a tile).
+// coords is blocked. Zone collision is checked in continuous space (directly
+// against zone shapes) for sub-tile precision. Tile-layer collision uses the
+// tile grid as fallback.
 func (s *Simulator) isPositionBlocked(px, py float32) bool {
-	// Player is treated as a small box (~0.3 tiles radius from center).
-	// Sample the center and 4 corners to catch edge overlaps.
-	const r = 0.3
-	points := [5][2]float32{
-		{px, py},       // center
-		{px - r, py - r}, // top-left
-		{px + r, py - r}, // top-right
-		{px - r, py + r}, // bottom-left
-		{px + r, py + r}, // bottom-right
-	}
-	for _, p := range points {
-		tx := int(p[0] + 0.5)
-		ty := int(p[1] + 0.5)
-		if s.isTileBlocked(tx, ty) {
-			return true
-		}
-	}
-	return false
-}
-
-// isTileBlocked returns true if the tile is blocked by either the Walls
-// tile layer (fallback) or a zone with a block gate trigger from an
-// active extension.
-func (s *Simulator) isTileBlocked(tx, ty int) bool {
-	// Check zone gate triggers first (extension-driven walls).
+	// Zone gate triggers: check player's bounding box directly against
+	// zone shapes in continuous space. This handles polygons thinner than
+	// a tile that tile rasterization would miss.
 	if s.zoneReg != nil {
-		for _, zoneID := range s.zoneReg.ZonesAt(tx, ty) {
-			if s.extMgr.IsZoneBlocked(zoneID) {
-				return true
+		const r = 0.3 // player collision radius in tiles
+		points := [5][2]float32{
+			{px, py},         // center
+			{px - r, py - r}, // top-left
+			{px + r, py - r}, // top-right
+			{px - r, py + r}, // bottom-left
+			{px + r, py + r}, // bottom-right
+		}
+		for _, p := range points {
+			for _, zoneID := range s.zoneReg.ZonesAtPoint(p[0], p[1]) {
+				if s.extMgr.IsZoneBlocked(zoneID) {
+					return true
+				}
 			}
 		}
 	}
-	// Fallback: Walls tile layer collision.
-	if s.mapData != nil && s.mapData.IsBlocked(tx, ty) {
-		return true
+	// Fallback: Walls tile layer collision (tile-based by nature).
+	if s.mapData != nil {
+		tx := int(px + 0.5)
+		ty := int(py + 0.5)
+		if s.mapData.IsBlocked(tx, ty) {
+			return true
+		}
 	}
 	return false
 }
