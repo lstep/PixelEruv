@@ -73,13 +73,13 @@ On the host, the layout should look like:
 Three things must be set before `docker compose up` or the stack will either
 fail to start or be unusable remotely.
 
-### 3a. LiveKit API secret (REQUIRED — dist ships with a broken placeholder)
+### 3a. LiveKit API secret (rotate for production)
 
-The dist compose and `dist/docker/livekit.yaml` ship with
-`LIVEKIT_API_SECRET: "secret"` (6 characters). LiveKit rejects secrets
-shorter than 32 characters, so A/V will not start. Generate a real secret
-and replace it in **both** files (they must match — `ext-av` signs join
-tokens with it, LiveKit verifies them):
+The dist compose and `dist/docker/livekit.yaml` ship with a shared dev
+placeholder (`devsecretdevsecretdevsecretdevsecret123`, 40 chars — valid but
+public). For anything beyond local dev, generate a fresh secret and replace
+it in **both** files (they must match — `ext-av` signs join tokens with it,
+LiveKit verifies them):
 
 ```bash
 SECRET=$(openssl rand -hex 32)
@@ -168,7 +168,7 @@ LIVEKIT_NODE_IP=<host-public-ip> docker compose up --build -d
 ```
 
 This starts: `nats`, `pocketbase` (:8090), `dex` (:5556), `pusher` (:8081),
-`worldsim`, `frontend` (:8080 → host **:4080**), `ext-demo`, `ext-walls`,
+`worldsim`, `frontend` (host **:4080**), `ext-demo`, `ext-walls`,
 `ext-props`, `ext-av`, `livekit` (:7880 / :7881 / UDP 50000-50020).
 
 Check it came up:

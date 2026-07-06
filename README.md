@@ -63,6 +63,10 @@ The lite MVP runs a single world: NATS for the bus, a Pusher (WebSocket proxy),
 a World Simulator (authoritative tick loop + replication), and a Phaser
 frontend served by nginx. Two ways to run it:
 
+> **Deploying to a server?** See [`docs/quick-start.md`](docs/quick-start.md) —
+> a step-by-step admin guide covering copying `dist/` to a remote host, TLS
+> via a host nginx proxy, login credentials, and map design/upload.
+
 Prerequisites
 
 * Docker and Docker Compose (for the bundled path), or
@@ -73,10 +77,30 @@ Bundled (Docker Compose)
     make up
 
 This builds the Pusher and World Sim images, starts NATS, and serves the
-frontend with nginx. Open http://localhost:8080 — you should see a 20×20
+frontend with nginx. Open http://localhost:4080 — you should see a 20×20
 tile world. Move with the arrow keys; each browser tab is a player.
 
+For remote access the same compose file also exposes HTTPS on
+`https://localhost:4043` (self-signed cert from `TLS_HOSTS`); see the
+[Quick Start for Admins](docs/quick-start.md) for putting a real TLS
+certificate and a host nginx proxy in front.
+
 To stop: `make down`. To tail logs: `make logs`.
+
+Self-contained `dist/` (no source needed on the host)
+
+    make dist-x86    # linux/amd64 — for Docker deployment on a server
+    make dist-macos  # darwin/arm64 — for native macOS execution
+
+This stages pre-built binaries, web assets, Dockerfiles, compose,
+nginx.conf, livekit.yaml, dex config, and PocketBase migrations into
+`dist/`. Copy the whole `dist/` directory to another machine and run:
+
+    docker compose -f dist/docker-compose.yml up --build
+
+The frontend is served on `http://<host>:4080` (HTTP only — use the host
+nginx + TLS setup in the [Quick Start](docs/quick-start.md) for remote
+browsers, since the PKCE auth flow needs a secure context).
 
 Native binaries + dev server
 
@@ -215,7 +239,9 @@ Project layout
     dist/
       bin/                  Native binaries (build output)
       web/                  Frontend build output + map assets
-      config/               docker-compose.yml, nginx.conf
+      docker/               Dockerfiles, nginx.conf, livekit.yaml, dex config
+      docker-compose.yml    Self-contained compose (run from dist/)
+      pb_migrations/        PocketBase collection schemas
 
 🌱 Project Status
 
