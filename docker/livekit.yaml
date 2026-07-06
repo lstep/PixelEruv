@@ -21,7 +21,7 @@ bind_addresses:
 rtc:
   tcp_port: 7881
   port_range_start: 50000
-  port_range_end: 50100
+  port_range_end: 50020
   # node_ip is injected via the --node-ip flag in docker-compose (defaults to
   # 127.0.0.1 for same-machine dev). use_external_ip MUST be false, otherwise
   # LiveKit ignores --node-ip and advertises a STUN-discovered public IP that

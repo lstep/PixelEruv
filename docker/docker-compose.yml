@@ -123,7 +123,7 @@ services:
 
   # LiveKit SFU server for A/V. API keys must match ext-av.
   livekit:
-    image: livekit/livekit-server:v1.9.8
+    image: livekit/livekit-server:v1.13.2
     # --node-ip sets the IP advertised in WebRTC ICE candidates. Defaults to
     # 127.0.0.1 (same-machine dev via Docker port mapping). For LAN testing
     # with two machines, set LIVEKIT_NODE_IP to the host's LAN IP, e.g.
@@ -135,7 +135,7 @@ services:
       - "7880:7880"   # WebSocket signaling
       - "7881:7881"   # TCP (fallback)
       - "7882:7882/udp" # UDP (WebRTC media)
-      - "50000-50100:50000-50100/udp" # WebRTC ICE range
+      - "50000-50020:50000-50020/udp" # WebRTC ICE range
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     restart: unless-stopped
