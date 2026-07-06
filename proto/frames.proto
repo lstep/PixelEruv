@@ -61,6 +61,7 @@ message ServerFrame {
     ErrorFrame error = 3;
     PongFrame pong = 4;
     ActionResultFrame action_result = 5;
+    AvTokenFrame av_token = 6;
   }
 }
 
@@ -85,3 +86,15 @@ message ErrorFrame {
 }
 
 message PongFrame {}
+
+// AvTokenFrame carries a LiveKit join/leave instruction from ext-av to the
+// browser. On "join", the client connects to the LiveKit room with the
+// provided token + url. On "leave", the client disconnects from that room.
+// See documentation/plans/2026-07-06-livekit-av-design.md.
+message AvTokenFrame {
+  string room = 1;              // LiveKit room name; empty on "leave"
+  string token = 2;             // LiveKit JWT; empty on "leave"
+  string url = 3;               // LiveKit server URL (ws://...)
+  string action = 4;            // "join" or "leave"
+  repeated string members = 5;  // entity IDs in the group (proximity only; empty for zones)
+}
