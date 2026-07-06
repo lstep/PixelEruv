@@ -102,6 +102,14 @@ To serve the built frontend natively instead, point an nginx instance at
 `dist/web/` with `docker/nginx.conf` (change the `proxy_pass` upstream
 from `pusher:8081` to `127.0.0.1:8081` for a non-Docker host).
 
+🎙️ LiveKit node IP
+
+* Dev (now): `LIVEKIT_NODE_IP` unset → defaults to `127.0.0.1` → works because
+  Docker maps ports to your host.
+* Production: set `LIVEKIT_NODE_IP=<your-public-ip>` (env var or `.env` file) →
+  LiveKit advertises that IP in ICE candidates → browsers on the internet can
+  route media back to it.
+
 🔍 Debugging with motel
 
 The backend (pusher, worldsim) and frontend are instrumented with

@@ -71,6 +71,10 @@ export class AvOverlay {
   // syncParticipants creates/removes video elements to match the current
   // participant set. Attaches LiveKit camera tracks to <video> elements.
   private syncParticipants(participants: Map<string, AvParticipant>): void {
+    console.log(`[DEBUG-av] syncParticipants: count=${participants.size} ids=[${[...participants.keys()].join(",")}]`);
+    for (const [eid, p] of participants) {
+      console.log(`[DEBUG-av]   participant: eid=${eid} hasCamera=${p.hasCamera} cameraTrack=${!!p.cameraTrack}`);
+    }
     // Remove videos for departed participants.
     for (const [entityId, tile] of this.videos) {
       if (!participants.has(entityId)) {
@@ -83,6 +87,7 @@ export class AvOverlay {
     for (const [entityId, p] of participants) {
       let tile = this.videos.get(entityId);
       if (!tile && p.cameraTrack) {
+        console.log(`[DEBUG-av] creating video tile for entityId=${entityId}`);
         const video = document.createElement("video");
         video.autoplay = true;
         video.playsInline = true;
@@ -109,6 +114,9 @@ export class AvOverlay {
   updatePositions(
     avatarScreenPos: (entityId: string) => { x: number; y: number; scale: number } | null,
   ): void {
+    if (this.videos.size > 0) {
+      console.log(`[DEBUG-av] updatePositions: tiles=${this.videos.size} ids=[${[...this.videos.keys()].join(",")}]`);
+    }
     for (const [entityId, tile] of this.videos) {
       const pos = avatarScreenPos(entityId);
       if (!pos) {
