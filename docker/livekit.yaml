@@ -1,8 +1,13 @@
 # LiveKit server config for local dev.
 # API keys must match ext-av's LIVEKIT_API_KEY/LIVEKIT_API_SECRET env vars.
+#
+# Schema reference: github.com/livekit/livekit config-sample.yaml
+#   - `port` is the WebSocket signaling port.
+#   - `rtc.tcp_port` enables WebRTC-over-TCP fallback (under rtc:, not top-level).
+#   - `rtc.port_range_start/end` is the UDP media port range.
+#   - top-level `tcp_port`/`udp_port` were removed in newer versions; keeping
+#     them at the top level makes livekit-server refuse to start.
 port: 7880
-tcp_port: 7881
-udp_port: 7882
 
 # Dev API keys (DO NOT use in production).
 keys:
@@ -14,6 +19,7 @@ bind_addresses:
 
 # WebRTC ICE port range (must match docker-compose port mapping).
 rtc:
+  tcp_port: 7881
   port_range_start: 50000
   port_range_end: 50100
   use_external_ip: true

@@ -120,7 +120,7 @@ services:
 
   # LiveKit SFU server for A/V. API keys must match ext-av.
   livekit:
-    image: livekit/livekit-server:latest
+    image: livekit/livekit-server:v1.9.8
     command: ["--config", "/etc/livekit.yaml"]
     ports:
       - "7880:7880"   # WebSocket signaling
