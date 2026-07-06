@@ -334,7 +334,6 @@ export class GameScene extends Phaser.Scene {
   // retrying. Fixed to the screen (scrollFactor 0) so it stays visible.
   private reconnectOverlay: Phaser.GameObjects.Text | null = null;
   // One-shot diagnostic log set for avatarScreenPos null returns.
-  private _avPosDiagLogged: Set<string> | null = null;
 
   constructor() {
     super("GameScene");
@@ -809,27 +808,15 @@ export class GameScene extends Phaser.Scene {
       // Position video tiles above avatars in screen space.
       this.avOverlay.updatePositions((entityId) => {
         const av = this.avatars.get(entityId);
-        if (!av) {
-          if (!this._avPosDiagLogged?.has(entityId)) {
-            this._avPosDiagLogged = this._avPosDiagLogged ?? new Set<string>();
-            this._avPosDiagLogged.add(entityId);
-            console.warn(`[DEBUG-av] avatarScreenPos: entityId=${entityId} NOT in avatars map (map size=${this.avatars.size} keys=[${[...this.avatars.keys()].join(",")}])`);
-          }
-          return null;
-        }
+        if (!av) return null;
         const cam = this.cameras.main;
-        const screenX = (av.sprite.x - cam.scrollX) * cam.zoom;
-        const screenY = (av.sprite.y - cam.scrollY) * cam.zoom;
-        // Skip if offscreen.
-        if (screenX < -50 || screenX > this.scale.width + 50 ||
-            screenY < -50 || screenY > this.scale.height + 50) {
-          if (!this._avPosDiagLogged?.has(entityId + ":offscreen")) {
-            this._avPosDiagLogged = this._avPosDiagLogged ?? new Set<string>();
-            this._avPosDiagLogged.add(entityId + ":offscreen");
-            console.warn(`[DEBUG-av] avatarScreenPos: entityId=${entityId} OFFSCREEN screenX=${screenX.toFixed(0)} screenY=${screenY.toFixed(0)} canvas=${this.scale.width}x${this.scale.height} zoom=${cam.zoom} scroll=${cam.scrollX.toFixed(0)},${cam.scrollY.toFixed(0)} world=${av.sprite.x.toFixed(0)},${av.sprite.y.toFixed(0)}`);
-          }
-          return null;
-        }
+        let screenX = (av.sprite.x - cam.scrollX) * cam.zoom;
+        let screenY = (av.sprite.y - cam.scrollY) * cam.zoom;
+        // Clamp to screen edges so video tiles remain visible for A/V zone
+        // participants even when their avatar is outside the viewport.
+        const margin = 60;
+        screenX = Phaser.Math.Clamp(screenX, margin, this.scale.width - margin);
+        screenY = Phaser.Math.Clamp(screenY, margin, this.scale.height - margin);
         return { x: screenX, y: screenY, scale: cam.zoom };
       });
     }
