@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import { fromBinary } from "@bufbuild/protobuf";
 import { AppearanceSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
+import { AvClient } from "../net/AvClient";
+import { AvOverlay } from "../net/AvOverlay";
 import type { MapAssets } from "../mapLoader";
 
 const TILE_SIZE = 32;
@@ -309,6 +311,8 @@ export class GameScene extends Phaser.Scene {
   private ws: WsClient | null = null;
   private avatars: Map<string, Avatar> = new Map();
   private myEntityId: string | null = null;
+  private avClient: AvClient | null = null;
+  private avOverlay: AvOverlay | null = null;
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
   private colorIndex = 0;
@@ -653,6 +657,9 @@ export class GameScene extends Phaser.Scene {
       : `ws://${window.location.host}/ws`;
     console.log("connecting to", wsUrl);
     this.ws = new WsClient(wsUrl);
+    // A/V client + DOM overlay for video tiles and HUD controls.
+    this.avClient = new AvClient();
+    this.avOverlay = new AvOverlay(this, this.avClient);
     // "Reconnecting…" overlay — created up front, hidden until the WS drops.
     this.reconnectOverlay = this.add
       .text(this.scale.width / 2, 24, "Reconnecting…", {
@@ -698,6 +705,17 @@ export class GameScene extends Phaser.Scene {
         if (!this.reconnectOverlay) return;
         this.reconnectOverlay.setVisible(state === "reconnecting" || state === "closed");
       },
+      onAvToken: (msg) => {
+        this.avClient?.handleTokenFrame(msg);
+      },
+    });
+
+    // Clean up A/V overlay + LiveKit room on scene shutdown.
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.avOverlay?.destroy();
+      this.avClient?.close();
+      this.avOverlay = null;
+      this.avClient = null;
     });
   }
 
@@ -760,6 +778,36 @@ export class GameScene extends Phaser.Scene {
       } else {
         this.updateAvatarAnim(avatar, avatar.dir, false);
       }
+    }
+
+    // --- A/V: spatial volume + video tile positioning ---
+    if (this.avClient && this.avOverlay) {
+      const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+      if (local) {
+        const localX = local.sprite.x / TILE_SIZE;
+        const localY = local.sprite.y / TILE_SIZE;
+        const maxDist = 10; // tiles; volume reaches 0 at this distance
+        for (const avatar of this.avatars.values()) {
+          if (avatar.entityId === this.myEntityId) continue;
+          const ax = avatar.sprite.x / TILE_SIZE;
+          const ay = avatar.sprite.y / TILE_SIZE;
+          const dist = Math.hypot(ax - localX, ay - localY);
+          const vol = Math.max(0, 1 - dist / maxDist);
+          this.avClient.setParticipantVolume(avatar.entityId, vol);
+        }
+      }
+      // Position video tiles above avatars in screen space.
+      this.avOverlay.updatePositions((entityId) => {
+        const av = this.avatars.get(entityId);
+        if (!av) return null;
+        const cam = this.cameras.main;
+        const screenX = (av.sprite.x - cam.scrollX) * cam.zoom;
+        const screenY = (av.sprite.y - cam.scrollY) * cam.zoom;
+        // Skip if offscreen.
+        if (screenX < -50 || screenX > this.scale.width + 50 ||
+            screenY < -50 || screenY > this.scale.height + 50) return null;
+        return { x: screenX, y: screenY, scale: cam.zoom };
+      });
     }
   }
 
