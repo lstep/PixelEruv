@@ -133,6 +133,12 @@ export class AvClient {
       console.log(`[DEBUG-av] TrackUnsubscribed: identity=${participant.identity}`);
       this.updateParticipant(participant.identity, participant);
     });
+    this.room.on(lk.RoomEvent.TrackSubscriptionFailed, (identity: string, err: Error) => {
+      console.error(`[DEBUG-av] TrackSubscriptionFailed: identity=${identity}`, err);
+    });
+    this.room.on(lk.RoomEvent.ConnectionQualityChanged, (quality: any, participant: any) => {
+      console.log(`[DEBUG-av] ConnectionQuality: identity=${participant.identity} quality=${quality}`);
+    });
 
     try {
       await this.room.connect(url, token);
@@ -145,9 +151,20 @@ export class AvClient {
     }
     console.log(`AvClient: connected to room ${roomName}`);
 
-    // Publish mic + camera tracks based on current settings.
-    await this.room.localParticipant.setMicrophoneEnabled(!this.micMuted);
-    await this.room.localParticipant.setCameraEnabled(this.cameraEnabled);
+    // Publish mic + camera tracks based on current settings. These can fail
+    // independently (e.g. Safari NotAllowedError if the user denied camera
+    // permission) — the room is still connected and can receive remote video.
+    // We must NOT let a publishing failure tear down the room connection.
+    try {
+      await this.room.localParticipant.setMicrophoneEnabled(!this.micMuted);
+    } catch (err) {
+      console.warn("AvClient: microphone publish failed (room still connected):", err);
+    }
+    try {
+      await this.room.localParticipant.setCameraEnabled(this.cameraEnabled);
+    } catch (err) {
+      console.warn("AvClient: camera publish failed (room still connected):", err);
+    }
 
     // Populate existing participants.
     for (const p of this.room.remoteParticipants.values()) {
