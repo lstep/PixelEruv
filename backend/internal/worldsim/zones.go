@@ -24,6 +24,7 @@ type Zone struct {
 	ZoneType   string        // "meeting", "water", "work", "silent", etc.
 	IsExclusive bool
 	Mobility   string        // "static" or "mobile"
+	AvEnabled  bool          // zone has av_enabled Tiled property → zone-based A/V room
 }
 
 // Contains returns true if the point (px, py) in tile coords is inside the zone.

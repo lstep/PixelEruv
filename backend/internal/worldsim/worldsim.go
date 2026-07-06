@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -400,12 +402,15 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 	}
 	// Create a mobile proximity zone that follows this avatar. Other players
 	// entering it triggers zone.enter, which the proximity clustering step
-	// uses to group nearby players into shared A/V rooms.
+	// uses to group nearby players into shared A/V rooms. Centered at the
+	// avatar's feet (Position.Y + avatarFeetYOffset) to match where zone
+	// detection evaluates membership.
+	feetY := spawnY + avatarFeetYOffset
 	e.mobileZone = &Zone{
 		ID:       "prox-" + entityID,
 		Shape:    ShapeCircle,
 		X:        spawnX - proximityRadius,
-		Y:        spawnY - proximityRadius,
+		Y:        feetY - proximityRadius,
 		W:        proximityRadius * 2,
 		H:        proximityRadius * 2,
 		Radius:   proximityRadius,
@@ -634,12 +639,13 @@ func (s *Simulator) tick() {
 
 	// --- Update mobile zone positions ---
 	// Move each player's proximity circle to follow their avatar's current
-	// position (after movement was applied this tick). Must happen before
+	// position (after movement was applied this tick). Centered at the feet
+	// to match where zone detection evaluates membership. Must happen before
 	// zone detection so the zone check sees up-to-date positions.
 	for _, e := range s.entities {
 		if e.mobileZone != nil && e.Position != nil {
 			e.mobileZone.X = e.Position.X - proximityRadius
-			e.mobileZone.Y = e.Position.Y - proximityRadius
+			e.mobileZone.Y = e.Position.Y + avatarFeetYOffset - proximityRadius
 		}
 	}
 
@@ -671,6 +677,11 @@ func (s *Simulator) tick() {
 			}
 		}
 		e.currentZones = newSet
+	}
+
+	// --- Proximity clustering (throttled to ~4Hz) ---
+	if s.tickCount%5 == 0 {
+		s.runProximityClustering(ctx)
 	}
 
 	// --- Replication ---
@@ -1152,6 +1163,176 @@ func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clien
 		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
 	}
 	s.logger.InfoContext(ctx, "zone event", "event", event, "entity", entityID, "zone", zoneID)
+}
+
+// proximityEventPayload is the NATS payload for proximity.join/leave events.
+type proximityEventPayload struct {
+	EntityID string   `json:"entity_id"`
+	ClientID string   `json:"client_id"`
+	GroupID  string   `json:"group_id"`
+	MapID    string   `json:"map_id"`
+	Members  []string `json:"members,omitempty"`
+}
+
+// runProximityClustering groups nearby players (not in av_enabled zones) into
+// proximity A/V groups via connected components on the "who is near whom"
+// graph, then publishes edge-triggered proximity.join/proximity.leave events
+// when a player's group assignment changes. Caller must hold s.mu.
+func (s *Simulator) runProximityClustering(ctx context.Context) {
+	if s.zoneReg == nil {
+		return
+	}
+
+	// Build a set of av_enabled zone IDs. Players inside these zones get
+	// zone-based A/V instead of proximity A/V (zones override proximity).
+	avZones := make(map[string]bool)
+	for _, z := range s.zoneReg.zones {
+		if z.AvEnabled {
+			avZones[z.ID] = true
+		}
+	}
+
+	// Collect player entities not in any av_enabled zone.
+	var players []*Entity
+	inAVZone := make(map[string]bool)
+	for _, e := range s.entities {
+		if e.NetworkSession == nil {
+			continue
+		}
+		for zid := range e.currentZones {
+			if avZones[zid] {
+				inAVZone[e.ID] = true
+				break
+			}
+		}
+		if !inAVZone[e.ID] {
+			players = append(players, e)
+		}
+	}
+
+	// Build adjacency: A and B are adjacent if A is inside B's proximity zone
+	// or B is inside A's proximity zone (symmetric). Zone membership is
+	// already tracked in currentZones from the zone detection step above.
+	adj := make(map[string]map[string]bool)
+	for _, e := range players {
+		adj[e.ID] = make(map[string]bool)
+	}
+	for _, a := range players {
+		for _, b := range players {
+			if a.ID == b.ID {
+				continue
+			}
+			if a.currentZones["prox-"+b.ID] || b.currentZones["prox-"+a.ID] {
+				adj[a.ID][b.ID] = true
+				adj[b.ID][a.ID] = true
+			}
+		}
+	}
+
+	// Find connected components via BFS.
+	visited := make(map[string]bool)
+	var groups [][]string
+	for _, e := range players {
+		if visited[e.ID] {
+			continue
+		}
+		// BFS from this node.
+		queue := []string{e.ID}
+		visited[e.ID] = true
+		var comp []string
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			comp = append(comp, cur)
+			for neighbor := range adj[cur] {
+				if !visited[neighbor] {
+					visited[neighbor] = true
+					queue = append(queue, neighbor)
+				}
+			}
+		}
+		groups = append(groups, comp)
+	}
+
+	// Assign group IDs and detect changes.
+	newGroup := make(map[string]string)    // entity_id -> group_id
+	groupMembers := make(map[string][]string) // group_id -> sorted member entity IDs
+	for _, comp := range groups {
+		if len(comp) < 2 {
+			// Singleton — no proximity group.
+			continue
+		}
+		sorted := append([]string(nil), comp...)
+		sort.Strings(sorted)
+		h := fnv.New64a()
+		for _, id := range sorted {
+			h.Write([]byte(id))
+			h.Write([]byte{0}) // separator
+		}
+		gid := fmt.Sprintf("proxgroup-%016x", h.Sum64())
+		for _, id := range comp {
+			newGroup[id] = gid
+		}
+		groupMembers[gid] = sorted
+	}
+
+	// Publish edge-triggered events for changes.
+	for _, e := range players {
+		old := e.currentProximityGroup
+		newG := newGroup[e.ID]
+
+		if old == newG {
+			continue
+		}
+
+		clientID := e.NetworkSession.ClientID
+
+		// Leave old group (if any).
+		if old != "" {
+			s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientID, old, nil)
+		}
+
+		// Join new group (if any).
+		if newG != "" {
+			s.publishProximityEvent(ctx, "proximity.join", e.ID, clientID, newG, groupMembers[newG])
+		}
+
+		e.currentProximityGroup = newG
+	}
+
+	// Players in av_enabled zones leave any proximity group they were in.
+	for _, e := range s.entities {
+		if e.NetworkSession == nil || !inAVZone[e.ID] {
+			continue
+		}
+		if e.currentProximityGroup != "" {
+			clientID := e.NetworkSession.ClientID
+			s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientID, e.currentProximityGroup, nil)
+			e.currentProximityGroup = ""
+		}
+	}
+}
+
+// publishProximityEvent publishes a proximity.join or proximity.leave event
+// to NATS. ext-av subscribes to these to mint LiveKit tokens for proximity
+// A/V rooms.
+func (s *Simulator) publishProximityEvent(ctx context.Context, event, entityID, clientID, groupID string, members []string) {
+	payload := proximityEventPayload{
+		EntityID: entityID,
+		ClientID: clientID,
+		GroupID:  groupID,
+		MapID:    s.mapID,
+		Members:  members,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.WarnContext(ctx, "proximity event marshal", "err", err)
+		return
+	}
+	if err := s.nc.Publish(event, data); err != nil {
+		s.logger.WarnContext(ctx, "proximity event publish", "event", event, "err", err)
+	}
+	s.logger.InfoContext(ctx, "proximity event", "event", event, "entity", entityID, "group", groupID)
 }
 
 // subjectClientID extracts the client_id from a subject like "client.<id>.input".
