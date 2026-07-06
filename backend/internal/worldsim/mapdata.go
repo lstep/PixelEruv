@@ -258,6 +258,10 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 					if s, ok := prop.Value.(string); ok {
 						z.Mobility = s
 					}
+				case "av_enabled":
+					if b, ok := prop.Value.(bool); ok {
+						z.AvEnabled = b
+					}
 				}
 			}
 
