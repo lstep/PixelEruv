@@ -330,9 +330,11 @@ export class GameScene extends Phaser.Scene {
   // Tilesets from the Tiled JSON, stored so handleReplication can resolve
   // Appearance gids to tileset sheet + frame for base entity sprites.
   private tilesets: TiledMapJSON["tilesets"] = [];
-  // "Reconnecting…" overlay shown when the WebSocket drops and WsClient is
-  // retrying. Fixed to the screen (scrollFactor 0) so it stays visible.
-  private reconnectOverlay: Phaser.GameObjects.Text | null = null;
+  // Full-screen "Server not available" overlay shown whenever the WebSocket
+  // is not in the "open" state (initial connect, reconnect attempts, or
+  // terminal close). Grays out the screen and freezes the scene until the
+  // connection is restored. Fixed to the screen (scrollFactor 0).
+  private disconnectOverlay: Phaser.GameObjects.Container | null = null;
 
   constructor() {
     super("GameScene");
@@ -660,19 +662,33 @@ export class GameScene extends Phaser.Scene {
     // A/V client + DOM overlay for video tiles and HUD controls.
     this.avClient = new AvClient();
     this.avOverlay = new AvOverlay(this, this.avClient);
-    // "Reconnecting…" overlay — created up front, hidden until the WS drops.
-    this.reconnectOverlay = this.add
-      .text(this.scale.width / 2, 24, "Reconnecting…", {
-        fontFamily: "monospace",
-        fontSize: "16px",
-        color: "#ffffff",
-        backgroundColor: "#000000",
-        padding: { x: 12, y: 6 },
-      })
-      .setOrigin(0.5, 0)
+    // "Server not available" overlay — a full-screen gray dim plus a red
+    // centered message. Visible from the start (we boot in "connecting"),
+    // hidden once the WS reaches "open", and reshown on any drop. While it
+    // is visible the scene is paused so local prediction doesn't move the
+    // avatar against a dead server.
+    const dim = this.add
+      .rectangle(0, 0, this.scale.width, this.scale.height, 0x404040, 0.85)
+      .setOrigin(0, 0)
       .setScrollFactor(0)
-      .setDepth(9999)
-      .setVisible(false);
+      .setDepth(9998);
+    const msg = this.add
+      .text(this.scale.width / 2, this.scale.height / 2, "Server not available", {
+        fontFamily: "monospace",
+        fontSize: "32px",
+        color: "#ff0000",
+        stroke: "#000000",
+        strokeThickness: 4,
+      })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(9999);
+    this.disconnectOverlay = this.add
+      .container(0, 0, [dim, msg])
+      .setScrollFactor(0)
+      .setDepth(9999);
+    // Freeze the scene until the first successful auth.
+    this.scene.pause("GameScene");
     this.ws.connect({
       onReady: () => {
         // Use the entity ID from the server's AuthResult. The server may
@@ -702,8 +718,11 @@ export class GameScene extends Phaser.Scene {
         console.log("reconnected, myEntityId=", this.myEntityId);
       },
       onStateChange: (state: ConnectionState) => {
-        if (!this.reconnectOverlay) return;
-        this.reconnectOverlay.setVisible(state === "reconnecting" || state === "closed");
+        if (!this.disconnectOverlay) return;
+        const connected = state === "open";
+        this.disconnectOverlay.setVisible(!connected);
+        if (connected) this.scene.resume("GameScene");
+        else this.scene.pause("GameScene");
       },
       onAvToken: (msg) => {
         this.avClient?.handleTokenFrame(msg).catch((err) =>
