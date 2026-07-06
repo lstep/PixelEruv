@@ -616,14 +616,18 @@ func (s *Simulator) tick() {
 		for _, zid := range newZones {
 			newSet[zid] = true
 		}
+		clientID := ""
+		if e.NetworkSession != nil {
+			clientID = e.NetworkSession.ClientID
+		}
 		for zid := range newSet {
 			if !e.currentZones[zid] {
-				s.publishZoneEvent(ctx, "zone.enter", e.ID, zid)
+				s.publishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid)
 			}
 		}
 		for zid := range e.currentZones {
 			if !newSet[zid] {
-				s.publishZoneEvent(ctx, "zone.exit", e.ID, zid)
+				s.publishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid)
 			}
 		}
 		e.currentZones = newSet
@@ -1086,9 +1090,11 @@ func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
 
 // publishZoneEvent publishes a zone.enter or zone.exit event to NATS.
 // Extensions subscribe to these subjects to observe zone transitions.
-func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, zoneID string) {
-	subject := fmt.Sprintf("zone.%s", event)
-	data := fmt.Sprintf(`{"entity_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, zoneID, s.mapID)
+// clientID is the player's client_id (empty for base entities without a
+// NetworkSession); extensions like ext-av use it to address token replies.
+func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID string) {
+	subject := event // event already contains the full subject (e.g. "zone.enter")
+	data := fmt.Sprintf(`{"entity_id":"%s","client_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, clientID, zoneID, s.mapID)
 	if err := s.nc.Publish(subject, []byte(data)); err != nil {
 		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
 	}
