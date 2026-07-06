@@ -77,6 +77,23 @@ func NewZoneRegistry(zones []*Zone, mapW, mapH int) *ZoneRegistry {
 	return &ZoneRegistry{zones: zones}
 }
 
+// AddZone adds a zone to the registry. Used for mobile zones (proximity
+// circles that follow player avatars). Caller must hold the Simulator lock.
+func (r *ZoneRegistry) AddZone(z *Zone) {
+	r.zones = append(r.zones, z)
+}
+
+// RemoveZone removes a zone by ID. Used when a player despawns and their
+// mobile proximity zone is no longer needed. Caller must hold the Simulator lock.
+func (r *ZoneRegistry) RemoveZone(zoneID string) {
+	for i, z := range r.zones {
+		if z.ID == zoneID {
+			r.zones = append(r.zones[:i], r.zones[i+1:]...)
+			return
+		}
+	}
+}
+
 // ZonesAtPoint returns the IDs of zones that contain the point (px, py)
 // in tile coords. Checks all zones directly in continuous space.
 func (r *ZoneRegistry) ZonesAtPoint(px, py float32) []string {
