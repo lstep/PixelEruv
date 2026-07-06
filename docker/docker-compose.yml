@@ -118,6 +118,39 @@ services:
       NATS_URL: "nats://nats:4222"
     restart: unless-stopped
 
+  # LiveKit SFU server for A/V. API keys must match ext-av.
+  livekit:
+    image: livekit/livekit-server:latest
+    command: ["--config", "/etc/livekit.yaml"]
+    ports:
+      - "7880:7880"   # WebSocket signaling
+      - "7881:7881"   # TCP (fallback)
+      - "7882:7882/udp" # UDP (WebRTC media)
+      - "50000-50100:50000-50100/udp" # WebRTC ICE range
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+
+  ext-av:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: ext-av
+    depends_on:
+      - nats
+      - pocketbase
+      - livekit
+    environment:
+      NATS_URL: "nats://nats:4222"
+      POCKETBASE_URL: "http://pocketbase:8090"
+      MAP_ID: "test-map"
+      LIVEKIT_URL: "ws://livekit:7880"
+      # Browser-facing URL (host-exposed port, not Docker-internal).
+      LIVEKIT_PUBLIC_URL: "ws://localhost:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "secret"
+    restart: unless-stopped
+
 volumes:
   pb_data:
   dex_data:

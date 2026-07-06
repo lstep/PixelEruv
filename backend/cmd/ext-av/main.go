@@ -79,6 +79,11 @@ func main() {
 	mapID := envOr("MAP_ID", "test-map")
 	extID := envOr("EXTENSION_ID", "av")
 	livekitURL := envOr("LIVEKIT_URL", "ws://localhost:7880")
+	// LIVEKIT_PUBLIC_URL is the URL the browser uses to reach LiveKit.
+	// Defaults to LIVEKIT_URL (fine when the browser and ext-av share the
+	// same network). In Docker, set this to the host-exposed URL (e.g.
+	// ws://localhost:7880) since LIVEKIT_URL is the Docker-internal address.
+	livekitPublicURL := envOr("LIVEKIT_PUBLIC_URL", livekitURL)
 	livekitAPIKey := os.Getenv("LIVEKIT_API_KEY")
 	livekitAPISecret := os.Getenv("LIVEKIT_API_SECRET")
 	heartbeatS := 10
@@ -171,7 +176,7 @@ func main() {
 			Action: "join",
 			Room:   room,
 			Token:  token,
-			URL:    livekitURL,
+			URL:    livekitPublicURL,
 		})
 		logger.Info("zone A/V join", "entity", ev.EntityID, "zone", ev.ZoneID, "room", room)
 	})
@@ -211,7 +216,7 @@ func main() {
 			Action:  "join",
 			Room:    room,
 			Token:   token,
-			URL:     livekitURL,
+			URL:     livekitPublicURL,
 			Members: ev.Members,
 		})
 		logger.Info("proximity A/V join", "entity", ev.EntityID, "group", ev.GroupID, "members", ev.Members)
