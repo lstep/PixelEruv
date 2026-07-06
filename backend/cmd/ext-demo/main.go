@@ -114,6 +114,7 @@ func main() {
 	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
 	defer ticker.Stop()
 
+	var ticks int
 	for {
 		select {
 		case <-ctx.Done():
@@ -122,9 +123,10 @@ func main() {
 		case <-ticker.C:
 			nc.Publish(hbSubject, []byte(extID))
 			// Re-register every 3rd heartbeat (idempotent on worldsim side).
-			if time.Now().Unix()%int64(heartbeatS*3) < int64(heartbeatS) {
+			if ticks%3 == 0 {
 				nc.Publish(regSubject, regData)
 			}
+			ticks++
 		}
 	}
 }
