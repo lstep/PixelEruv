@@ -155,6 +155,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-06 | LiveKit tokens via NATS → pusher → WS (not direct browser→ext-av) | ext-av mints JWTs and publishes `client.<id>.av_token` to NATS. Pusher subscribes per-session and forwards as `AvTokenFrame` over the existing WS. No new transport — reuses the pusher's auth + session management. |
 | 2026-07-06 | `LIVEKIT_PUBLIC_URL` separate from `LIVEKIT_URL` | ext-av (in Docker) connects to `ws://livekit:7880` (Docker-internal), but the browser needs `ws://localhost:7880` (host-exposed). ext-av sends `LIVEKIT_PUBLIC_URL` in the token frame so the browser can reach the SFU. |
 | 2026-07-06 | LiveKit SDK lazy-loaded in frontend | `livekit-client` is dynamically imported on first A/V token, keeping the main bundle small (~1.5MB vs +2MB if statically imported). |
+| 2026-07-06 | Pin livekit image to v1.9.8 (not `latest`) + fixed config schema | `livekit/livekit-server:latest` drifted to a config schema that rejects top-level `tcp_port`/`udp_port`; the SFU crash-looped silently. `tcp_port` now lives under `rtc:`; top-level `udp_port` removed. Pinning prevents future drift. |
+| 2026-07-06 | Re-upload map to PocketBase after editing assets/map1.json | ext-av reads the map from PocketBase, not the repo. The committed `av_enabled` property on `meeting-room-1` was invisible until the map was re-uploaded (superuser PATCH on the `maps` record). Workflow: edit in Tiled → save to `assets/` → re-upload file to PocketBase → worldsim hot-reloads within 30s → ext-av/ext-walls re-read. |
 
 ## Test accounts
 
