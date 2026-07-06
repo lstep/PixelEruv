@@ -21,6 +21,9 @@ export interface ConnectHandlers {
   // reconnect because the pusher mints a fresh session.
   onReconnect?: (clientId: string, entityId: string) => void;
   onStateChange?: (state: ConnectionState) => void;
+  // Fired when an AvTokenFrame is received (LiveKit join/leave instruction
+  // from ext-av via the pusher).
+  onAvToken?: (msg: { action: string; room: string; token: string; url: string; members: string[] }) => void;
 }
 
 export interface SpawnEntityView {
@@ -169,6 +172,17 @@ export class WsClient {
         case "actionResult": {
           const ar = serverFrame.payload.value;
           console.log(`action result: ok=${ar.ok} reason="${ar.reason}" seq=${ar.seq}`);
+          break;
+        }
+        case "avToken": {
+          const av = serverFrame.payload.value;
+          this.handlers.onAvToken?.({
+            action: av.action,
+            room: av.room,
+            token: av.token,
+            url: av.url,
+            members: av.members,
+          });
           break;
         }
         case "error":
