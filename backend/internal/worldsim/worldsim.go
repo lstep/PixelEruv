@@ -61,6 +61,15 @@ type Entity struct {
 	// currentZones tracks which zone IDs the entity is currently inside.
 	// Used to detect enter/exit transitions.
 	currentZones map[string]bool
+	// mobileZone is the player's proximity circle zone (radius proximityRadius)
+	// that follows the avatar's position each tick. Other players entering
+	// this zone triggers zone.enter for the proximity clustering step.
+	// nil for base entities (only player avatars get one).
+	mobileZone *Zone
+	// currentProximityGroup is the stable ID of the proximity A/V group the
+	// player currently belongs to (e.g. "proxgroup-<hash>"). Empty when not
+	// in a proximity group. Used to detect join/leave transitions.
+	currentProximityGroup string
 }
 
 type NetworkSession struct {
@@ -389,6 +398,22 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 		spawnedTo:    make(map[string]bool),
 		currentZones: make(map[string]bool),
 	}
+	// Create a mobile proximity zone that follows this avatar. Other players
+	// entering it triggers zone.enter, which the proximity clustering step
+	// uses to group nearby players into shared A/V rooms.
+	e.mobileZone = &Zone{
+		ID:       "prox-" + entityID,
+		Shape:    ShapeCircle,
+		X:        spawnX - proximityRadius,
+		Y:        spawnY - proximityRadius,
+		W:        proximityRadius * 2,
+		H:        proximityRadius * 2,
+		Radius:   proximityRadius,
+		Mobility: "mobile",
+	}
+	if s.zoneReg != nil {
+		s.zoneReg.AddZone(e.mobileZone)
+	}
 	s.entities[entityID] = e
 	s.clients[clientID] = e
 
@@ -405,6 +430,10 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	if !ok {
 		s.mu.Unlock()
 		return
+	}
+	// Remove the player's mobile proximity zone from the registry.
+	if e.mobileZone != nil && s.zoneReg != nil {
+		s.zoneReg.RemoveZone(e.mobileZone.ID)
 	}
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
@@ -602,6 +631,17 @@ func (s *Simulator) tick() {
 	s.snapshotSeq++
 
 	s.runMovementSystem()
+
+	// --- Update mobile zone positions ---
+	// Move each player's proximity circle to follow their avatar's current
+	// position (after movement was applied this tick). Must happen before
+	// zone detection so the zone check sees up-to-date positions.
+	for _, e := range s.entities {
+		if e.mobileZone != nil && e.Position != nil {
+			e.mobileZone.X = e.Position.X - proximityRadius
+			e.mobileZone.Y = e.Position.Y - proximityRadius
+		}
+	}
 
 	// --- Zone enter/exit detection ---
 	for _, e := range s.entities {
@@ -879,6 +919,13 @@ func (s *Simulator) checkMapReload() {
 	s.zoneReg = NewZoneRegistry(newMapData.Zones, newMapData.Width, newMapData.Height)
 	s.mapFilename = info.TiledJSONFilename
 	s.reloadBaseEntities(newMapData.Entities)
+	// Re-add mobile proximity zones for all connected players — the registry
+	// was rebuilt from scratch above, wiping them.
+	for _, e := range s.clients {
+		if e.mobileZone != nil {
+			s.zoneReg.AddZone(e.mobileZone)
+		}
+	}
 	s.mu.Unlock()
 
 	// Run integrity check on the new map.
@@ -1015,6 +1062,12 @@ func (s *Simulator) runMovementSystem() {
 // feet, not at Position.Y (the sprite origin/upper-body), otherwise the player
 // stops with feet buried in a wall or stops a full tile short of it.
 const avatarFeetYOffset = 1.0
+
+// proximityRadius is the radius (in tiles) of each player's mobile proximity
+// zone. Two players within this distance of each other are grouped into the
+// same proximity A/V LiveKit room. See
+// documentation/plans/2026-07-06-livekit-av-design.md.
+const proximityRadius = 2.0
 
 // playerCollisionRadius is the half-width of the player's collision box in
 // tiles, centered on the feet. The sprite is 1 tile wide, but a smaller
