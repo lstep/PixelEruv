@@ -101,10 +101,11 @@ type Simulator struct {
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
 	clients  map[string]*Entity // client_id -> entity (player avatar)
-	// destroyedBaseEntities queues base entity IDs removed during a map
-	// reload, so the next replication tick can send DestroyEntity frames to
-	// all connected clients. Drained after each tick's replication loop.
-	destroyedBaseEntities []string
+	// destroyedEntities queues entity IDs removed since the last tick (base
+	// entities removed during a map reload, or player avatars despawned on
+	// disconnect), so the next replication tick can send DestroyEntity frames
+	// to all connected clients. Drained after each tick's replication loop.
+	destroyedEntities []string
 
 	snapshotSeq uint32
 }
@@ -192,7 +193,7 @@ func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
 		}
 		if !newIDs[id] {
 			delete(s.entities, id)
-			s.destroyedBaseEntities = append(s.destroyedBaseEntities, id)
+			s.destroyedEntities = append(s.destroyedEntities, id)
 		}
 	}
 
@@ -454,6 +455,10 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	}
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
+	// Queue a DestroyEntity so the next replication tick notifies all other
+	// clients. Without this, remaining clients never learn the entity is gone
+	// and the avatar sprite stays on screen after the player disconnects.
+	s.destroyedEntities = append(s.destroyedEntities, e.ID)
 	posX, posY := e.Position.X, e.Position.Y
 	entityID := e.ID
 	s.mu.Unlock()
@@ -715,8 +720,8 @@ func (s *Simulator) tick() {
 		e.pendingAnimations = nil
 	}
 
-	// Drain the destroyed base entities queue — all clients have been replicated.
-	s.destroyedBaseEntities = nil
+	// Drain the destroyed entities queue — all clients have been replicated.
+	s.destroyedEntities = nil
 
 	// Metric-as-log-attrs: tick duration, entity count, replication batches.
 	// motel has no /v1/metrics endpoint, so we emit these as span attributes +
@@ -830,8 +835,10 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		}
 	}
 
-	// Send destroy notifications for base entities removed during a map reload.
-	for _, id := range s.destroyedBaseEntities {
+	// Send destroy notifications for entities removed since the last tick
+	// (base entities removed during a map reload, or player avatars despawned
+	// on disconnect).
+	for _, id := range s.destroyedEntities {
 		batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
 			EntityId:    id,
 			SnapshotSeq: s.snapshotSeq,
