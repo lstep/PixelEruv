@@ -17,6 +17,7 @@
     "@opentelemetry/resources": "^2.9.0",
     "@opentelemetry/sdk-trace-web": "^2.9.0",
     "@opentelemetry/semantic-conventions": "^1.41.1",
+    "livekit-client": "^2.20.0",
     "phaser": "^4.2.0"
   },
   "devDependencies": {
