@@ -49,7 +49,7 @@ Proximity A/V follows the same flow, driven by `proximity.join` /
 
 ### Zone vs proximity interaction
 
-Zones override proximity. A player inside an `av_enabled` zone is in that
+Zones override proximity. A player inside an `enabled` zone is in that
 zone's room — proximity A/V is suppressed (worldsim does not emit
 `proximity.join` for entities inside A/V zones). Outside zones, proximity
 A/V applies.
