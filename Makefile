@@ -1,10 +1,16 @@
-.PHONY: proto build web up down logs debug debug-frontend debug-pocketbase
+.PHONY: proto build web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend debug-pocketbase
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
 TS_OUT := frontend/src/proto
 COMPOSE_FILE := docker/docker-compose.yml
 DIST_BIN := dist/bin
+DIST_DIR := dist
+DIST_COMPOSE := $(DIST_DIR)/docker-compose.yml
+
+# Cross-compile defaults — native platform. Override per-target.
+GOOS ?= $(shell go env GOOS)
+GOARCH ?= $(shell go env GOARCH)
 
 # OpenTelemetry / motel debug configuration
 OTEL_ENDPOINT := http://127.0.0.1:27686
@@ -23,19 +29,57 @@ proto:
 	protoc $(GO_PROTOC) -I $(PROTO_DIR) $(PROTO_DIR)/*.proto
 	protoc $(TS_PROTOC) -I $(PROTO_DIR) $(PROTO_DIR)/*.proto
 
-# Build native Go binaries into dist/bin/
+# Build Go binaries into dist/bin/ for the target GOOS/GOARCH.
+# Defaults to native; overridden by dist-x86 / dist-macos.
 build:
 	@mkdir -p $(DIST_BIN)
-	cd backend && go build -o ../$(DIST_BIN)/pusher ./cmd/pusher
-	cd backend && go build -o ../$(DIST_BIN)/worldsim ./cmd/worldsim
-	cd backend && go build -o ../$(DIST_BIN)/ext-demo ./cmd/ext-demo
-	cd backend && go build -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
-	cd backend && go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
-	cd backend && go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/pusher ./cmd/pusher
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/worldsim ./cmd/worldsim
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-demo ./cmd/ext-demo
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
 
 # Build frontend static assets into dist/web/
 web:
 	cd frontend && npx vite build
+
+# Stage Docker support files, compose, and migrations into dist/.
+# Called after build + web by the dist-* targets.
+dist-stage:
+	@# --- remove stale config from the old dist layout ---
+	@rm -rf $(DIST_DIR)/config
+	@# --- stage Docker support files into dist/docker/ ---
+	@mkdir -p $(DIST_DIR)/docker/dex
+	cp docker/dist/backend.Dockerfile   $(DIST_DIR)/docker/backend.Dockerfile
+	cp docker/dist/frontend.Dockerfile  $(DIST_DIR)/docker/frontend.Dockerfile
+	cp docker/pocketbase.Dockerfile     $(DIST_DIR)/docker/pocketbase.Dockerfile
+	cp docker/pocketbase-entrypoint.sh  $(DIST_DIR)/docker/pocketbase-entrypoint.sh
+	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
+	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
+	cp docker/dex/config.yaml           $(DIST_DIR)/docker/dex/config.yaml
+	@# --- stage compose + migrations ---
+	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
+	cp -R pb_migrations                 $(DIST_DIR)/pb_migrations
+
+# dist: native platform (convenience alias).
+dist: build web dist-stage
+	@echo "==> dist/ built for $(GOOS)/$(GOARCH). Run with:"
+	@echo "    docker compose -f $(DIST_COMPOSE) up --build"
+
+# dist-x86: Linux Intel (amd64) — for Docker deployment on Intel servers.
+dist-x86: GOOS := linux
+dist-x86: GOARCH := amd64
+dist-x86: build web dist-stage
+	@echo "==> dist/ built for linux/amd64. Run with:"
+	@echo "    docker compose -f $(DIST_COMPOSE) up --build"
+
+# dist-macos: macOS native (arm64 on Apple Silicon) — for local host execution.
+dist-macos: GOOS := darwin
+dist-macos: GOARCH := arm64
+dist-macos: build web dist-stage
+	@echo "==> dist/ built for darwin/arm64. Binaries run natively on macOS."
+	@echo "    Run Go services directly from dist/bin/; use Docker for nats/pocketbase/dex/livekit."
 
 up:
 	docker compose -f $(COMPOSE_FILE) up --build

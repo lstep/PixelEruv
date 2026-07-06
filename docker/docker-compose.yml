@@ -81,7 +81,17 @@ services:
     depends_on:
       - pusher
     ports:
-      - "8080:80"
+      - "4080:80"
+      # HTTPS for remote access. Browsers only expose crypto.subtle (PKCE auth)
+      # in secure contexts (HTTPS or localhost). The self-signed cert is
+      # generated at startup from TLS_HOSTS. Access remotely at
+      # https://<host-ip>:4043 and accept the cert warning once.
+      - "4043:443"
+    environment:
+      # Comma-separated DNS names / IPs the self-signed cert should cover.
+      # Set to your host's LAN IP for remote access, e.g.
+      #   TLS_HOSTS=localhost,127.0.0.1,192.168.1.10
+      TLS_HOSTS: "localhost,127.0.0.1"
     restart: unless-stopped
 
   ext-demo:

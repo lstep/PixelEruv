@@ -333,7 +333,6 @@ export class GameScene extends Phaser.Scene {
   // "Reconnecting…" overlay shown when the WebSocket drops and WsClient is
   // retrying. Fixed to the screen (scrollFactor 0) so it stays visible.
   private reconnectOverlay: Phaser.GameObjects.Text | null = null;
-  // One-shot diagnostic log set for avatarScreenPos null returns.
 
   constructor() {
     super("GameScene");
