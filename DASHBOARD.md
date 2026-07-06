@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-05 (session 7)
+Last updated: 2026-07-06 (session 8)
 
 ## Overview
 
@@ -14,6 +14,7 @@ extensible zone system, and first-party extensions. Kernel architecture
 Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> PocketBase
                                 ↕               ↕
                              ext-demo        ext-walls
+                             ext-props       ext-av ──> LiveKit
 ```
 
 | Service      | Role                                              | Stack           |
@@ -27,6 +28,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | ext-demo     | Demo extension (logs zone events)                 | Go              |
 | ext-walls    | Walls extension (block gate triggers on zones)    | Go              |
 | ext-props    | Props extension (interactive entities, key:E)     | Go              |
+| ext-av       | LiveKit A/V bridge (token minting, NATS events)   | Go              |
+| livekit      | WebRTC SFU for audio/video                        | LiveKit         |
 
 ## Implemented features
 
@@ -80,8 +83,22 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] SVG diagram of layer structure and data flow (`documentation/map-design-guide.html`)
 - [x] Design doc: decoration layers, Y-sort depth bands, and interactive map-authored entities — `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md` + `documentation/depth-layers-diagram.svg`
 
+### LiveKit A/V (positional audio + video)
+- [x] `AvTokenFrame` proto: carries LiveKit room, token, URL, action (join/leave), members
+- [x] Worldsim: `client_id` in zone event payloads (so ext-av can address token replies)
+- [x] Worldsim: mobile proximity zones (2-tile radius circles that follow each player)
+- [x] Worldsim: proximity clustering via connected components (BFS on near-neighbor graph, ~4Hz)
+- [x] Worldsim: `proximity.join` / `proximity.leave` NATS events (edge-triggered on group changes)
+- [x] Worldsim: `Zone.AvEnabled` field + `av_enabled` Tiled property parsing (zones override proximity A/V)
+- [x] ext-av: mints LiveKit JWTs, subscribes to zone + proximity events, publishes `client.<id>.av_token`
+- [x] Pusher: forwards `client.*.av_token` as `AvTokenFrame` over WebSocket
+- [x] Frontend: `AvClient` (LiveKit SDK wrapper, lazy-loaded), `AvOverlay` (DOM video tiles + HUD)
+- [x] Frontend: spatial volume (linear falloff, 0 at 10 tiles), billboarded video tiles, mic/camera HUD
+- [x] Infrastructure: LiveKit + ext-av in docker-compose, `docker/livekit.yaml` config
+- [x] Map: `meeting-room-1` zone marked `av_enabled=true` in `assets/map1.json`
+
 ### Infrastructure
-- [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls
+- [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit
 - [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
 - [x] Makefile for local dev (pusher + worldsim as native binaries)
 - [x] OpenTelemetry instrumentation (disabled by default)
@@ -98,14 +115,14 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [ ] **Chat**: chat UI + PocketBase collection, messages broadcast via NATS
 
 ### Medium priority
-- [ ] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
+- [x] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
 - [ ] **AOI filter**: only replicate entities within client radius + same zone
 - [ ] **Input triggers (broader)**: inventory/equipment action triggers — basic `key:E` interaction implemented via ext-props; broader design ready, see `documentation/plans/2026-07-01-inventory-equipment-action-triggers-design.md`
 - [ ] **Exclusive zones**: visual + audio isolation for members
 
 ### Low priority
 - [ ] **Knock-to-join**: meeting rooms with owner and admission
-- [ ] **Mobile zones**: circular zones that follow an entity (NPC vision)
+- [x] **Mobile zones**: circular zones that follow an entity (implemented for proximity A/V)
 - [ ] **Full extension pack**: walls, doors, base zone behaviors, base triggers
 - [ ] **Client-side prediction + reconciliation** (netcode-lerp-prediction branch exists)
 
@@ -132,6 +149,12 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-05 | Server-side WebSocket pings (not app-level ping frames) for keepalive | `coder/websocket` doesn't auto-ping; protocol-level pings get auto-pong from the browser with no client code. App-level `ClientFrame_Ping` already existed but was unused — protocol pings are simpler and keep the connection alive at the transport layer |
 | 2026-07-05 | Reconnect mints a fresh session (new entity id, spawn-point teleport) | True session resumption would need worldsim to reattach the entity to the new session; out of MVP scope. Player teleports to spawn on reconnect — flagged for a future task |
 | 2026-07-05 | `worldsim.ready` broadcast for extension registration | Extensions published registration before worldsim subscribed (NATS Core drops no-subscriber publishes), then waited up to 30s for the clock-phase-gated re-register window. worldsim now publishes `worldsim.ready` (with Flush) after its subscriptions are live; extensions wait for it (10s timeout fallback) and re-register on every fire, including worldsim restarts. Registration latency dropped from ~30s to ~2ms. |
+| 2026-07-06 | Mobile zones for proximity detection (not distance calc) | Each player gets a 2-tile radius circle zone that follows them. Zone enter/exit events drive proximity adjacency — no per-tick O(n²) distance check. Clustering runs at ~4Hz via connected components (BFS) on the adjacency graph. |
+| 2026-07-06 | Connected components for proximity groups (not fixed clusters) | Players A-B-C in a line (A near B, B near C, A far from C) form one group via BFS, not three separate pairs. Group ID = FNV-1a hash of sorted member entity IDs (stable across membership order). |
+| 2026-07-06 | `av_enabled` zones override proximity A/V | Players inside an av_enabled zone get zone-based A/V (room = `zone-<slug>`), not proximity A/V. They're excluded from proximity clustering and leave any existing proximity group. |
+| 2026-07-06 | LiveKit tokens via NATS → pusher → WS (not direct browser→ext-av) | ext-av mints JWTs and publishes `client.<id>.av_token` to NATS. Pusher subscribes per-session and forwards as `AvTokenFrame` over the existing WS. No new transport — reuses the pusher's auth + session management. |
+| 2026-07-06 | `LIVEKIT_PUBLIC_URL` separate from `LIVEKIT_URL` | ext-av (in Docker) connects to `ws://livekit:7880` (Docker-internal), but the browser needs `ws://localhost:7880` (host-exposed). ext-av sends `LIVEKIT_PUBLIC_URL` in the token frame so the browser can reach the SFU. |
+| 2026-07-06 | LiveKit SDK lazy-loaded in frontend | `livekit-client` is dynamically imported on first A/V token, keeping the main bundle small (~1.5MB vs +2MB if statically imported). |
 
 ## Test accounts
 
