@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-06 (session 8)
+Last updated: 2026-07-07 (session 10)
 
 ## Overview
 
@@ -104,9 +104,11 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit
 - [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
 - [x] Makefile for local dev (pusher + worldsim as native binaries)
+- [x] **Self-contained `dist/`**: `make dist-x86` (linux/amd64, for Docker deployment) or `make dist-macos` (darwin/arm64, for native host execution) builds binaries + web assets and stages binary-based Dockerfiles, compose, nginx.conf, livekit.yaml, dex config, and pb_migrations into `dist/`. The entire `dist/` directory can be copied to another machine and run with `docker compose -f dist/docker-compose.yml up --build` — no source code needed.
 - [x] OpenTelemetry instrumentation (disabled by default)
 - [x] WebSocket keepalive: pusher sends protocol-level pings every 30s (browser auto-responds with pong) so idle connections don't die
 - [x] Frontend auto-reconnect: exponential backoff (1s→30s cap), re-auths on reconnect, "Reconnecting…" overlay, re-sends current input state
+- [x] **HTTPS for remote access**: nginx now also listens on 443 (exposed as `4043:443`) with a self-signed cert generated at container start from `TLS_HOSTS`. Required because browsers only expose `crypto.subtle` (used by the PKCE auth flow in `frontend/src/auth.ts`) in secure contexts (HTTPS or localhost) — accessing the app remotely over plain HTTP produced a black screen + `TypeError: undefined is not an object (evaluating 'crypto.subtle.digest')`. Localhost dev over `http://localhost:4080` still works unchanged. To enable remote access: set `TLS_HOSTS=localhost,127.0.0.1,<host-lan-ip>` in compose env, add `https://<host-lan-ip>:4043/auth/callback` to `docker/dex/config.yaml` `redirectURIs`, rebuild, then open `https://<host-lan-ip>:4043` and accept the self-signed cert warning once.
 
 ## Remaining work (MVP)
 
@@ -176,10 +178,15 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 make up                    # starts nats + pocketbase + dex + pusher + worldsim
 make down                  # stops everything
 
-# Docker (full stack)
+# Docker (full stack, builds from source)
 docker compose -f docker/docker-compose.yml up --build -d
 docker compose -f docker/docker-compose.yml logs -f worldsim
 docker compose -f docker/docker-compose.yml restart ext-walls
+
+# Self-contained dist/ (pre-built binaries, no source needed)
+make dist-x86                          # linux/amd64 — for Docker deployment
+make dist-macos                        # darwin/arm64 — for native macOS execution
+docker compose -f dist/docker-compose.yml up --build
 
 # PocketBase admin
 http://localhost:8090/_/
