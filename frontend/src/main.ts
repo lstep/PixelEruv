@@ -33,7 +33,7 @@ async function bootstrap(): Promise<void> {
     return; // handleAuthCallback redirects
   }
 
-  new TopMenu();
+  const topMenu = new TopMenu();
 
   let mapAssets: MapAssets | null = null;
   const span = tracer.startSpan("map.load", { attributes: { "map.source": "pocketbase" } });
@@ -51,6 +51,7 @@ async function bootstrap(): Promise<void> {
 
   const game = new Phaser.Game(config);
   game.registry.set("mapAssets", mapAssets);
+  game.registry.set("topMenu", topMenu);
 }
 
 bootstrap();

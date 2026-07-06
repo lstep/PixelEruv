@@ -1,10 +1,12 @@
 // TopMenu is a floating DOM bar fixed to the top of the browser window,
-// independent of the Phaser canvas/scene lifecycle. It shows a Login/Logout
-// button and a dropdown menu with a username field. Styled as dark rounded
-// pills, matching the AvOverlay HUD controls.
+// independent of the Phaser canvas/scene lifecycle. It shows mic/camera
+// A/V controls, a Login/Logout button, and a dropdown menu with a username
+// field. Styled as dark rounded pills, matching AvOverlay's previous HUD
+// look.
 
 import { isLoggedIn, redirectToLogin, logout } from "../auth";
 import { getUsername, setUsername } from "../username";
+import type { AvClient } from "../net/AvClient";
 
 const PILL_STYLE =
   "padding:8px 16px;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
@@ -12,12 +14,32 @@ const PILL_STYLE =
 export class TopMenu {
   private container: HTMLDivElement;
   private dropdown: HTMLDivElement;
+  private micBtn: HTMLButtonElement;
+  private camBtn: HTMLButtonElement;
+  private avClient: AvClient | null = null;
 
   constructor() {
     this.container = document.createElement("div");
     this.container.style.cssText =
       "position:fixed;top:12px;right:12px;display:flex;gap:8px;align-items:flex-start;z-index:20;font-family:sans-serif;";
     document.body.appendChild(this.container);
+
+    // A/V controls, hidden until a scene attaches an AvClient.
+    this.micBtn = document.createElement("button");
+    this.micBtn.style.cssText = PILL_STYLE + "display:none;";
+    this.micBtn.addEventListener("click", () => {
+      this.avClient?.setMicMuted(!this.avClient.isMicMuted());
+      this.updateAvLabels();
+    });
+    this.container.appendChild(this.micBtn);
+
+    this.camBtn = document.createElement("button");
+    this.camBtn.style.cssText = PILL_STYLE + "display:none;";
+    this.camBtn.addEventListener("click", () => {
+      this.avClient?.setCameraEnabled(!this.avClient.isCameraEnabled());
+      this.updateAvLabels();
+    });
+    this.container.appendChild(this.camBtn);
 
     const authBtn = document.createElement("button");
     authBtn.textContent = isLoggedIn() ? "Logout" : "Login";
@@ -76,5 +98,30 @@ export class TopMenu {
       this.dropdown.style.display = "none";
     });
     this.dropdown.addEventListener("click", (e) => e.stopPropagation());
+  }
+
+  // attachAvControls shows the mic/camera buttons and wires them to the
+  // given AvClient. Called by GameScene once its AvClient is created.
+  attachAvControls(avClient: AvClient): void {
+    this.avClient = avClient;
+    this.micBtn.style.display = "block";
+    this.camBtn.style.display = "block";
+    this.updateAvLabels();
+  }
+
+  // detachAvControls hides the mic/camera buttons. Called on scene shutdown,
+  // since the AvClient it was wired to no longer exists.
+  detachAvControls(): void {
+    this.avClient = null;
+    this.micBtn.style.display = "none";
+    this.camBtn.style.display = "none";
+  }
+
+  private updateAvLabels(): void {
+    if (!this.avClient) return;
+    this.micBtn.textContent = this.avClient.isMicMuted() ? "🎤 Muted" : "🎤 Mic";
+    this.micBtn.style.opacity = this.avClient.isMicMuted() ? "0.5" : "1";
+    this.camBtn.textContent = this.avClient.isCameraEnabled() ? "📷 On" : "📷 Cam";
+    this.camBtn.style.opacity = this.avClient.isCameraEnabled() ? "1" : "0.5";
   }
 }

@@ -1,7 +1,7 @@
-// AvOverlay manages the DOM overlay for LiveKit video tiles and mic/camera
-// HUD controls. Video tiles are HTML <video> elements positioned above
-// avatars each frame, billboarded (always upright) and scaled with camera
-// zoom. HUD controls are two buttons fixed to the screen corner.
+// AvOverlay manages the DOM overlay for LiveKit video tiles. Video tiles
+// are HTML <video> elements positioned above avatars each frame,
+// billboarded (always upright) and scaled with camera zoom. Mic/camera HUD
+// controls live in TopMenu, not here.
 //
 // The overlay is a single absolutely-positioned <div> on top of the Phaser
 // canvas. Video elements are created/removed as participants join/leave.
@@ -16,14 +16,10 @@ interface VideoTile {
 export class AvOverlay {
   private container: HTMLDivElement;
   private videos = new Map<string, VideoTile>();
-  private avClient: AvClient;
   private scene: Phaser.Scene;
-  private micBtn: HTMLButtonElement;
-  private camBtn: HTMLButtonElement;
 
   constructor(scene: Phaser.Scene, avClient: AvClient) {
     this.scene = scene;
-    this.avClient = avClient;
 
     // Create overlay container on top of the canvas.
     this.container = document.createElement("div");
@@ -32,40 +28,8 @@ export class AvOverlay {
     const canvas = scene.sys.game.canvas;
     canvas.parentElement?.appendChild(this.container);
 
-    // HUD controls.
-    const hud = document.createElement("div");
-    hud.style.cssText = "position:absolute;bottom:12px;right:12px;display:flex;gap:8px;pointer-events:auto;";
-    this.container.appendChild(hud);
-
-    this.micBtn = this.makeBtn("🎤 Mic", hud);
-    this.camBtn = this.makeBtn("📷 Cam", hud);
-    this.micBtn.addEventListener("click", () => {
-      this.avClient.setMicMuted(!this.avClient.isMicMuted());
-      this.updateBtnLabels();
-    });
-    this.camBtn.addEventListener("click", () => {
-      this.avClient.setCameraEnabled(!this.avClient.isCameraEnabled());
-      this.updateBtnLabels();
-    });
-    this.updateBtnLabels();
-
     // Wire participant changes.
     avClient.setParticipantsHandler((participants) => this.syncParticipants(participants));
-  }
-
-  private makeBtn(label: string, parent: HTMLElement): HTMLButtonElement {
-    const btn = document.createElement("button");
-    btn.textContent = label;
-    btn.style.cssText = "padding:6px 12px;font-size:14px;font-family:monospace;background:#222;color:#fff;border:1px solid #555;border-radius:4px;cursor:pointer;";
-    parent.appendChild(btn);
-    return btn;
-  }
-
-  private updateBtnLabels(): void {
-    this.micBtn.textContent = this.avClient.isMicMuted() ? "🎤 Muted" : "🎤 Mic";
-    this.micBtn.style.opacity = this.avClient.isMicMuted() ? "0.5" : "1";
-    this.camBtn.textContent = this.avClient.isCameraEnabled() ? "📷 On" : "📷 Cam";
-    this.camBtn.style.opacity = this.avClient.isCameraEnabled() ? "1" : "0.5";
   }
 
   // syncParticipants creates/removes video elements to match the current

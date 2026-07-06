@@ -40,7 +40,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Persistent identity: `oidc_sub` → PocketBase `players` record → `entity_id` + position
 - [x] Position saved on disconnect, restored on reconnect
 - [x] Guest sessions: empty `id_token` is accepted by pusher as an anonymous, non-persistent session (`sub=""`); a non-empty but invalid/expired token is still rejected
-- [x] Floating top-right menu (`frontend/src/ui/TopMenu.ts`): Login/Logout button (drives Dex redirect / `logout()`) + a Menu dropdown to set a display name, stored client-side only (`localStorage["display_name"]`, `frontend/src/username.ts`) — not yet wired into the replication protocol or shown as an avatar name tag
+- [x] Floating top-right menu (`frontend/src/ui/TopMenu.ts`): mic/camera A/V controls (moved from `AvOverlay`'s old bottom-right HUD), a Login/Logout button (drives Dex redirect / `logout()`), and a Menu dropdown to set a display name, stored client-side only (`localStorage["display_name"]`, `frontend/src/username.ts`) — not yet wired into the replication protocol or shown as an avatar name tag. `TopMenu` is created once in `main.ts` and stored on `game.registry`; `GameScene` attaches/detaches the A/V buttons to its per-scene `AvClient` via `attachAvControls`/`detachAvControls`
 
 ### Rendering & Movement
 - [x] 32x32 character sprites (6 characters, 4 directions, 6 walk frames)

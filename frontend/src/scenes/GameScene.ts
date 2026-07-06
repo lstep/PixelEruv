@@ -5,6 +5,7 @@ import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from 
 import { AvClient } from "../net/AvClient";
 import { AvOverlay } from "../net/AvOverlay";
 import type { MapAssets } from "../mapLoader";
+import type { TopMenu } from "../ui/TopMenu";
 
 const TILE_SIZE = 32;
 
@@ -659,9 +660,12 @@ export class GameScene extends Phaser.Scene {
       : `ws://${window.location.host}/ws`;
     console.log("connecting to", wsUrl);
     this.ws = new WsClient(wsUrl);
-    // A/V client + DOM overlay for video tiles and HUD controls.
+    // A/V client + DOM overlay for video tiles. Mic/camera HUD controls
+    // live in the TopMenu (created once in main.ts, stored in the registry).
     this.avClient = new AvClient();
     this.avOverlay = new AvOverlay(this, this.avClient);
+    const topMenu = this.game.registry.get("topMenu") as TopMenu | undefined;
+    topMenu?.attachAvControls(this.avClient);
     // "Server not available" overlay — a full-screen gray dim plus a red
     // centered message. Visible from the start (we boot in "connecting"),
     // hidden once the WS reaches "open", and reshown on any drop. While it
@@ -737,6 +741,7 @@ export class GameScene extends Phaser.Scene {
       this.avClient?.close();
       this.avOverlay = null;
       this.avClient = null;
+      topMenu?.detachAvControls();
     });
 
     // Disconnect LiveKit room on page unload/refresh to avoid zombie
