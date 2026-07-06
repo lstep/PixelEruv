@@ -257,6 +257,11 @@
                          "name":"zone_type",
                          "type":"string",
                          "value":"meeting"
+                        }, 
+                        {
+                         "name":"av_enabled",
+                         "type":"bool",
+                         "value":true
                         }],
                  "rotation":0,
                  "type":"",
