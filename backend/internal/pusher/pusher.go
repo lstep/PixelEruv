@@ -147,23 +147,28 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer authSpan.End()
 
 	// Validate the id_token via Dex JWKS. If DEX_URL is not set, fall back
-	// to dummy auth for local dev without Dex.
+	// to dummy auth for local dev without Dex. An empty id_token is an
+	// intentional guest connection (no Login performed) and is let through
+	// with sub == "" — worldsim treats that as a non-persistent session. A
+	// non-empty but invalid/expired token is still rejected.
 	var sub string
 	if s.auth != nil && s.auth.issuer != "" {
-		sub, err = s.auth.ValidateToken(auth.GetIdToken())
-		if err != nil {
-			authSpan.RecordError(err)
-			authSpan.SetStatus(codes.Error, "token validation")
-			s.logger.Warn("token validation failed", "err", err)
-			errResult := &pb.ServerFrame{
-				Payload: &pb.ServerFrame_AuthResult{
-					AuthResult: &pb.AuthResultFrame{Ok: false},
-				},
+		if idToken := auth.GetIdToken(); idToken != "" {
+			sub, err = s.auth.ValidateToken(idToken)
+			if err != nil {
+				authSpan.RecordError(err)
+				authSpan.SetStatus(codes.Error, "token validation")
+				s.logger.Warn("token validation failed", "err", err)
+				errResult := &pb.ServerFrame{
+					Payload: &pb.ServerFrame_AuthResult{
+						AuthResult: &pb.AuthResultFrame{Ok: false},
+					},
+				}
+				errBytes, _ := proto.Marshal(errResult)
+				c.Write(authCtx, websocket.MessageBinary, errBytes)
+				c.Close(websocket.StatusPolicyViolation, "auth failed")
+				return
 			}
-			errBytes, _ := proto.Marshal(errResult)
-			c.Write(authCtx, websocket.MessageBinary, errBytes)
-			c.Close(websocket.StatusPolicyViolation, "auth failed")
-			return
 		}
 		authSpan.SetAttributes(attribute.String("user.sub", sub))
 	} else {

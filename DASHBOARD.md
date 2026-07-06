@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 11)
+Last updated: 2026-07-07 (session 12)
 
 ## Overview
 
@@ -39,6 +39,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] 2 users: `admin@pixeleruv.local` / `player@pixeleruv.local` (password: `password123`)
 - [x] Persistent identity: `oidc_sub` → PocketBase `players` record → `entity_id` + position
 - [x] Position saved on disconnect, restored on reconnect
+- [x] Guest sessions: empty `id_token` is accepted by pusher as an anonymous, non-persistent session (`sub=""`); a non-empty but invalid/expired token is still rejected
+- [x] Floating top-right menu (`frontend/src/ui/TopMenu.ts`): Login/Logout button (drives Dex redirect / `logout()`) + a Menu dropdown to set a display name, stored client-side only (`localStorage["display_name"]`, `frontend/src/username.ts`) — not yet wired into the replication protocol or shown as an avatar name tag
 
 ### Rendering & Movement
 - [x] 32x32 character sprites (6 characters, 4 directions, 6 walk frames)
@@ -163,6 +165,9 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-06 | Pin livekit image to v1.9.8 (not `latest`) + fixed config schema | `livekit/livekit-server:latest` drifted to a config schema that rejects top-level `tcp_port`/`udp_port`; the SFU crash-looped silently. `tcp_port` now lives under `rtc:`; top-level `udp_port` removed. Pinning prevents future drift. |
 | 2026-07-06 | Re-upload map to PocketBase after editing assets/map1.json | ext-av reads the map from PocketBase, not the repo. The committed `av_enabled` property on `meeting-room-1` was invisible until the map was re-uploaded (superuser PATCH on the `maps` record). Workflow: edit in Tiled → save to `assets/` → re-upload file to PocketBase → worldsim hot-reloads within 30s → ext-av/ext-walls re-read. |
 | 2026-07-07 | Despawn queues a DestroyEntity (not just deletes from ECS) | `despawnClient` deleted the entity from `s.entities` but never told other clients, so avatars lingered on screen after a player closed their browser. The existing `destroyedBaseEntities` queue (map-reload destroys) is generalized to `destroyedEntities` and reused for player despawns — drained each tick after replication. |
+| 2026-07-07 | Frontend no longer force-redirects to Dex login before boot | Needed for guest browsing. `main.ts` now always boots the game; a floating `TopMenu` shows Login/Logout based on `isLoggedIn()`. |
+| 2026-07-07 | Guest = empty `id_token`, not the `"dev"` sentinel | `"dev"` was already used to mean "no Dex configured" (pusher ignores the token value entirely in that branch). Reusing it for guests would be ambiguous. `WsClient` now sends `""` when there's no stored token; pusher treats an empty token as a guest only when Dex *is* configured, and still rejects a non-empty-but-invalid token. |
+| 2026-07-07 | Username is client-side only (`localStorage`), no protocol change | Requested as a minimal stub for now — no `display_name` field on the wire, no name tags over avatars yet. |
 
 ## Test accounts
 

@@ -2,7 +2,8 @@ import Phaser from "phaser";
 import { GameScene } from "./scenes/GameScene";
 import { initOtel, tracer } from "./otel";
 import { loadMapAssets, type MapAssets } from "./mapLoader";
-import { handleAuthCallback, getIdToken, redirectToLogin, isLoggedIn } from "./auth";
+import { handleAuthCallback } from "./auth";
+import { TopMenu } from "./ui/TopMenu";
 
 // Initialize OpenTelemetry before any instrumented code runs. No-op when
 // VITE_OTEL_ENABLED != "true".
@@ -32,11 +33,7 @@ async function bootstrap(): Promise<void> {
     return; // handleAuthCallback redirects
   }
 
-  // Require login before starting the game.
-  if (!isLoggedIn()) {
-    await redirectToLogin();
-    return;
-  }
+  new TopMenu();
 
   let mapAssets: MapAssets | null = null;
   const span = tracer.startSpan("map.load", { attributes: { "map.source": "pocketbase" } });

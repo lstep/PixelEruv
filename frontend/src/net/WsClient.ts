@@ -95,7 +95,7 @@ export class WsClient {
         // Build the auth frame inside the span's active context so
         // traceparentFor() serializes this span's context for the backend.
         const auth = context.with(trace.setSpan(context.active(), authSpan), () =>
-          create(AuthFrameSchema, { idToken: getIdToken() ?? "dev", traceparent: traceparentFor() }),
+          create(AuthFrameSchema, { idToken: getIdToken() ?? "", traceparent: traceparentFor() }),
         );
         const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
         ws.send(toBinary(ClientFrameSchema, frame));
