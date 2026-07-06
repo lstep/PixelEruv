@@ -133,8 +133,8 @@ export class AvClient {
       console.log(`[DEBUG-av] TrackUnsubscribed: identity=${participant.identity}`);
       this.updateParticipant(participant.identity, participant);
     });
-    this.room.on(lk.RoomEvent.TrackSubscriptionFailed, (identity: string, err: Error) => {
-      console.error(`[DEBUG-av] TrackSubscriptionFailed: identity=${identity}`, err);
+    this.room.on(lk.RoomEvent.TrackSubscriptionFailed, (trackSid: string, participant: RemoteParticipant, reason?: any) => {
+      console.error(`[DEBUG-av] TrackSubscriptionFailed: identity=${participant.identity} trackSid=${trackSid} reason=${reason}`);
     });
     this.room.on(lk.RoomEvent.ConnectionQualityChanged, (quality: any, participant: any) => {
       console.log(`[DEBUG-av] ConnectionQuality: identity=${participant.identity} quality=${quality}`);
