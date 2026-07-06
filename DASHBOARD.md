@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 10)
+Last updated: 2026-07-07 (session 11)
 
 ## Overview
 
@@ -162,6 +162,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-06 | LiveKit SDK lazy-loaded in frontend | `livekit-client` is dynamically imported on first A/V token, keeping the main bundle small (~1.5MB vs +2MB if statically imported). |
 | 2026-07-06 | Pin livekit image to v1.9.8 (not `latest`) + fixed config schema | `livekit/livekit-server:latest` drifted to a config schema that rejects top-level `tcp_port`/`udp_port`; the SFU crash-looped silently. `tcp_port` now lives under `rtc:`; top-level `udp_port` removed. Pinning prevents future drift. |
 | 2026-07-06 | Re-upload map to PocketBase after editing assets/map1.json | ext-av reads the map from PocketBase, not the repo. The committed `av_enabled` property on `meeting-room-1` was invisible until the map was re-uploaded (superuser PATCH on the `maps` record). Workflow: edit in Tiled → save to `assets/` → re-upload file to PocketBase → worldsim hot-reloads within 30s → ext-av/ext-walls re-read. |
+| 2026-07-07 | Despawn queues a DestroyEntity (not just deletes from ECS) | `despawnClient` deleted the entity from `s.entities` but never told other clients, so avatars lingered on screen after a player closed their browser. The existing `destroyedBaseEntities` queue (map-reload destroys) is generalized to `destroyedEntities` and reused for player despawns — drained each tick after replication. |
 
 ## Test accounts
 

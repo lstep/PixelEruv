@@ -110,7 +110,24 @@ from `pusher:8081` to `127.0.0.1:8081` for a non-Docker host).
   LiveKit advertises that IP in ICE candidates → browsers on the internet can
   route media back to it.
 
-🔍 Debugging with motel
+� LiveKit API secret
+
+LiveKit rejects secrets shorter than 32 characters. The dev config ships with
+a 40-char placeholder (`devsecretdevsecretdevsecretdevsecret123`) set in both
+`docker/livekit.yaml` (under `keys:`) and `docker/docker-compose.yml`
+(`LIVEKIT_API_SECRET` on `ext-av`). The two **must match** — `ext-av` signs
+join tokens with this secret and LiveKit verifies them.
+
+For anything beyond local dev, generate a fresh secret and replace it in both
+files:
+
+    openssl rand -hex 32
+
+After rotating the secret, restart `livekit` and `ext-av`, and have any
+connected browser rejoin the room (old tokens are signed with the old secret
+and will fail with `token signature is invalid` until refreshed).
+
+�🔍 Debugging with motel
 
 The backend (pusher, worldsim) and frontend are instrumented with
 OpenTelemetry traces and logs. Telemetry is **off by default**; flip it on
