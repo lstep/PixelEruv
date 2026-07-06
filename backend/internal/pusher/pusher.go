@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -47,6 +48,7 @@ type session struct {
 	clientID  string
 	conn      *websocket.Conn
 	sub       *nats.Subscription
+	avSub     *nats.Subscription
 	closeOnce sync.Once
 }
 
@@ -193,9 +195,56 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.sub = repSub
+
+	// Subscribe to A/V token messages from ext-av. These are JSON payloads
+	// that we wrap in an AvTokenFrame protobuf and forward to the browser.
+	avSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.av_token", clientID), func(m *nats.Msg) {
+		// Parse the JSON payload from ext-av.
+		var avMsg struct {
+			Action  string   `json:"action"`
+			Room    string   `json:"room"`
+			Token   string   `json:"token"`
+			URL     string   `json:"url"`
+			Members []string `json:"members"`
+		}
+		if err := json.Unmarshal(m.Data, &avMsg); err != nil {
+			s.logger.Warn("av_token unmarshal", "client", clientID, "err", err)
+			return
+		}
+		frame := &pb.ServerFrame{
+			Payload: &pb.ServerFrame_AvToken{
+				AvToken: &pb.AvTokenFrame{
+					Room:    avMsg.Room,
+					Token:   avMsg.Token,
+					Url:     avMsg.URL,
+					Action:  avMsg.Action,
+					Members: avMsg.Members,
+				},
+			},
+		}
+		frameBytes, err := proto.Marshal(frame)
+		if err != nil {
+			s.logger.Warn("av_token marshal", "client", clientID, "err", err)
+			return
+		}
+		writeCtx, cancel := context.WithTimeout(authCtx, 5*time.Second)
+		defer cancel()
+		if err := c.Write(writeCtx, websocket.MessageBinary, frameBytes); err != nil {
+			s.logger.Warn("ws write av_token", "client", clientID, "err", err)
+		}
+	})
+	if err != nil {
+		s.logger.Warn("nats sub av_token", "client", clientID, "err", err)
+	} else {
+		sess.avSub = avSub
+	}
+
 	s.sessions.Store(clientID, sess)
 	defer func() {
 		sess.sub.Unsubscribe()
+		if sess.avSub != nil {
+			sess.avSub.Unsubscribe()
+		}
 		s.sessions.Delete(clientID)
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
 	}()
