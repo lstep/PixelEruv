@@ -17,6 +17,7 @@ RUN go build -o /out/worldsim ./cmd/worldsim
 RUN go build -o /out/ext-demo ./cmd/ext-demo
 RUN go build -o /out/ext-walls ./cmd/ext-walls
 RUN go build -o /out/ext-props ./cmd/ext-props
+RUN go build -o /out/ext-av ./cmd/ext-av
 
 # --- Pusher image ---
 FROM alpine:3.20 AS pusher
@@ -47,3 +48,9 @@ FROM alpine:3.20 AS ext-props
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/ext-props /usr/local/bin/ext-props
 ENTRYPOINT ["ext-props"]
+
+# --- ext-av image ---
+FROM alpine:3.20 AS ext-av
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /out/ext-av /usr/local/bin/ext-av
+ENTRYPOINT ["ext-av"]

@@ -31,6 +31,7 @@ build:
 	cd backend && go build -o ../$(DIST_BIN)/ext-demo ./cmd/ext-demo
 	cd backend && go build -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
 	cd backend && go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
+	cd backend && go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
 
 # Build frontend static assets into dist/web/
 web:
