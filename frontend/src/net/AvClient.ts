@@ -95,16 +95,20 @@ export class AvClient {
 
     // Set up event handlers before connecting.
     this.room.on(lk.RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+      console.log(`[DEBUG-av] ParticipantConnected: identity=${participant.identity}`);
       this.updateParticipant(participant.identity, participant);
     });
     this.room.on(lk.RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+      console.log(`[DEBUG-av] ParticipantDisconnected: identity=${participant.identity}`);
       this.participants.delete(participant.identity);
       this.notifyChange();
     });
-    this.room.on(lk.RoomEvent.TrackSubscribed, (_track: Track, pub: any, participant: RemoteParticipant) => {
+    this.room.on(lk.RoomEvent.TrackSubscribed, (track: Track, pub: any, participant: RemoteParticipant) => {
+      console.log(`[DEBUG-av] TrackSubscribed: identity=${participant.identity} source=${pub.source} kind=${track.kind} trackSid=${track.sid}`);
       this.updateParticipant(participant.identity, participant);
     });
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
+      console.log(`[DEBUG-av] TrackUnsubscribed: identity=${participant.identity}`);
       this.updateParticipant(participant.identity, participant);
     });
 
@@ -137,7 +141,10 @@ export class AvClient {
     const hasCamera = participant.isCameraEnabled;
     const hasMic = participant.isMicrophoneEnabled;
     let cameraTrack: Track | null = null;
-    for (const pub of participant.getTrackPublications().values()) {
+    const pubs = participant.getTrackPublications();
+    console.log(`[DEBUG-av] updateParticipant: identity=${identity} isCameraEnabled=${hasCamera} isMicEnabled=${hasMic} pubCount=${pubs.size}`);
+    for (const pub of pubs.values()) {
+      console.log(`[DEBUG-av]   pub: source=${pub.source} kind=${pub.kind} hasTrack=${!!pub.track} trackSid=${pub.trackSid}`);
       if (pub.track && pub.source === "camera") {
         cameraTrack = pub.track;
         break;

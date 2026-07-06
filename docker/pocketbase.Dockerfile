@@ -16,7 +16,10 @@ RUN unzip /tmp/pb.zip -d /pb/
 # copy migrations (collection schema definitions)
 COPY pb_migrations /pb/pb_migrations
 
+# entrypoint creates the superuser (idempotent) then starts PocketBase.
+COPY docker/pocketbase-entrypoint.sh /pb/entrypoint.sh
+RUN chmod +x /pb/entrypoint.sh
+
 EXPOSE 8090
 
-# start PocketBase — default CORS allows all origins (stateless, no cookies).
-CMD ["/pb/pocketbase", "serve", "--http=0.0.0.0:8090", "--dir=/pb/pb_data"]
+ENTRYPOINT ["/pb/entrypoint.sh"]

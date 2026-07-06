@@ -436,6 +436,18 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 		s.mu.Unlock()
 		return
 	}
+	// Publish zone.exit for all zones the entity is currently in, so
+	// extensions like ext-av can clean up (e.g. send LiveKit "leave"
+	// tokens). Without this, stale LiveKit participants linger after
+	// a client disconnects or reconnects.
+	clientIDForEvent := e.NetworkSession.ClientID
+	for zid := range e.currentZones {
+		s.publishZoneEvent(ctx, "zone.exit", e.ID, clientIDForEvent, zid)
+	}
+	// Leave proximity group if any.
+	if e.currentProximityGroup != "" {
+		s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientIDForEvent, e.currentProximityGroup, nil)
+	}
 	// Remove the player's mobile proximity zone from the registry.
 	if e.mobileZone != nil && s.zoneReg != nil {
 		s.zoneReg.RemoveZone(e.mobileZone.ID)

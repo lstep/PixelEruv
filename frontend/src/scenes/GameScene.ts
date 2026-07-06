@@ -717,6 +717,12 @@ export class GameScene extends Phaser.Scene {
       this.avOverlay = null;
       this.avClient = null;
     });
+
+    // Disconnect LiveKit room on page unload/refresh to avoid zombie
+    // participants lingering in the room until LiveKit's timeout.
+    window.addEventListener("beforeunload", () => {
+      this.avClient?.close();
+    });
   }
 
   update(_time: number, delta: number): void {

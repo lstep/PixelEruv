@@ -17,6 +17,9 @@ services:
       - "8090:8090"
     volumes:
       - pb_data:/pb/pb_data
+    environment:
+      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
+      PB_ADMIN_PASSWORD: "password123"
     restart: unless-stopped
 
   dex:
@@ -121,7 +124,13 @@ services:
   # LiveKit SFU server for A/V. API keys must match ext-av.
   livekit:
     image: livekit/livekit-server:v1.9.8
-    command: ["--config", "/etc/livekit.yaml"]
+    # --node-ip sets the IP advertised in WebRTC ICE candidates. Defaults to
+    # 127.0.0.1 (same-machine dev via Docker port mapping). For LAN testing
+    # with two machines, set LIVEKIT_NODE_IP to the host's LAN IP, e.g.
+    #   LIVEKIT_NODE_IP=192.168.1.10 docker compose up
+    # and point browsers at ws://<host-lan-ip>:7880 (also set
+    # LIVEKIT_PUBLIC_URL in ext-av accordingly).
+    command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
     ports:
       - "7880:7880"   # WebSocket signaling
       - "7881:7881"   # TCP (fallback)
