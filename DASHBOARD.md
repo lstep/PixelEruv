@@ -96,6 +96,9 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Frontend: spatial volume (linear falloff, 0 at 10 tiles), billboarded video tiles, mic/camera HUD
 - [x] Infrastructure: LiveKit + ext-av in docker-compose, `docker/livekit.yaml` config
 - [x] Map: `meeting-room-1` zone marked `av_enabled=true` in `assets/map1.json`
+- [x] Fix: AvClient retry (3 attempts) on transient ICE failure + unhandled promise rejection fix
+- [x] Fix: upgrade LiveKit server v1.9.8 → v1.13.2 (protocol 17, `/rtc/v1` path, data tracks enabled)
+- [x] Fix: reduce UDP ICE port range 50000-50100 → 50000-50020 (Docker Desktop UDP forwarding reliability)
 
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit

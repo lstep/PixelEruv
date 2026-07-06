@@ -27,6 +27,9 @@ export class AvClient {
   // Participants indexed by entity_id (LiveKit participant identity).
   private participants = new Map<string, AvParticipant>();
   private onParticipantsChange: AvParticipantsHandler | null = null;
+  // Increments on each join attempt so stale retry loops can bail out
+  // when a newer token frame supersedes them.
+  private connectGeneration = 0;
 
   setParticipantsHandler(handler: AvParticipantsHandler): void {
     this.onParticipantsChange = handler;
@@ -76,7 +79,26 @@ export class AvClient {
       if (this.currentRoom && this.currentRoom !== msg.room) {
         await this.disconnect();
       }
-      await this.connect(msg.url, msg.token, msg.room);
+      // Retry on transient ICE failures (Docker Desktop UDP forwarding
+      // can drop the first STUN binding request, causing peer connection
+      // failure). A generation counter cancels stale retries when a newer
+      // token frame arrives mid-retry.
+      const gen = ++this.connectGeneration;
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (gen !== this.connectGeneration) return;
+        try {
+          await this.connect(msg.url, msg.token, msg.room);
+          return;
+        } catch (err) {
+          if (gen !== this.connectGeneration) return;
+          console.error(`AvClient: connect attempt ${attempt}/${maxAttempts} failed`, err);
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
+      }
+      console.error("AvClient: exhausted connect retries");
     }
   }
 
@@ -112,7 +134,15 @@ export class AvClient {
       this.updateParticipant(participant.identity, participant);
     });
 
-    await this.room.connect(url, token);
+    try {
+      await this.room.connect(url, token);
+    } catch (err) {
+      // Clean up the failed room so retry creates a fresh one.
+      try { await this.room.disconnect(); } catch { /* already torn down */ }
+      this.room = null;
+      this.currentRoom = null;
+      throw err;
+    }
     console.log(`AvClient: connected to room ${roomName}`);
 
     // Publish mic + camera tracks based on current settings.
@@ -142,7 +172,7 @@ export class AvClient {
     const hasMic = participant.isMicrophoneEnabled;
     let cameraTrack: Track | null = null;
     const pubs = participant.getTrackPublications();
-    console.log(`[DEBUG-av] updateParticipant: identity=${identity} isCameraEnabled=${hasCamera} isMicEnabled=${hasMic} pubCount=${pubs.size}`);
+    console.log(`[DEBUG-av] updateParticipant: identity=${identity} isCameraEnabled=${hasCamera} isMicEnabled=${hasMic} pubCount=${pubs.length}`);
     for (const pub of pubs.values()) {
       console.log(`[DEBUG-av]   pub: source=${pub.source} kind=${pub.kind} hasTrack=${!!pub.track} trackSid=${pub.trackSid}`);
       if (pub.track && pub.source === "camera") {

@@ -706,7 +706,9 @@ export class GameScene extends Phaser.Scene {
         this.reconnectOverlay.setVisible(state === "reconnecting" || state === "closed");
       },
       onAvToken: (msg) => {
-        this.avClient?.handleTokenFrame(msg);
+        this.avClient?.handleTokenFrame(msg).catch((err) =>
+          console.error("AvClient handleTokenFrame error:", err)
+        );
       },
     });
 
