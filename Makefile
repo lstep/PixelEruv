@@ -58,6 +58,8 @@ dist-stage:
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
 	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
 	cp docker/dex/config.yaml           $(DIST_DIR)/docker/dex/config.yaml
+	cp docker/dex-entrypoint.sh         $(DIST_DIR)/docker/dex-entrypoint.sh
+	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
 	@# --- stage compose + migrations ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
 	cp -R pb_migrations                 $(DIST_DIR)/pb_migrations

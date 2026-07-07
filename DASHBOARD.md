@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 16)
+Last updated: 2026-07-07 (session 17)
 
 ## Overview
 
@@ -132,7 +132,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] OpenTelemetry instrumentation (disabled by default)
 - [x] WebSocket keepalive: pusher sends protocol-level pings every 30s (browser auto-responds with pong) so idle connections don't die
 - [x] Frontend auto-reconnect: exponential backoff (1s→30s cap), re-auths on reconnect, "Reconnecting…" overlay, re-sends current input state
-- [x] **HTTPS for remote access**: nginx now also listens on 443 (exposed as `4043:443`) with a self-signed cert generated at container start from `TLS_HOSTS`. Required because browsers only expose `crypto.subtle` (used by the PKCE auth flow in `frontend/src/auth.ts`) in secure contexts (HTTPS or localhost) — accessing the app remotely over plain HTTP produced a black screen + `TypeError: undefined is not an object (evaluating 'crypto.subtle.digest')`. Localhost dev over `http://localhost:4080` still works unchanged. To enable remote access: set `TLS_HOSTS=localhost,127.0.0.1,<host-lan-ip>` in compose env, add `https://<host-lan-ip>:4043/auth/callback` to `docker/dex/config.yaml` `redirectURIs`, rebuild, then open `https://<host-lan-ip>:4043` and accept the self-signed cert warning once.
+- [x] **HTTPS for remote access**: nginx now also listens on 443 (exposed as `4043:443`) with a self-signed cert generated at container start from `TLS_HOSTS`. Required because browsers only expose `crypto.subtle` (used by the PKCE auth flow in `frontend/src/auth.ts`) in secure contexts (HTTPS or localhost) — accessing the app remotely over plain HTTP produced a black screen + `TypeError: undefined is not an object (evaluating 'crypto.subtle.digest')`. Localhost dev over `http://localhost:4080` still works unchanged. To enable remote access: set `PUBLIC_HOST=<host-lan-ip>` in compose env (or `.env` file), rebuild, then open `https://<host-lan-ip>:4043` and accept the self-signed cert warning once. `PUBLIC_HOST` drives three things automatically: (1) the TLS cert SAN (auto-appended to `TLS_HOSTS` by `frontend-entrypoint.sh`), (2) the Dex `redirectURIs` entry (templated by `dex-entrypoint.sh` at startup), and (3) `LIVEKIT_PUBLIC_URL` for remote A/V. No need to manually edit `docker/dex/config.yaml` or `TLS_HOSTS` anymore.
+- [x] **PocketBase same-origin proxy**: nginx now proxies `/api/` → `pocketbase:8090/api/` (both HTTP and HTTPS servers), and `frontend/src/mapLoader.ts` derives its PocketBase URL from `window.location.origin` at runtime (matching the existing pattern in `auth.ts` for Dex). Previously `mapLoader.ts` hardcoded `http://localhost:8090`, so a remote browser tried to fetch the map from the viewer's own localhost — the map failed to load. Now the browser reaches PocketBase through the same nginx proxy as Dex and the WebSocket, working for both localhost and remote access with no hardcoded addresses.
 
 ## Remaining work (MVP)
 
@@ -200,6 +201,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-07 | Chat is ephemeral (no PocketBase persistence) | Matches how A/V and movement work (live state only). No migration needed. A player who joins later or refreshes sees an empty chat. Scrollback/history fetch flagged for a future task. |
 | 2026-07-07 | Worldsim marshals full ServerFrame; pusher writes raw bytes for chat | Matches the existing replication path (worldsim marshals, pusher passes through). Keeps pusher free of chat-specific logic. The av_token path is the exception (JSON→proto in pusher) because ext-av publishes JSON; chat is worldsim-to-pusher so we stay in protobuf end-to-end. |
 | 2026-07-07 | Reset movement input on window blur / visibilitychange→hidden | Safari suspends DOM event delivery to the page while the native camera/mic permission popup (triggered by `getUserMedia` in AvClient) is shown. The `keyup` for a held arrow key is never delivered, so `inputState.<dir>` stays `true` and the avatar keeps walking after the popup appears. `clearMovementInput` on `blur` + `visibilitychange` is the standard Phaser fix; listeners are torn down on scene `SHUTDOWN`. |
+| 2026-07-07 | Single `PUBLIC_HOST` env var drives all remote-access config | Previously remote access required manually editing `TLS_HOSTS`, `docker/dex/config.yaml` redirectURIs, and `LIVEKIT_PUBLIC_URL` separately. Now `PUBLIC_HOST` (default: `localhost`) is the single knob: `frontend-entrypoint.sh` auto-appends it to the TLS cert SANs, `dex-entrypoint.sh` templates it into the redirect URI, and docker-compose interpolates it into `LIVEKIT_PUBLIC_URL`. One variable, rebuild, done. |
+| 2026-07-07 | nginx proxies `/api/` to PocketBase (same-origin) | `mapLoader.ts` hardcoded `http://localhost:8090`, so remote browsers fetched the map from the viewer's own machine. Adding the `/api/` proxy (mirroring the existing `/dex/` and `/ws/` proxies) and making `mapLoader.ts` use `window.location.origin` means the browser reaches PocketBase same-origin through nginx — no hardcoded address, works for localhost and remote alike. |
 
 ## Test accounts
 

@@ -19,8 +19,7 @@ staticClients:
     redirectURIs:
       - "http://localhost:5173/auth/callback"
       - "http://localhost:4080/auth/callback"
-      # For remote HTTPS access, add your host's redirect URI, e.g.:
-      # - "https://192.168.1.10:4043/auth/callback"
+      - "https://__PUBLIC_HOST__:4043/auth/callback"
     name: "PixelEruv"
     public: true
 
