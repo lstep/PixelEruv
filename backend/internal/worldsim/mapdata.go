@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"time"
@@ -12,11 +13,12 @@ import (
 // MapData holds the spatial properties of a Tiled map needed by the
 // simulation: dimensions, collision grid, zones, and base entities.
 type MapData struct {
-	Width     int
-	Height    int
-	Collision [][]bool // [y][x] — true = blocked
-	Zones     []*Zone
-	Entities  []*PropEntity
+	Width      int
+	Height     int
+	Collision  [][]bool // [y][x] — true = blocked
+	Zones      []*Zone
+	SpawnZones []*Zone // subset of Zones with zone_type=spawn
+	Entities   []*PropEntity
 }
 
 // PropEntity is a base entity authored on the "Entities" object layer in
@@ -307,12 +309,20 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 		break
 	}
 
+	var spawnZones []*Zone
+	for _, z := range zones {
+		if z.ZoneType == "spawn" {
+			spawnZones = append(spawnZones, z)
+		}
+	}
+
 	return &MapData{
-		Width:     tiled.Width,
-		Height:    tiled.Height,
-		Collision: collision,
-		Zones:     zones,
-		Entities:  entities,
+		Width:      tiled.Width,
+		Height:     tiled.Height,
+		Collision:  collision,
+		Zones:      zones,
+		SpawnZones: spawnZones,
+		Entities:   entities,
 	}, nil
 }
 
@@ -345,6 +355,69 @@ func (m *MapData) FindSpawn() (float32, float32) {
 		}
 	}
 	return float32(cx), float32(cy)
+}
+
+// walkableTilesInZone returns the integer tiles inside z's bounding box
+// (clamped to map bounds) that are not blocked and satisfy z.Contains.
+// The bounding box is only the iteration range; the Contains check is what
+// enforces the zone's actual shape (rect/circle/polygon).
+func walkableTilesInZone(m *MapData, z *Zone) [][2]int {
+	x0 := int(z.X)
+	y0 := int(z.Y)
+	x1 := int(z.X + z.W)
+	y1 := int(z.Y + z.H)
+	if x0 < 0 {
+		x0 = 0
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if x1 >= m.Width {
+		x1 = m.Width - 1
+	}
+	if y1 >= m.Height {
+		y1 = m.Height - 1
+	}
+	var tiles [][2]int
+	for ty := y0; ty <= y1; ty++ {
+		for tx := x0; tx <= x1; tx++ {
+			if m.IsBlocked(tx, ty) {
+				continue
+			}
+			if !z.Contains(float32(tx), float32(ty)) {
+				continue
+			}
+			tiles = append(tiles, [2]int{tx, ty})
+		}
+	}
+	return tiles
+}
+
+// FindSpawnPoint returns a random non-blocked tile inside a random spawn
+// zone. Falls back to FindSpawn() if there are no spawn zones or no spawn
+// zone yields a walkable tile.
+func (m *MapData) FindSpawnPoint(rng *rand.Rand) (float32, float32) {
+	if len(m.SpawnZones) == 0 {
+		return m.FindSpawn()
+	}
+	// Try spawn zones in random order; return the first walkable tile found.
+	order := make([]int, len(m.SpawnZones))
+	for i := range order {
+		order[i] = i
+	}
+	for i := len(order) - 1; i > 0; i-- {
+		j := rng.IntN(i + 1)
+		order[i], order[j] = order[j], order[i]
+	}
+	for _, i := range order {
+		tiles := walkableTilesInZone(m, m.SpawnZones[i])
+		if len(tiles) == 0 {
+			continue
+		}
+		pick := tiles[rng.IntN(len(tiles))]
+		return float32(pick[0]), float32(pick[1])
+	}
+	return m.FindSpawn()
 }
 
 func abs(n int) int {

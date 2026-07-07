@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"math/rand/v2"
 	"sort"
 	"sync"
 	"time"
@@ -114,6 +115,7 @@ type Simulator struct {
 	tickCount     uint64
 	logger        *slog.Logger
 	tracer        trace.Tracer
+	rng           *rand.Rand
 
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
@@ -160,6 +162,7 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		tickDur:          time.Second / time.Duration(tickHz),
 		logger:           logger,
 		tracer:           otel.Tracer("worldsim"),
+		rng:              rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)),
 		entities:         make(map[string]*Entity),
 		clients:          make(map[string]*Entity),
 		entityIDToClient: make(map[string]string),
@@ -428,7 +431,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 	defaultEntityID := "e_" + clientID[2:]
 	spawnX, spawnY := float32(10), float32(10)
 	if s.mapData != nil {
-		spawnX, spawnY = s.mapData.FindSpawn()
+		spawnX, spawnY = s.mapData.FindSpawnPoint(s.rng)
 	}
 
 	entityID := defaultEntityID

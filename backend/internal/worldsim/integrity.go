@@ -58,6 +58,7 @@ var knownZoneTypes = map[string]bool{
 	"water":   true,
 	"work":    true,
 	"silent":  true,
+	"spawn":   true,
 }
 
 // CheckMapIntegrity validates a parsed Tiled map for common issues:
@@ -192,6 +193,22 @@ func CheckMapIntegrity(md *MapData) []CheckResult {
 				Level:   LevelWarning,
 				Message: fmt.Sprintf("spawn point (%.0f, %.0f) is on a blocked tile — players may be stuck", sx, sy),
 			})
+		}
+	}
+
+	// --- Spawn zone walkable-tile check ---
+	// A spawn zone with no walkable tiles is almost certainly a map-authoring
+	// mistake; FindSpawnPoint falls back to FindSpawn() at runtime, so this
+	// is a warning, not an error.
+	if md.Width > 0 && md.Height > 0 && md.Collision != nil {
+		for _, z := range md.SpawnZones {
+			if len(walkableTilesInZone(md, z)) == 0 {
+				results = append(results, CheckResult{
+					Level:   LevelWarning,
+					Zone:    z.ID,
+					Message: "spawn zone contains no walkable tiles; players will fall back to map-center spawn",
+				})
+			}
 		}
 	}
 
