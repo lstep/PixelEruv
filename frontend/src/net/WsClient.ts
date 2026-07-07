@@ -27,7 +27,7 @@ export interface ConnectHandlers {
   // Fired when a ChatMessageFrame is received (global or proximity chat).
   // The server stamps display_name + timestamp; the client never authors
   // these directly. See documentation/plans/2026-07-07-chat-design.md.
-  onChatMessage?: (msg: { channel: string; entityId: string; displayName: string; text: string; timestamp: number }) => void;
+  onChatMessage?: (msg: { channel: "global" | "proximity"; entityId: string; displayName: string; text: string; timestamp: number }) => void;
 }
 
 export interface SpawnEntityView {
@@ -192,7 +192,7 @@ export class WsClient {
         case "chatMessage": {
           const cm = serverFrame.payload.value;
           this.handlers.onChatMessage?.({
-            channel: cm.channel,
+            channel: cm.channel as "global" | "proximity",
             entityId: cm.entityId,
             displayName: cm.displayName,
             text: cm.text,
@@ -341,7 +341,7 @@ export class WsClient {
       const setName = context.with(trace.setSpan(context.active(), span), () =>
         create(SetNameFrameSchema, { name, traceparent: traceparentFor() }),
       );
-      const frame = create(ClientFrameSchema, { payload: { case: "set_name", value: setName } });
+      const frame = create(ClientFrameSchema, { payload: { case: "setName", value: setName } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();
