@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 12)
+Last updated: 2026-07-07 (session 13)
 
 ## Overview
 
@@ -40,6 +40,11 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Persistent identity: `oidc_sub` → PocketBase `players` record → `entity_id` + position
 - [x] Position saved on disconnect, restored on reconnect
 - [x] Guest sessions: empty `id_token` is accepted by pusher as an anonymous, non-persistent session (`sub=""`); a non-empty but invalid/expired token is still rejected
+- [x] **Anonymous (no Login) flow** — what happens when a user never clicks Login:
+  - *Frontend*: `main.ts` boots straight into the game (no Dex redirect). `isLoggedIn()` is false, so `TopMenu` shows a blue "Login" button. `getIdToken()` returns `null` (empty string in localStorage is treated as null, commit `ca97a6e`). On WebSocket open, `WsClient` sends `AuthFrame{idToken: ""}` (the `?? ""` fallback in `ws.onopen`).
+  - *Pusher*: `handleWS` sees `s.auth` configured but `idToken == ""`, so the JWT validation branch is skipped — `sub` stays `""`. A fresh `clientID` is minted and `AuthResult{Ok: true}` is returned. A non-empty-but-invalid token would still be rejected (`TestInvalidTokenRejected`).
+  - *Worldsim*: `provisionClient` is called with `sub == ""`, so the PocketBase `FindOrCreateUser` lookup is skipped (`sub != "" && sub != "dev"` is false). The avatar spawns at the map's default spawn point with a non-persistent entity ID `e_<clientID>`. Nothing is written to PocketBase.
+  - *Net effect*: guests can play, move, and use A/V (mic/camera) identically to logged-in users, but get a **per-session identity only** — no PocketBase user record, no persisted entity ID, no saved position. Each reconnect mints a new `clientID`/entity. Guests are indistinguishable from each other on the backend (only the ephemeral `clientID` differentiates them); any future per-user feature relying on `sub` (inventory, friends, etc.) would need a separate guest policy.
 - [x] Floating top-right menu (`frontend/src/ui/TopMenu.ts`): mic/camera A/V controls (moved from `AvOverlay`'s old bottom-right HUD), a Login/Logout button (drives Dex redirect / `logout()`), and a Menu dropdown to set a display name, stored client-side only (`localStorage["display_name"]`, `frontend/src/username.ts`) — not yet wired into the replication protocol or shown as an avatar name tag. `TopMenu` is created once in `main.ts` and stored on `game.registry`; `GameScene` attaches/detaches the A/V buttons to its per-scene `AvClient` via `attachAvControls`/`detachAvControls`
 
 ### Rendering & Movement
