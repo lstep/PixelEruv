@@ -63,6 +63,9 @@ dist-stage:
 	@# --- stage compose + migrations ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
 	cp -R pb_migrations                 $(DIST_DIR)/pb_migrations
+	@# --- stage character spritesheets for worldsim auto-seed ---
+	@mkdir -p $(DIST_DIR)/sprites
+	cp -R frontend/public/sprites/.      $(DIST_DIR)/sprites/
 
 # dist: native platform (convenience alias).
 dist: build web dist-stage
