@@ -414,18 +414,37 @@ same layout as the limezu sheets — see
 ### 8a. First run (automatic)
 
 On worldsim's first startup, if the `sprite_bases` collection is empty, it
-auto-seeds from the bundled `sprites/` directory (the `char_0..char_4` PNGs
-that ship in `dist/sprites/`). No action needed — just `make up` and the
-catalog is populated.
+auto-seeds from the sprites directory. No action needed — the catalog is
+populated on first boot.
+
+**Docker (`make up`):** the worldsim image bundles the sprites at `/sprites`
+and sets `SPRITES_DIR=/sprites` automatically. No configuration needed.
+
+**Native / local dev:** the sprites live at `frontend/public/sprites/` in the
+repo. Set `SPRITES_DIR` before starting worldsim:
+
+```bash
+SPRITES_DIR=frontend/public/sprites ./dist/bin/worldsim
+```
+
+For the self-contained `dist/` deployment, `make dist-*` stages sprites into
+`dist/sprites/`, so the default `SPRITES_DIR=./sprites` works when running
+from the `dist/` directory.
 
 ### 8b. Adding new spritesheets later
 
-Drop new 768×192 PNGs into `dist/sprites/` and run the seed-sprites CLI with
-`-force`:
+Drop new 768×192 PNGs into the sprites directory and run the seed-sprites CLI
+with `-force`:
 
 ```bash
-# Inside the worldsim container or on the host:
+# Native / local dev:
+./dist/bin/seed-sprites -dir frontend/public/sprites -force
+
+# Self-contained dist/ deployment:
 ./dist/bin/seed-sprites -dir dist/sprites -force
+
+# Inside the worldsim Docker container:
+docker compose exec worldsim seed-sprites -dir /sprites -force
 ```
 
 `-force` uploads every PNG in the directory, skipping any whose `name` (filename
