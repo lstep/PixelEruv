@@ -33,6 +33,12 @@ const (
 	compDisplayName = 4
 )
 
+// charSpriteCount is the number of character sprite sheets available on the
+// client (CHAR_SPRITES in GameScene.ts). The server assigns
+// SpriteIndex = hash(entityID) % charSpriteCount so all clients render the
+// same sprite for the same player. Must stay in sync with the client.
+const charSpriteCount = 5
+
 type Entity struct {
 	ID             string
 	Position       *pb.Position
@@ -53,6 +59,10 @@ type Entity struct {
 	// object layer), sent as an Appearance component so the frontend can render
 	// the correct tile sprite. 0 for player avatars.
 	Gid uint32
+	// SpriteIndex selects the character sheet for player avatars. Assigned at
+	// provision time from a deterministic hash of the entity ID so all clients
+	// agree on the same sprite. 0 for base entities (they use Gid instead).
+	SpriteIndex uint32
 	// State is a generic opaque string (EntityState component) that
 	// extensions can set via an input-trigger reply, e.g. "on"/"off".
 	State string
@@ -458,6 +468,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 			Input:    &pb.InputState{},
 		},
 		DisplayName:  displayName,
+		SpriteIndex:  spriteIndexForEntity(entityID),
 		spawnedTo:    make(map[string]bool),
 		currentZones: make(map[string]bool),
 	}
@@ -849,6 +860,16 @@ func lastN(s string, n int) string {
 	return string(r[len(r)-n:])
 }
 
+// spriteIndexForEntity returns a deterministic character sprite index for the
+// given entity ID (FNV-1a hash modulo charSpriteCount). Stable across server
+// restarts and identical on all clients, so every viewer renders the same
+// sprite for the same player.
+func spriteIndexForEntity(entityID string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(entityID))
+	return h.Sum32() % charSpriteCount
+}
+
 // tick runs the game loop: movement system + replication.
 func (s *Simulator) tick() {
 	ctx, span := s.tracer.Start(context.Background(), "worldsim.tick")
@@ -1007,8 +1028,11 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 			components := []*pb.ComponentData{
 				{ComponentId: compPosition, Data: posBytes},
 			}
-			if e.Gid != 0 {
-				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid})
+			// Player avatars (NetworkSession != nil) always get an Appearance
+			// component with their SpriteIndex, even when it's 0 — otherwise the
+			// client would fall back to a client-side counter and desync.
+			if e.Gid != 0 || e.NetworkSession != nil {
+				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteIndex: e.SpriteIndex})
 				components = append(components, &pb.ComponentData{ComponentId: compAppearance, Data: appearanceBytes})
 			}
 			if e.State != "" {

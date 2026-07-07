@@ -50,12 +50,13 @@ func newChatTestSim(t *testing.T) (*Simulator, *nats.Conn) {
 // and proximity group.
 func addPlayer(sim *Simulator, entityID, clientID, displayName, group string) *Entity {
 	e := &Entity{
-		ID:              entityID,
-		Position:        &pb.Position{X: 5, Y: 5},
-		NetworkSession:  &NetworkSession{ClientID: clientID, Input: &pb.InputState{}},
-		DisplayName:     displayName,
-		currentZones:    make(map[string]bool),
-		spawnedTo:       make(map[string]bool),
+		ID:                    entityID,
+		Position:              &pb.Position{X: 5, Y: 5},
+		NetworkSession:        &NetworkSession{ClientID: clientID, Input: &pb.InputState{}},
+		DisplayName:           displayName,
+		SpriteIndex:           spriteIndexForEntity(entityID),
+		currentZones:          make(map[string]bool),
+		spawnedTo:             make(map[string]bool),
 		currentProximityGroup: group,
 	}
 	sim.entities[entityID] = e

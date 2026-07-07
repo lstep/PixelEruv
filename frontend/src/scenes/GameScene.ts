@@ -277,6 +277,21 @@ const COLS_PER_ROW = 24;
 // directions; down/left frames are empty), so it renders as an empty sprite.
 const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4"];
 const WALK_ROW = 2;        // frame-row used for the movement animation (run)
+
+// FNV-1a hash (matches the server's spriteIndexForEntity) so the fallback
+// sprite index is deterministic from the entity ID — all clients agree even
+// if the Appearance component doesn't arrive.
+function fnv1aHash(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+function spriteIndexForEntity(entityId: string): number {
+  return fnv1aHash(entityId) % CHAR_SPRITES.length;
+}
 const FRAMES_PER_DIR = 6;  // columns per direction
 const DIR_NAMES = ["down", "left", "right", "up"] as const;
 // Frame start indices for each direction (index = frameRow * COLS_PER_ROW + col).
@@ -328,7 +343,6 @@ export class GameScene extends Phaser.Scene {
   private avOverlay: AvOverlay | null = null;
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
-  private colorIndex = 0;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
   // server's authoritative position on each reconciliation.
   private pendingInputs: InputEvent[] = [];
@@ -741,18 +755,19 @@ export class GameScene extends Phaser.Scene {
       onReplication: (batch: ReplicationBatchView) => this.handleReplication(batch),
       onReconnect: (_clientId: string, entityId: string) => {
         // The pusher mints a fresh session on reconnect, so the entity id
-        // changes and worldsim spawns the avatar at the spawn point. Drop the
-        // old self sprite (a Destroy will also arrive via replication once
-        // worldsim processes client.disconnected, but removing it now avoids
-        // a lingering ghost) and clear un-acked inputs that referenced the
-        // old entity. Re-mark input dirty so the current input state is
-        // re-sent on the new connection and movement resumes seamlessly.
-        const oldId = this.myEntityId;
-        const old = oldId ? this.avatars.get(oldId) : null;
-        if (old && oldId) {
-          old.sprite.destroy();
-          this.avatars.delete(oldId);
+        // changes and worldsim spawns the avatar at the spawn point. Clear
+        // ALL avatars (not just the old self) because the server has a new
+        // clientID and will re-spawn every entity to us — keeping stale
+        // entries would cause the client to skip those SpawnEntities and
+        // retain sprites from before the reconnect. Clear un-acked inputs
+        // that referenced the old entity. Re-mark input dirty so the current
+        // input state is re-sent on the new connection and movement resumes
+        // seamlessly.
+        for (const av of this.avatars.values()) {
+          av.sprite.destroy();
+          av.nameTag?.destroy();
         }
+        this.avatars.clear();
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
         this.inputDirty = true;
@@ -915,6 +930,7 @@ export class GameScene extends Phaser.Scene {
       let x = 10 * TILE_SIZE;
       let y = 10 * TILE_SIZE;
       let gid = 0;
+      let spriteIndex = -1;
       let displayName = "";
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
@@ -923,9 +939,10 @@ export class GameScene extends Phaser.Scene {
           x = pos.x * TILE_SIZE;
           y = pos.y * TILE_SIZE;
         } else if (comp.componentId === 3) {
-          // Appearance component — Tiled gid for tile-sprite rendering
+          // Appearance component — gid for props, sprite_index for player avatars
           const appearance = fromBinary(AppearanceSchema, comp.data);
           gid = appearance.gid;
+          spriteIndex = appearance.spriteIndex;
         } else if (comp.componentId === 4) {
           // DisplayName component — player avatar name tag
           const dn = fromBinary(DisplayNameSchema, comp.data);
@@ -961,8 +978,14 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      const charKey = CHAR_SPRITES[this.colorIndex % CHAR_SPRITES.length];
-      this.colorIndex++;
+      // Use the server-assigned sprite index (deterministic from entity ID)
+      // so all clients render the same sprite for the same player. Fall back
+      // to a client-side hash of the entity ID (same FNV-1a as the server) if
+      // no Appearance component arrived — still deterministic, still agrees.
+      const idx = spriteIndex >= 0
+        ? spriteIndex % CHAR_SPRITES.length
+        : spriteIndexForEntity(spawn.entityId);
+      const charKey = CHAR_SPRITES[idx];
       const sprite = this.add.sprite(x, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
       // 64px-tall frame: origin at 0.75 puts the feet at the tile bottom and
       // lets the taller-than-tile head extend up into the tile above.
