@@ -667,6 +667,27 @@ export class GameScene extends Phaser.Scene {
     kb.on("keydown-E", () => { if (!eHeld) { eHeld = true; this.ws?.sendAction("key:E"); } });
     kb.on("keyup-E", () => { eHeld = false; });
 
+    // When the window loses focus or is hidden, the browser stops delivering
+    // DOM events to the page — including keyup. This happens concretely when
+    // Safari shows the native camera/mic permission popup (triggered by
+    // getUserMedia inside AvClient). Without this, a held arrow key gets
+    // "stuck" (its keyup is never delivered) and the avatar keeps walking
+    // after the popup appears. Reset all movement state on blur/hidden so the
+    // avatar stops until the user presses a key again.
+    const clearMovementInput = () => {
+      this.inputState.up = false;
+      this.inputState.down = false;
+      this.inputState.left = false;
+      this.inputState.right = false;
+      this.inputDirty = true;
+      eHeld = false;
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") clearMovementInput();
+    };
+    window.addEventListener("blur", clearMovementInput);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     // Connect to Pusher via WebSocket.
     // In Docker (nginx on 8080): ws://host:8080/ws (proxied to pusher:8081)
     // In dev (vite on 5173): ws://host:8081/ws (direct to pusher)
@@ -763,6 +784,8 @@ export class GameScene extends Phaser.Scene {
       this.avOverlay = null;
       this.avClient = null;
       topMenu?.detachAvControls();
+      window.removeEventListener("blur", clearMovementInput);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     });
 
     // Disconnect LiveKit room on page unload/refresh to avoid zombie

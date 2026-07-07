@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 15)
+Last updated: 2026-07-07 (session 16)
 
 ## Overview
 
@@ -199,6 +199,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-07 | Chat routed by worldsim (not a separate ext-chat extension) | Worldsim already owns every entity↔client map and computes proximity groups each tick, so there's zero mapping problem and no new service. Chat *routing* is plumbing (like replication routing), not gameplay logic — doesn't violate "kernel stays clean of gameplay". ext-chat would have been a thin wrapper looking up data worldsim already has. |
 | 2026-07-07 | Chat is ephemeral (no PocketBase persistence) | Matches how A/V and movement work (live state only). No migration needed. A player who joins later or refreshes sees an empty chat. Scrollback/history fetch flagged for a future task. |
 | 2026-07-07 | Worldsim marshals full ServerFrame; pusher writes raw bytes for chat | Matches the existing replication path (worldsim marshals, pusher passes through). Keeps pusher free of chat-specific logic. The av_token path is the exception (JSON→proto in pusher) because ext-av publishes JSON; chat is worldsim-to-pusher so we stay in protobuf end-to-end. |
+| 2026-07-07 | Reset movement input on window blur / visibilitychange→hidden | Safari suspends DOM event delivery to the page while the native camera/mic permission popup (triggered by `getUserMedia` in AvClient) is shown. The `keyup` for a held arrow key is never delivered, so `inputState.<dir>` stays `true` and the avatar keeps walking after the popup appears. `clearMovementInput` on `blur` + `visibilitychange` is the standard Phaser fix; listeners are torn down on scene `SHUTDOWN`. |
 
 ## Test accounts
 
