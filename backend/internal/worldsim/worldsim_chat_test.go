@@ -54,7 +54,7 @@ func addPlayer(sim *Simulator, entityID, clientID, displayName, group string) *E
 		Position:              &pb.Position{X: 5, Y: 5},
 		NetworkSession:        &NetworkSession{ClientID: clientID, Input: &pb.InputState{}},
 		DisplayName:           displayName,
-		SpriteIndex:           spriteIndexForEntity(entityID),
+		SpriteBase:            "",
 		currentZones:          make(map[string]bool),
 		spawnedTo:             make(map[string]bool),
 		currentProximityGroup: group,

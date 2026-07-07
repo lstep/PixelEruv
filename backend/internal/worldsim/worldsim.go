@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math/rand/v2"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -34,12 +35,6 @@ const (
 	compDisplayName = 4
 )
 
-// charSpriteCount is the number of character sprite sheets available on the
-// client (CHAR_SPRITES in GameScene.ts). The server assigns
-// SpriteIndex = hash(entityID) % charSpriteCount so all clients render the
-// same sprite for the same player. Must stay in sync with the client.
-const charSpriteCount = 5
-
 type Entity struct {
 	ID             string
 	Position       *pb.Position
@@ -60,17 +55,19 @@ type Entity struct {
 	// object layer), sent as an Appearance component so the frontend can render
 	// the correct tile sprite. 0 for player avatars.
 	Gid uint32
-	// SpriteIndex selects the character sheet for player avatars. Assigned at
-	// provision time from a deterministic hash of the entity ID so all clients
-	// agree on the same sprite. 0 for base entities (they use Gid instead).
-	SpriteIndex uint32
+	// SpriteBase is the sprite_bases PocketBase record ID selecting the
+	// character sheet for player avatars. Set at provision time from the
+	// player's persisted choice. Empty for base entities (they use Gid) and
+	// for guests (frontend falls back to a hash-based index).
+	SpriteBase string
 	// State is a generic opaque string (EntityState component) that
 	// extensions can set via an input-trigger reply, e.g. "on"/"off".
 	State string
 	// dirty: which components changed since last replication tick
-	dirtyPosition bool
-	dirtyState    bool
-	dirtyName     bool
+	dirtyPosition   bool
+	dirtyState      bool
+	dirtyName       bool
+	dirtyAppearance bool
 	// pendingAnimations: animation IDs to replicate as PlayAnimation on the
 	// next tick, then cleared.
 	pendingAnimations []uint32
@@ -108,6 +105,7 @@ type Simulator struct {
 	mapData       *MapData
 	zoneReg       *ZoneRegistry
 	userStore     *UserStore
+	spriteStore   *SpriteStore
 	extMgr        *ExtensionManager
 	pocketbaseURL string
 	tickHz        int
@@ -156,6 +154,7 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		mapData:          mapData,
 		zoneReg:          NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
 		userStore:        NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
+		spriteStore:      NewSpriteStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
 		extMgr:           NewExtensionManager(logger),
 		pocketbaseURL:    pocketbaseURL,
 		tickHz:           tickHz,
@@ -169,6 +168,17 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 	}
 
 	s.loadBaseEntities()
+
+	// Auto-seed the sprite_bases catalog from the bundled sprites directory on
+	// first run. Non-fatal: if PB is down or seeding fails, worldsim still
+	// starts and the frontend falls back to static char_0..char_4 sheets.
+	spritesDir := os.Getenv("SPRITES_DIR")
+	if spritesDir == "" {
+		spritesDir = "./sprites"
+	}
+	if err := s.spriteStore.SeedIfEmpty(spritesDir); err != nil {
+		logger.Warn("sprite seed failed", "err", err, "dir", spritesDir)
+	}
 
 	if err := s.subscribe(); err != nil {
 		return nil, fmt.Errorf("subscribe: %w", err)
@@ -361,6 +371,24 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe client.set_name: %w", err)
 	}
 
+	// client.<id>.set_sprite_base — character sheet change request.
+	// See documentation/plans/2026-07-07-sprite-selection-design.md.
+	if _, err := s.nc.Subscribe("client.*.set_sprite_base", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.handle_set_sprite_base_sub")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "set_sprite_base")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var frame pb.SetSpriteBaseFrame
+		if err := proto.Unmarshal(m.Data, &frame); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		s.handleSetSpriteBase(ctx, clientID, &frame)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.set_sprite_base: %w", err)
+	}
+
 	// Extension lifecycle subscriptions.
 	if err := s.extMgr.Subscribe(s.nc); err != nil {
 		return fmt.Errorf("extension subscribe: %w", err)
@@ -436,6 +464,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 
 	entityID := defaultEntityID
 	displayName := ""
+	spriteBase := ""
 
 	// Look up or create the user in PocketBase for persistent identity.
 	if s.userStore != nil && sub != "" && sub != "dev" {
@@ -446,6 +475,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 		} else {
 			entityID = user.EntityID
 			displayName = user.DisplayName
+			spriteBase = user.SpriteBase
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
@@ -471,7 +501,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 			Input:    &pb.InputState{},
 		},
 		DisplayName:  displayName,
-		SpriteIndex:  spriteIndexForEntity(entityID),
+		SpriteBase:   spriteBase,
 		spawnedTo:    make(map[string]bool),
 		currentZones: make(map[string]bool),
 	}
@@ -854,6 +884,61 @@ func (s *Simulator) handleSetName(ctx context.Context, clientID string, frame *p
 	}
 }
 
+// handleSetSpriteBase processes a client-sent SetSpriteBaseFrame: validates
+// the sprite_base ID exists in the sprite_bases collection, updates
+// Entity.SpriteBase, marks it dirty for replication, and persists to
+// PocketBase for logged-in users. Guests are rejected (no PB record). See
+// documentation/plans/2026-07-07-sprite-selection-design.md.
+func (s *Simulator) handleSetSpriteBase(ctx context.Context, clientID string, frame *pb.SetSpriteBaseFrame) {
+	ctx, span := s.tracer.Start(ctx, "worldsim.handle_set_sprite_base")
+	defer span.End()
+	span.SetAttributes(attribute.String("client.id", clientID))
+
+	spriteBase := frame.GetSpriteBase()
+
+	// Validate the sprite_base ID exists (when a SpriteStore is configured).
+	// Empty sprite_base is allowed (revert to fallback). Skipped when
+	// spriteStore is nil (tests / no-PB deployments), matching handleSetName's
+	// userStore-nil pattern.
+	if s.spriteStore != nil && spriteBase != "" {
+		exists, err := s.spriteStore.BaseExists(spriteBase)
+		if err != nil {
+			span.RecordError(err)
+			s.logger.WarnContext(ctx, "sprite_base validation failed",
+				"err", err, "sprite_base", spriteBase)
+			return
+		}
+		if !exists {
+			span.SetStatus(codes.Error, "sprite_base not found")
+			s.logger.WarnContext(ctx, "sprite_base not found", "sprite_base", spriteBase)
+			return
+		}
+	}
+
+	s.mu.Lock()
+	entity, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown client")
+		return
+	}
+	entity.SpriteBase = spriteBase
+	entity.dirtyAppearance = true
+	entityID := entity.ID
+	s.mu.Unlock()
+
+	// Persist to PocketBase for logged-in users. Guests have no
+	// PocketBase record, so findByEntityID returns nil and the update is
+	// a no-op — matching the design's "guests are session-only".
+	if s.userStore != nil {
+		if err := s.userStore.UpdateSpriteBase(entityID, spriteBase); err != nil {
+			s.logger.WarnContext(ctx, "persist sprite_base failed",
+				"err", err, "entity", entityID)
+			span.RecordError(err)
+		}
+	}
+}
+
 // lastN returns the last n characters of s, or s if shorter.
 func lastN(s string, n int) string {
 	r := []rune(s)
@@ -861,16 +946,6 @@ func lastN(s string, n int) string {
 		return s
 	}
 	return string(r[len(r)-n:])
-}
-
-// spriteIndexForEntity returns a deterministic character sprite index for the
-// given entity ID (FNV-1a hash modulo charSpriteCount). Stable across server
-// restarts and identical on all clients, so every viewer renders the same
-// sprite for the same player.
-func spriteIndexForEntity(entityID string) uint32 {
-	h := fnv.New32a()
-	h.Write([]byte(entityID))
-	return h.Sum32() % charSpriteCount
 }
 
 // tick runs the game loop: movement system + replication.
@@ -950,6 +1025,7 @@ func (s *Simulator) tick() {
 		e.dirtyPosition = false
 		e.dirtyState = false
 		e.dirtyName = false
+		e.dirtyAppearance = false
 		e.pendingAnimations = nil
 	}
 
@@ -1032,10 +1108,10 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				{ComponentId: compPosition, Data: posBytes},
 			}
 			// Player avatars (NetworkSession != nil) always get an Appearance
-			// component with their SpriteIndex, even when it's 0 — otherwise the
-			// client would fall back to a client-side counter and desync.
+			// component with their SpriteBase, even when it's empty — otherwise
+			// the client would fall back to a client-side hash and desync.
 			if e.Gid != 0 || e.NetworkSession != nil {
-				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteIndex: e.SpriteIndex})
+				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase})
 				components = append(components, &pb.ComponentData{ComponentId: compAppearance, Data: appearanceBytes})
 			}
 			if e.State != "" {
@@ -1077,6 +1153,15 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
 					Data:        nameBytes,
+					SnapshotSeq: s.snapshotSeq,
+				})
+			}
+			if e.dirtyAppearance {
+				appBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase})
+				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
+					EntityId:    e.ID,
+					ComponentId: compAppearance,
+					Data:        appBytes,
 					SnapshotSeq: s.snapshotSeq,
 				})
 			}

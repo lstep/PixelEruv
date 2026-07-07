@@ -16,6 +16,7 @@ message ClientFrame {
     ActionFrame action = 4;
     ChatFrame chat = 5;
     SetNameFrame set_name = 6;
+    SetSpriteBaseFrame set_sprite_base = 7;
   }
 }
 
@@ -70,6 +71,16 @@ message ChatFrame {
 // documentation/plans/2026-07-07-avatar-name-tags-design.md.
 message SetNameFrame {
   string name = 1;
+  string traceparent = 2;
+}
+
+// SetSpriteBaseFrame is a client request to change their character sheet. The
+// server validates the sprite_base ID exists in the sprite_bases collection,
+// updates Entity.SpriteBase, marks it dirty for replication, and persists to
+// PocketBase for logged-in users. Guests are rejected (no PB record). See
+// documentation/plans/2026-07-07-sprite-selection-design.md.
+message SetSpriteBaseFrame {
+  string sprite_base = 1;   // sprite_bases record ID; empty = revert to fallback
   string traceparent = 2;
 }
 
