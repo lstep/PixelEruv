@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken } from "../auth";
@@ -342,6 +342,26 @@ export class WsClient {
         create(SetNameFrameSchema, { name, traceparent: traceparentFor() }),
       );
       const frame = create(ClientFrameSchema, { payload: { case: "setName", value: setName } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
+  }
+
+  // setSpriteBase sends a SetSpriteBaseFrame to change the player's character
+  // sheet. The server validates the ID, updates the entity, replicates to all
+  // clients, and persists to PocketBase for logged-in users. Fire-and-forget
+  // — the avatar hot-swap arrives via replication.
+  setSpriteBase(spriteBase: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_set_sprite_base", {
+      attributes: { "client.id": this.clientId ?? "" },
+    });
+    try {
+      const ssb = context.with(trace.setSpan(context.active(), span), () =>
+        create(SetSpriteBaseFrameSchema, { spriteBase, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "setSpriteBase", value: ssb } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();

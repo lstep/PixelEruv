@@ -404,7 +404,52 @@ No restart needed.
 
 ---
 
-## 8. Day-to-day operations
+## 8. Character spritesheets
+
+Character spritesheets live in PocketBase's `sprite_bases` collection. Each
+record has a `name` (e.g. `char_0`) and a `sheet` file field (a 768×192 PNG,
+same layout as the limezu sheets — see
+[`documentation/22-limezu-sprites.md`](../documentation/22-limezu-sprites.md)).
+
+### 8a. First run (automatic)
+
+On worldsim's first startup, if the `sprite_bases` collection is empty, it
+auto-seeds from the bundled `sprites/` directory (the `char_0..char_4` PNGs
+that ship in `dist/sprites/`). No action needed — just `make up` and the
+catalog is populated.
+
+### 8b. Adding new spritesheets later
+
+Drop new 768×192 PNGs into `dist/sprites/` and run the seed-sprites CLI with
+`-force`:
+
+```bash
+# Inside the worldsim container or on the host:
+./dist/bin/seed-sprites -dir dist/sprites -force
+```
+
+`-force` uploads every PNG in the directory, skipping any whose `name` (filename
+stem) already exists in `sprite_bases`. So existing sheets are never duplicated.
+
+Alternatively, add sheets via the PocketBase admin UI:
+1. Open `http://<host-ip>:8090/_/` (or SSH tunnel — see section 6).
+2. Go to **Collections → sprite_bases**.
+3. Add a record: set `name`, attach the PNG as `sheet`.
+
+### 8c. Player selection
+
+Logged-in users see a pre-join character picker on first visit (before entering
+the world). They click a thumbnail and confirm; the choice persists in
+PocketBase's `players.sprite_base` field and is restored on every reconnect.
+A "Character sheet" field in the top-right Menu dropdown lets them change it
+later — the avatar hot-swaps live for all connected clients.
+
+Guests (not logged in) skip the picker and get a deterministic fallback sprite
+(hash of their entity ID).
+
+---
+
+## 9. Day-to-day operations
 
 ```bash
 cd ~/pixeleruv
