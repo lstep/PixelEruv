@@ -6,10 +6,16 @@
 // needs to load the map via Phaser's loader.
 //
 // Env vars:
-//   VITE_POCKETBASE_URL — PocketBase base URL (default http://localhost:8090)
+//   VITE_POCKETBASE_URL — PocketBase base URL (dev only; default http://localhost:8090)
 //   VITE_MAP_NAME       — map record name to load (default "test-map")
+//
+// In production (served by nginx), PB_URL derives from window.location.origin so
+// the browser reaches PocketBase via the nginx /api/ proxy (same-origin), which
+// works for both localhost and remote access without hardcoded addresses.
 
-const PB_URL = import.meta.env.VITE_POCKETBASE_URL || "http://localhost:8090";
+const PB_URL = window.location.port === "5173"
+  ? (import.meta.env.VITE_POCKETBASE_URL ?? "http://localhost:8090")
+  : window.location.origin;
 const MAP_NAME = import.meta.env.VITE_MAP_NAME || "test-map";
 
 export interface TilesetAsset {

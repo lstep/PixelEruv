@@ -2,8 +2,8 @@
 
 This guide takes a new admin from zero to a running Pixel Eruv instance on a
 remote host: copy the pre-built `dist/` directory, start the stack with
-Docker Compose, put nginx in front as a TLS-terminating proxy, log in, and
-design/upload a map.
+Docker Compose, optionally put nginx in front for a real TLS certificate,
+log in, and design/upload a map.
 
 It assumes the **`dist/` path** (pre-built binaries + web assets, no source
 code or Go/Node toolchain needed on the host). For building `dist/` from
@@ -15,7 +15,9 @@ source on a dev machine, see the [README](../README.md) (`make dist-x86`).
 
 - A Linux host (amd64) reachable on the public/LAN IP you want to serve from.
 - Docker Engine + Docker Compose v2.
-- nginx (host-level) for TLS termination.
+- For a real domain + Let's Encrypt cert: nginx (host-level) for TLS
+  termination (section 5). For LAN testing with a self-signed cert, this is
+  not needed — the in-container nginx handles HTTPS on `:4043`.
 - A domain name (recommended) or a static IP. Browsers require a
   **secure context** (HTTPS or `localhost`) for the PKCE auth flow, so plain
   HTTP only works when browsing from the host itself.
@@ -25,7 +27,7 @@ Confirm:
 ```bash
 docker --version
 docker compose version
-nginx -v
+nginx -v   # only needed if you'll use a host nginx (section 5)
 ```
 
 ---
@@ -57,7 +59,7 @@ On the host, the layout should look like:
 ├── docker-compose.yml
 ├── bin/                  # pusher, worldsim, ext-* (linux/amd64)
 ├── web/                  # built frontend + maps/ + sprites/
-├── docker/               # Dockerfiles, nginx.conf, livekit.yaml, dex/
+├── docker/               # Dockerfiles, nginx.conf, livekit.yaml, dex/, entrypoint scripts
 └── pb_migrations/        # PocketBase collection schemas
 ```
 
@@ -70,8 +72,8 @@ On the host, the layout should look like:
 
 ## 3. Configure before first start
 
-Three things must be set before `docker compose up` or the stack will either
-fail to start or be unusable remotely.
+For local dev (browsing from `localhost`) the defaults work with no changes.
+For remote access or production, review the three settings below.
 
 ### 3a. LiveKit API secret (rotate for production)
 
@@ -99,63 +101,68 @@ keys:
   devkey: <paste the same 64-char hex string>
 ```
 
-### 3b. Public URL for remote access
+### 3b. Public host for remote access
 
-The dist compose is HTTP-only (frontend on `:4080`). For browsers on other
-machines you need HTTPS (see section 4). Pick your public URL now, e.g.
-`https://pixeleruv.example.com`, and update two places:
+The dist compose exposes the frontend on both HTTP (`:4080`) and HTTPS
+(`:4043`, self-signed cert generated at startup). For browsers on other
+machines, set `PUBLIC_HOST` to the host's LAN IP or hostname — one variable
+drives everything remote access needs:
 
-**`docker/dex/config.yaml`** — set `issuer:` to the public URL and add the
-matching redirect URI:
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PUBLIC_HOST` | `localhost` | Host IP/hostname remote browsers use to reach the stack |
 
-```yaml
-issuer: https://pixeleruv.example.com/dex
+Setting it auto-configures three things (no manual file edits needed):
 
-staticClients:
-  - id: pixeleruv
-    redirectURIs:
-      - "https://pixeleruv.example.com/auth/callback"
-    name: "Pixel Eruv"
-    public: true
+1. **TLS cert SAN** — `frontend-entrypoint.sh` appends `PUBLIC_HOST` to the
+   self-signed cert's `subjectAltName` so browsers trust
+   `https://<PUBLIC_HOST>:4043` (after accepting the warning once).
+2. **Dex redirect URI** — `dex-entrypoint.sh` templates `PUBLIC_HOST` into
+   the `redirectURIs` entry in `docker/dex/config.yaml` at startup, so the
+   OIDC callback works remotely.
+3. **LiveKit public URL** — `LIVEKIT_PUBLIC_URL` becomes
+   `ws://<PUBLIC_HOST>:7880` so the browser's LiveKit SDK can reach the SFU.
+
+Set it via an env var on the command line, or via a `.env` file next to
+`docker-compose.yml` (compose reads it automatically):
+
+```bash
+# Option A — env var on the command line
+PUBLIC_HOST=192.168.1.10 docker compose up --build -d
+
+# Option B — .env file (compose reads it automatically)
+echo "PUBLIC_HOST=192.168.1.10" > .env
+docker compose up --build -d
 ```
 
-**`docker-compose.yml`** — set `DEX_ISSUER` on `pusher` to the same value
-(the pusher validates the token `iss` claim against this):
+Then open `https://192.168.1.10:4043` and accept the self-signed cert warning
+once. For a real domain + Let's Encrypt cert, put a host nginx proxy in front
+(section 5).
 
-```yaml
-pusher:
-  environment:
-    DEX_ISSUER: "https://pixeleruv.example.com/dex"
-    DEX_JWKS_URL: "http://dex:5556/dex/keys"   # container-internal, unchanged
-```
-
-> Dex validates that incoming requests match its `issuer` URL. Behind the
-> host nginx proxy it relies on `X-Forwarded-Host` / `X-Forwarded-Proto`
-> (set in the nginx config below) to reconstruct the public URL.
+> If you're using a real domain (e.g. `pixeleruv.example.com`) with a host
+> nginx proxy terminating TLS, set `PUBLIC_HOST=pixeleruv.example.com` so the
+> Dex redirect URI matches. The host nginx forwards to the in-container nginx
+> on `:4080` (HTTP) — the in-container HTTPS endpoint is only for the
+> self-signed cert path.
 
 ### 3c. LiveKit node IP (for A/V over the network)
 
 LiveKit advertises an IP in its WebRTC ICE candidates; browsers must be able
-to route media back to it. Set `LIVEKIT_NODE_IP` to the host's public/LAN IP
-and `LIVEKIT_PUBLIC_URL` to the WebSocket URL browsers will use:
+to route media back to it. Set `LIVEKIT_NODE_IP` to the host's public/LAN IP:
 
 ```bash
 # run from the dist root
-export LIVEKIT_NODE_IP=<host-public-ip>
+export LIVEKIT_NODE_IP=192.168.1.10
 ```
 
-And in `docker-compose.yml` → `ext-av.environment`:
+`LIVEKIT_PUBLIC_URL` (the WebSocket URL the browser's LiveKit SDK uses) is
+already driven by `PUBLIC_HOST` (section 3b) — no separate edit needed. If
+you proxy LiveKit's signaling WebSocket through a host nginx (section 5c),
+override `LIVEKIT_PUBLIC_URL` in `docker-compose.yml` to the proxied `wss://`
+URL instead.
 
-```yaml
-LIVEKIT_PUBLIC_URL: "wss://pixeleruv.example.com/ws-livekit"
-```
-
-> If you proxy LiveKit's signaling WebSocket through the host nginx (see
-> section 4), use `wss://pixeleruv.example.com/...`. If you expose LiveKit's
-> `7880` port directly, use `ws://<host-ip>:7880` and open the port in the
-> firewall. The UDP media range `50000-50020` must also be reachable by
-> browsers — proxy that through nginx's `stream` block or open it in the
-> firewall.
+> The UDP media range `50000-50020` must also be reachable by browsers —
+> open it in the firewall, or proxy via nginx's `stream` module.
 
 ---
 
@@ -164,32 +171,46 @@ LIVEKIT_PUBLIC_URL: "wss://pixeleruv.example.com/ws-livekit"
 From the dist root (`~/pixeleruv/`):
 
 ```bash
-LIVEKIT_NODE_IP=<host-public-ip> docker compose up --build -d
+PUBLIC_HOST=192.168.1.10 LIVEKIT_NODE_IP=192.168.1.10 docker compose up --build -d
 ```
 
+(Or set them in a `.env` file — compose reads it automatically.)
+
 This starts: `nats`, `pocketbase` (:8090), `dex` (:5556), `pusher` (:8081),
-`worldsim`, `frontend` (host **:4080**), `ext-demo`, `ext-walls`,
-`ext-props`, `ext-av`, `livekit` (:7880 / :7881 / UDP 50000-50020).
+`worldsim`, `frontend` (host **:4080** HTTP + **:4043** HTTPS), `ext-demo`,
+`ext-walls`, `ext-props`, `ext-av`, `livekit` (:7880 / :7881 / UDP 50000-50020).
 
 Check it came up:
 
 ```bash
 docker compose ps
 docker compose logs -f worldsim     # should see "worldsim ready" + map load
-curl -s http://127.0.0.1:4080/ | head   # frontend HTML
+curl -sk https://127.0.0.1:4043/ | head   # frontend HTML (self-signed cert)
 ```
 
-The frontend is now reachable on `http://<host-ip>:4080` — but **only from
-the host itself** (or over plain HTTP, which breaks auth on remote
-browsers). Put nginx in front for real access.
+The frontend is now reachable on:
+
+- `http://<host-ip>:4080` — HTTP (localhost only; PKCE auth needs a secure
+  context, so this only works when browsing from the host itself).
+- `https://<host-ip>:4043` — HTTPS with a self-signed cert (remote browsers;
+  accept the cert warning once). This is the endpoint to use for remote
+  access without a host nginx proxy.
+
+For a real domain + Let's Encrypt cert, put a host nginx proxy in front
+(section 5).
 
 ---
 
-## 5. Host nginx as a TLS proxy to :4080
+## 5. Host nginx as a TLS proxy (optional — real domain)
 
-The in-container nginx already proxies `/ws` → pusher and `/dex/` → dex
-same-origin. The host nginx only needs to terminate TLS and forward
-everything to `127.0.0.1:4080`.
+The in-container nginx already terminates TLS (self-signed cert from
+`PUBLIC_HOST`) and proxies `/ws` → pusher, `/dex/` → dex, and `/api/` →
+pocketbase same-origin. For LAN testing you can skip this section entirely
+and just use `https://<host-ip>:4043`.
+
+For a real domain with a Let's Encrypt cert, put a host nginx in front that
+terminates TLS and forwards everything to the in-container nginx on
+`127.0.0.1:4080` (HTTP — the host nginx handles the real cert).
 
 ### 5a. TLS certificate
 
@@ -233,7 +254,7 @@ server {
     }
 
     # Everything → in-container nginx on :4080 (which already handles
-    # /ws → pusher and /dex/ → dex same-origin).
+    # /ws → pusher, /dex/ → dex, and /api/ → pocketbase same-origin).
     location / {
         proxy_pass         http://127.0.0.1:4080;
         proxy_http_version 1.1;
@@ -308,12 +329,13 @@ players are near each other or inside an `av_enabled` zone.
 
 | Service     | URL                                  | Use |
 |-------------|--------------------------------------|-----|
-| PocketBase  | `https://pixeleruv.example.com/pb/_/` (if proxied) or `http://<host-ip>:8090/_/` | Manage `maps` and `players` collections, upload map files |
-| Dex         | `https://pixeleruv.example.com/dex/` | OIDC issuer (same-origin via container nginx) |
+| PocketBase  | `http://<host-ip>:8090/_/` (admin UI) or `https://<host-ip>/api/` (API, proxied) | Manage `maps` and `players` collections, upload map files |
+| Dex         | `https://<host-ip>/dex/` | OIDC issuer (same-origin via container nginx) |
 
-> PocketBase is **not** proxied by the container nginx by default. For
-> remote admin access either proxy `:8090` through the host nginx, or SSH
-> tunnel: `ssh -L 8090:127.0.0.1:8090 admin@<host-ip>`.
+> The container nginx proxies `/api/` → PocketBase (so the frontend can fetch
+> maps same-origin), but the **admin UI** at `/_/` is not proxied. For remote
+> admin access either proxy `:8090` through a host nginx, or SSH tunnel:
+> `ssh -L 8090:127.0.0.1:8090 admin@<host-ip>`.
 
 ---
 
@@ -409,17 +431,28 @@ Persistent data lives in two Docker volumes: `pb_data` (PocketBase) and
 ## 9. Common pitfalls
 
 - **Black screen + `crypto.subtle` error in console**: you're accessing over
-  plain HTTP from a remote browser. Auth needs a secure context — use HTTPS
-  (section 5) or browse from `localhost` on the host itself.
+  plain HTTP from a remote browser. Auth needs a secure context — use the
+  HTTPS endpoint (`https://<host-ip>:4043`, section 3b) or browse from
+  `localhost` on the host itself.
+- **Map fails to load on a remote browser (network error to `localhost:8090`)**:
+  you're running an old build where `mapLoader.ts` hardcoded `localhost:8090`.
+  Rebuild the frontend — `mapLoader.ts` now derives the PocketBase URL from
+  `window.location.origin` and the container nginx proxies `/api/` → PocketBase.
+- **Dex rejects the redirect URI**: `PUBLIC_HOST` doesn't match the URL the
+  browser used. `dex-entrypoint.sh` templates `PUBLIC_HOST` into the
+  `redirectURIs` at startup — if you change `PUBLIC_HOST`, recreate the `dex`
+  container (`docker compose up -d --force-recreate dex`). If you're using a
+  host nginx proxy with a real domain, set `PUBLIC_HOST` to that domain.
 - **`token signature is invalid` after rotating the LiveKit secret**: old
   browser tokens are signed with the old secret. Restart `livekit` and
   `ext-av`, then have browsers rejoin (refresh the page).
 - **A/V connects but no media flows**: `LIVEKIT_NODE_IP` is wrong, or the
   UDP range `50000-50020` is blocked by a firewall. Check ICE candidates in
   the browser's WebRTC internals.
-- **Dex returns an error on login**: the `issuer:` in `docker/dex/config.yaml`
-  doesn't match the URL the browser used, or nginx isn't forwarding
-  `X-Forwarded-Host` / `X-Forwarded-Proto`. Both must match the public URL.
+- **Self-signed cert not trusted for the LAN IP**: `PUBLIC_HOST` wasn't set
+  when the frontend container started, so the cert's SAN doesn't include the
+  LAN IP. Recreate the frontend container (`docker compose up -d
+  --force-recreate frontend`) after setting `PUBLIC_HOST`.
 - **Map edits don't appear**: you edited the file in the repo, not in
   PocketBase. Re-upload to the `maps` collection (section 7b).
 - **`LIVEKIT_API_SECRET` mismatch**: the secret in `docker-compose.yml`

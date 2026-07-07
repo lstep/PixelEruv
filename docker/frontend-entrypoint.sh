@@ -9,6 +9,14 @@
 set -e
 
 TLS_HOSTS="${TLS_HOSTS:-localhost,127.0.0.1}"
+# Auto-append PUBLIC_HOST to the cert SANs so remote browsers trust the cert
+# without the user having to duplicate the host in TLS_HOSTS.
+if [ -n "$PUBLIC_HOST" ]; then
+  case ",${TLS_HOSTS}," in
+    *",${PUBLIC_HOST},"*) ;;  # already present
+    *) TLS_HOSTS="${TLS_HOSTS},${PUBLIC_HOST}" ;;
+  esac
+fi
 CERT_DIR="/etc/nginx/certs"
 mkdir -p "$CERT_DIR"
 

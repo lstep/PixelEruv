@@ -80,10 +80,16 @@ This builds the Pusher and World Sim images, starts NATS, and serves the
 frontend with nginx. Open http://localhost:4080 — you should see a 20×20
 tile world. Move with the arrow keys; each browser tab is a player.
 
-For remote access the same compose file also exposes HTTPS on
-`https://localhost:4043` (self-signed cert from `TLS_HOSTS`); see the
-[Quick Start for Admins](docs/quick-start.md) for putting a real TLS
-certificate and a host nginx proxy in front.
+For remote access the same compose file also exposes HTTPS on port `4043`
+with a self-signed cert generated at startup. Set `PUBLIC_HOST` to the host's
+LAN IP or hostname and rebuild — one variable drives the TLS cert SAN, the Dex
+redirect URI, and the LiveKit public URL:
+
+    PUBLIC_HOST=192.168.1.10 make up
+
+Then open `https://192.168.1.10:4043` and accept the self-signed cert warning
+once. See the [Quick Start for Admins](docs/quick-start.md) for putting a real
+TLS certificate and a host nginx proxy in front.
 
 To stop: `make down`. To tail logs: `make logs`.
 
@@ -98,9 +104,10 @@ nginx.conf, livekit.yaml, dex config, and PocketBase migrations into
 
     docker compose -f dist/docker-compose.yml up --build
 
-The frontend is served on `http://<host>:4080` (HTTP only — use the host
-nginx + TLS setup in the [Quick Start](docs/quick-start.md) for remote
-browsers, since the PKCE auth flow needs a secure context).
+The frontend is served on `http://<host>:4080` (HTTP) and `https://<host>:4043`
+(HTTPS, self-signed). For remote browsers, set `PUBLIC_HOST=<host-ip>` and use
+the HTTPS endpoint — the PKCE auth flow needs a secure context. See the
+[Quick Start](docs/quick-start.md) for putting a real TLS certificate in front.
 
 Native binaries + dev server
 
@@ -133,6 +140,31 @@ from `pusher:8081` to `127.0.0.1:8081` for a non-Docker host).
 * Production: set `LIVEKIT_NODE_IP=<your-public-ip>` (env var or `.env` file) →
   LiveKit advertises that IP in ICE candidates → browsers on the internet can
   route media back to it.
+
+🌐 Remote access (`PUBLIC_HOST`)
+
+A single env var drives everything remote browsers need:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PUBLIC_HOST` | `localhost` | Host IP/hostname remote browsers use to reach the stack |
+
+Setting it auto-configures three things:
+
+1. **TLS cert SAN** — `frontend-entrypoint.sh` appends `PUBLIC_HOST` to the
+   self-signed cert's `subjectAltName` so browsers trust `https://<PUBLIC_HOST>:4043`.
+2. **Dex redirect URI** — `dex-entrypoint.sh` templates `PUBLIC_HOST` into the
+   `redirectURIs` entry at startup, so the OIDC callback works remotely.
+3. **LiveKit public URL** — `LIVEKIT_PUBLIC_URL` becomes
+   `ws://<PUBLIC_HOST>:7880` so the browser's LiveKit SDK can reach the SFU.
+
+For LAN testing:
+
+    PUBLIC_HOST=192.168.1.10 docker compose -f docker/docker-compose.yml up --build
+
+Then open `https://192.168.1.10:4043` and accept the self-signed cert warning
+once. For a real domain + Let's Encrypt cert, put a host nginx proxy in front
+(see [`docs/quick-start.md`](docs/quick-start.md)).
 
 � LiveKit API secret
 

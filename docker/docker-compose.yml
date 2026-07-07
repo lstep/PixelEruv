@@ -24,11 +24,14 @@ services:
 
   dex:
     image: ghcr.io/dexidp/dex:latest
-    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    entrypoint: ["/entrypoint.sh"]
+    environment:
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
     ports:
       - "5556:5556"
     volumes:
-      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+      - ./dex/config.yaml:/etc/dex/config.yaml.template:ro
+      - ./dex-entrypoint.sh:/entrypoint.sh:ro
       - dex_data:/var/dex
     restart: unless-stopped
 
@@ -92,6 +95,10 @@ services:
       # Set to your host's LAN IP for remote access, e.g.
       #   TLS_HOSTS=localhost,127.0.0.1,192.168.1.10
       TLS_HOSTS: "localhost,127.0.0.1"
+      # Public host (LAN IP or hostname) remote browsers use to reach this
+      # machine. Drives the TLS cert SAN (auto-appended), Dex redirect URI,
+      # and LiveKit public URL. Defaults to localhost (same-machine dev).
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
     restart: unless-stopped
 
   ext-demo:
@@ -165,7 +172,7 @@ services:
       MAP_ID: "test-map"
       LIVEKIT_URL: "ws://livekit:7880"
       # Browser-facing URL (host-exposed port, not Docker-internal).
-      LIVEKIT_PUBLIC_URL: "ws://localhost:7880"
+      LIVEKIT_PUBLIC_URL: "ws://${PUBLIC_HOST:-localhost}:7880"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
     restart: unless-stopped
