@@ -70,14 +70,27 @@ Frame index = `frameRow * COLS_PER_ROW + col`. With 64px frames:
 The frontend currently uses frame-row 2 (run) as the default movement
 animation, controlled by `WALK_ROW` in `GameScene.ts`.
 
-Walk-cycle column layout (per direction, 6 frames each):
+Column/direction layout, confirmed correct for all sheets **except `char_4.png`
+and `char_5.png`** (see "Malformed / non-conforming sheets" below):
 
-| direction | cols  | start index (frame-row 1) |
-|-----------|-------|---------------------------|
-| right     | 0–5   | 24                        |
-| up        | 6–11  | 30                        |
-| left      | 12–17 | 36                        |
-| down      | 18–23 | 42                        |
+- **Row 0 (idle)**: 4 frames — col 0 = right, col 1 = up, col 2 = left, col 3 = down.
+- **Row 1 (walk)**: 24 frames, 6 per direction, in the same right/up/left/down order.
+- **Row 2 (run)**: 24 frames, 6 per direction, same right/up/left/down order.
+
+| animation | direction | cols  | start index (frame-row) |
+|-----------|-----------|-------|--------------------------|
+| idle      | right     | 0     | 0 (frame-row 0)          |
+| idle      | up        | 1     | 0 (frame-row 0)          |
+| idle      | left      | 2     | 0 (frame-row 0)          |
+| idle      | down      | 3     | 0 (frame-row 0)          |
+| walk      | right     | 0–5   | 24 (frame-row 1)         |
+| walk      | up        | 6–11  | 30 (frame-row 1)         |
+| walk      | left      | 12–17 | 36 (frame-row 1)         |
+| walk      | down      | 18–23 | 42 (frame-row 1)         |
+| run       | right     | 0–5   | 48 (frame-row 2)         |
+| run       | up        | 6–11  | 54 (frame-row 2)         |
+| run       | left      | 12–17 | 60 (frame-row 2)         |
+| run       | down      | 18–23 | 66 (frame-row 2)         |
 
 (Dir field from the server: `0=down, 1=left, 2=right, 3=up`.)
 
@@ -95,12 +108,18 @@ With the sprite placed at the tile **center** (`x*32+16, y*32+16`), origin
 into the tile above — the standard "tall character" top-down look. This keeps
 the existing tile-center position formulas unchanged.
 
-## Malformed sheet: `char_5`
+## Malformed / non-conforming sheets: `char_4`, `char_5`
 
 `char_5.png` is **broken** — its walk-cycle rows only contain the right/up
 directions; the down and left frames are empty. It renders as an invisible/
-empty sprite and is therefore **excluded** from `CHAR_SPRITES`. If you want it
-back, regenerate it from the source with the correct direction layout.
+empty sprite.
+
+`char_4.png` has a **different column/direction order** than the layout
+documented above (not right/up/left/down). It has not been broken, just
+generated differently.
+
+Both are therefore **excluded** from `CHAR_SPRITES` in `GameScene.ts` for now.
+They will be regenerated with the standard layout; once fixed, add them back.
 
 ## Checklist before changing sprite code
 
