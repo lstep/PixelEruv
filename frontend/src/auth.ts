@@ -15,7 +15,8 @@ const CLIENT_ID = "pixeleruv";
 const REDIRECT_URI = `${window.location.origin}/auth/callback`;
 
 export function getIdToken(): string | null {
-  return localStorage.getItem("id_token");
+  const tok = localStorage.getItem("id_token");
+  return tok === "" ? null : tok;
 }
 
 export function getSub(): string | null {
