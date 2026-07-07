@@ -117,27 +117,17 @@ export class AvClient {
 
     // Set up event handlers before connecting.
     this.room.on(lk.RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
-      console.log(`[DEBUG-av] ParticipantConnected: identity=${participant.identity}`);
       this.updateParticipant(participant.identity, participant);
     });
     this.room.on(lk.RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
-      console.log(`[DEBUG-av] ParticipantDisconnected: identity=${participant.identity}`);
       this.participants.delete(participant.identity);
       this.notifyChange();
     });
     this.room.on(lk.RoomEvent.TrackSubscribed, (track: Track, pub: any, participant: RemoteParticipant) => {
-      console.log(`[DEBUG-av] TrackSubscribed: identity=${participant.identity} source=${pub.source} kind=${track.kind} trackSid=${track.sid}`);
       this.updateParticipant(participant.identity, participant);
     });
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
-      console.log(`[DEBUG-av] TrackUnsubscribed: identity=${participant.identity}`);
       this.updateParticipant(participant.identity, participant);
-    });
-    this.room.on(lk.RoomEvent.TrackSubscriptionFailed, (trackSid: string, participant: RemoteParticipant, reason?: any) => {
-      console.error(`[DEBUG-av] TrackSubscriptionFailed: identity=${participant.identity} trackSid=${trackSid} reason=${reason}`);
-    });
-    this.room.on(lk.RoomEvent.ConnectionQualityChanged, (quality: any, participant: any) => {
-      console.log(`[DEBUG-av] ConnectionQuality: identity=${participant.identity} quality=${quality}`);
     });
 
     try {
@@ -189,9 +179,7 @@ export class AvClient {
     const hasMic = participant.isMicrophoneEnabled;
     let cameraTrack: Track | null = null;
     const pubs = participant.getTrackPublications();
-    console.log(`[DEBUG-av] updateParticipant: identity=${identity} isCameraEnabled=${hasCamera} isMicEnabled=${hasMic} pubCount=${pubs.length}`);
     for (const pub of pubs.values()) {
-      console.log(`[DEBUG-av]   pub: source=${pub.source} kind=${pub.kind} hasTrack=${!!pub.track} trackSid=${pub.trackSid}`);
       if (pub.track && pub.source === "camera") {
         cameraTrack = pub.track;
         break;

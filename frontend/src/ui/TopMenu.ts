@@ -42,10 +42,11 @@ export class TopMenu {
     this.container.appendChild(this.camBtn);
 
     const authBtn = document.createElement("button");
-    authBtn.textContent = isLoggedIn() ? "Logout" : "Login";
-    authBtn.style.cssText = PILL_STYLE + (isLoggedIn() ? "" : "background:#4c5cf0;");
+    const loggedIn = isLoggedIn();
+    authBtn.textContent = loggedIn ? "Logout" : "Login";
+    authBtn.style.cssText = PILL_STYLE + (loggedIn ? "" : "background:#4c5cf0;");
     authBtn.addEventListener("click", () => {
-      if (isLoggedIn()) logout();
+      if (loggedIn) logout();
       else redirectToLogin();
     });
     this.container.appendChild(authBtn);

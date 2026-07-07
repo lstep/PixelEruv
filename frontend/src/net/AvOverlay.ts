@@ -16,11 +16,8 @@ interface VideoTile {
 export class AvOverlay {
   private container: HTMLDivElement;
   private videos = new Map<string, VideoTile>();
-  private scene: Phaser.Scene;
 
   constructor(scene: Phaser.Scene, avClient: AvClient) {
-    this.scene = scene;
-
     // Create overlay container on top of the canvas.
     this.container = document.createElement("div");
     this.container.style.cssText = "position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;overflow:hidden;z-index:10;";
@@ -35,10 +32,6 @@ export class AvOverlay {
   // syncParticipants creates/removes video elements to match the current
   // participant set. Attaches LiveKit camera tracks to <video> elements.
   private syncParticipants(participants: Map<string, AvParticipant>): void {
-    console.log(`[DEBUG-av] syncParticipants: count=${participants.size} ids=[${[...participants.keys()].join(",")}]`);
-    for (const [eid, p] of participants) {
-      console.log(`[DEBUG-av]   participant: eid=${eid} hasCamera=${p.hasCamera} cameraTrack=${!!p.cameraTrack}`);
-    }
     // Remove videos for departed participants.
     for (const [entityId, tile] of this.videos) {
       if (!participants.has(entityId)) {
@@ -51,7 +44,6 @@ export class AvOverlay {
     for (const [entityId, p] of participants) {
       let tile = this.videos.get(entityId);
       if (!tile && p.cameraTrack) {
-        console.log(`[DEBUG-av] creating video tile for entityId=${entityId}`);
         const video = document.createElement("video");
         video.autoplay = true;
         video.playsInline = true;
@@ -60,13 +52,6 @@ export class AvOverlay {
         this.container.appendChild(video);
         // Attach the LiveKit track to the video element.
         (p.cameraTrack as any).attach(video);
-        // Log when the video actually starts playing (or fails to).
-        video.addEventListener("loadeddata", () =>
-          console.log(`[DEBUG-av] video loadeddata: entityId=${entityId} videoWidth=${video.videoWidth} videoHeight=${video.videoHeight}`));
-        video.addEventListener("playing", () =>
-          console.log(`[DEBUG-av] video playing: entityId=${entityId} videoWidth=${video.videoWidth} videoHeight=${video.videoHeight}`));
-        video.addEventListener("error", (e) =>
-          console.error(`[DEBUG-av] video error: entityId=${entityId}`, e));
         tile = { video, entityId };
         this.videos.set(entityId, tile);
       }
@@ -82,20 +67,9 @@ export class AvOverlay {
   // updatePositions is called each frame to position video tiles above
   // their avatars. avatarScreenPos returns the screen-space {x, y} of an
   // avatar's head (for tile placement), or null if the avatar is offscreen.
-  private posLogTimer = 0;
   updatePositions(
     avatarScreenPos: (entityId: string) => { x: number; y: number; scale: number } | null,
   ): void {
-    if (this.videos.size > 0) {
-      // Throttle the position log to once per second.
-      this.posLogTimer++;
-      if (this.posLogTimer >= 60) {
-        this.posLogTimer = 0;
-        for (const [entityId, tile] of this.videos) {
-          console.log(`[DEBUG-av] pos: entityId=${entityId} display=${tile.video.style.display} readyState=${tile.video.readyState} videoWidth=${tile.video.videoWidth} paused=${tile.video.paused} srcObject=${!!tile.video.srcObject}`);
-        }
-      }
-    }
     for (const [entityId, tile] of this.videos) {
       const pos = avatarScreenPos(entityId);
       if (!pos) {
