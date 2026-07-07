@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 14)
+Last updated: 2026-07-07 (session 15)
 
 ## Overview
 
@@ -115,6 +115,15 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Frontend: `ChatPanel.ts` (right-side DOM sidebar, Global/Nearby tabs, message list, input row), `TopMenu` Chat toggle button, `WsClient.sendChat` + `onChatMessage`
 - [x] 8 unit tests in `worldsim_chat_test.go`: global broadcast, text truncation (rune-safe), proximity delivery + isolation, solo drop, guest display name, unknown client, unknown channel
 
+### Avatar Name Tags
+- [x] `DisplayName` component (ID=4) in `components.proto` + `SetNameFrame` (client→server) in `frames.proto`
+- [x] Worldsim `handleSetName`: sanitizes (ASCII printable 32–126, max 20 runes), updates `Entity.DisplayName`, marks `dirtyName`, replicates via `UpdateComponent`. Persists to PocketBase for logged-in users via `UserStore.UpdateDisplayName`; guests are session-only (no PocketBase record)
+- [x] Replication: `DisplayName` included in `SpawnEntity.components` at spawn + `UpdateComponent` on name change (mirrors `dirtyPosition`/`dirtyState` pattern)
+- [x] Pusher: `ClientFrame_SetName` forwarded to `client.<id>.set_name` on NATS
+- [x] Frontend: Press Start 2P bitmap font (8×8, CC0/OFL, generated as PNG+XML atlas), `BitmapText` name tags above avatars with dark drop shadow, hidden for local player, repositioned each frame in `update()`
+- [x] TopMenu: Save button calls `ws.setName()` (localStorage caches input only, no auto-send on boot)
+- [x] 4 unit tests in `worldsim_nametag_test.go`: name update + replication, sanitization/truncation, guest non-persistence, spawn includes DisplayName component
+
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit
 - [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
@@ -133,10 +142,12 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] **Canvas fills browser window**: Scale.RESIZE mode (was hardcoded 640x640)
 - [x] **Entity ID fix**: server returns real entity ID via request-reply (was derived client-side, wrong for persistent identities)
 - [x] **Chat**: global + proximity chat, ephemeral (no persistence), server-stamped display_name + timestamp. Right-side DOM sidebar with Global/Nearby tabs, toggled from TopMenu. Worldsim-mediated routing: global → `chat.broadcast` (pusher fans out to all sessions); proximity → per-recipient `client.<id>.chat_inbox` (including sender echo). 8 unit tests in `worldsim_chat_test.go`
+- [x] **Avatar name tags**: server-authoritative display names via `SetNameFrame`, new `DisplayName` component (ID=4) in replication, Phaser `BitmapText` tags above avatars (Press Start 2P bitmap font, drop shadow), hidden for local player. Logged-in names persist to PocketBase; guests are session-only. TopMenu Save sends `SetNameFrame`; localStorage caches input only. 4 unit tests in `worldsim_nametag_test.go`
 
 ### Medium priority
 - [x] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
 - [ ] **AOI filter**: only replicate entities within client radius + same zone
+- [ ] **Speech bubbles**: in-character dialogue above avatar (separate from chat panel)
 - [ ] **Input triggers (broader)**: inventory/equipment action triggers — basic `key:E` interaction implemented via ext-props; broader design ready, see `documentation/plans/2026-07-01-inventory-equipment-action-triggers-design.md`
 - [ ] **Exclusive zones**: visual + audio isolation for members
 
@@ -180,7 +191,11 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-07 | Despawn queues a DestroyEntity (not just deletes from ECS) | `despawnClient` deleted the entity from `s.entities` but never told other clients, so avatars lingered on screen after a player closed their browser. The existing `destroyedBaseEntities` queue (map-reload destroys) is generalized to `destroyedEntities` and reused for player despawns — drained each tick after replication. |
 | 2026-07-07 | Frontend no longer force-redirects to Dex login before boot | Needed for guest browsing. `main.ts` now always boots the game; a floating `TopMenu` shows Login/Logout based on `isLoggedIn()`. |
 | 2026-07-07 | Guest = empty `id_token`, not the `"dev"` sentinel | `"dev"` was already used to mean "no Dex configured" (pusher ignores the token value entirely in that branch). Reusing it for guests would be ambiguous. `WsClient` now sends `""` when there's no stored token; pusher treats an empty token as a guest only when Dex *is* configured, and still rejects a non-empty-but-invalid token. |
-| 2026-07-07 | Username is client-side only (`localStorage`), no protocol change | Requested as a minimal stub for now — no `display_name` field on the wire, no name tags over avatars yet. |
+| 2026-07-07 | ~~Username is client-side only (`localStorage`), no protocol change~~ **Superceded by avatar name tags (session 15)**: `SetNameFrame` sends to server, `DisplayName` component replicates, `localStorage` is now just an input cache | Requested as a minimal stub for now — no `display_name` field on the wire, no name tags over avatars yet. |
+| 2026-07-07 | Avatar name tags: server-authoritative via `SetNameFrame` + `DisplayName` component (ID=4) | Anti-spoofing (consistent with chat's server-stamped design). One source of truth (`Entity.DisplayName`) for both chat and name tags. Client uploads; server sanitizes (ASCII printable, max 20 chars) + persists to PocketBase for logged-in users. |
+| 2026-07-07 | Name tags use Phaser `BitmapText` with Press Start 2P font (not DOM overlay or `Text`) | `BitmapText` shares one texture across all tags (cheaper than `Text`'s per-object Canvas textures). Press Start 2P is CC0/OFL, 8×8 pixel art, matches the tileset style. DOM overlay breaks depth-sorting. |
+| 2026-07-07 | Local player's own name tag is hidden | You know who you are; the name is in the TopMenu dropdown. Showing it adds center-screen clutter. Standard convention (WoW, most MMOs). |
+| 2026-07-07 | No auto-send of cached name on boot; user must click Save each session | Safest — no risk of overriding a PocketBase-set name with a stale cache. The input is pre-filled from localStorage, so it's one click. |
 | 2026-07-07 | Chat routed by worldsim (not a separate ext-chat extension) | Worldsim already owns every entity↔client map and computes proximity groups each tick, so there's zero mapping problem and no new service. Chat *routing* is plumbing (like replication routing), not gameplay logic — doesn't violate "kernel stays clean of gameplay". ext-chat would have been a thin wrapper looking up data worldsim already has. |
 | 2026-07-07 | Chat is ephemeral (no PocketBase persistence) | Matches how A/V and movement work (live state only). No migration needed. A player who joins later or refreshes sees an empty chat. Scrollback/history fetch flagged for a future task. |
 | 2026-07-07 | Worldsim marshals full ServerFrame; pusher writes raw bytes for chat | Matches the existing replication path (worldsim marshals, pusher passes through). Keeps pusher free of chat-specific logic. The av_token path is the exception (JSON→proto in pusher) because ext-av publishes JSON; chat is worldsim-to-pusher so we stay in protobuf end-to-end. |

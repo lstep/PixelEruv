@@ -20,6 +20,7 @@ export class TopMenu {
   private avClient: AvClient | null = null;
   private chatPanel: ChatPanel | null = null;
   private chatBtn: HTMLButtonElement;
+  private setNameHandler: ((name: string) => void) | null = null;
 
   constructor() {
     this.container = document.createElement("div");
@@ -98,7 +99,9 @@ export class TopMenu {
     saveBtn.textContent = "Save";
     saveBtn.style.cssText = PILL_STYLE + "padding:6px 12px;";
     saveBtn.addEventListener("click", () => {
-      setUsername(input.value.trim());
+      const name = input.value.trim();
+      setUsername(name);
+      this.setNameHandler?.(name);
       this.dropdown.style.display = "none";
     });
     row.appendChild(saveBtn);
@@ -135,6 +138,13 @@ export class TopMenu {
   setChatPanel(panel: ChatPanel): void {
     this.chatPanel = panel;
     this.chatBtn.style.display = "block";
+  }
+
+  // setSetNameHandler wires the callback invoked when the user saves their
+  // name in the dropdown. GameScene passes ws.setName so the name is sent
+  // to the server (which sanitizes, replicates, and persists it).
+  setSetNameHandler(fn: (name: string) => void): void {
+    this.setNameHandler = fn;
   }
 
   private updateAvLabels(): void {

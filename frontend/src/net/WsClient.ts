@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken } from "../auth";
@@ -322,6 +322,26 @@ export class WsClient {
         create(ChatFrameSchema, { channel, text, traceparent: traceparentFor() }),
       );
       const frame = create(ClientFrameSchema, { payload: { case: "chat", value: chat } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
+  }
+
+  // setName sends a SetNameFrame to change the player's display name. The
+  // server sanitizes (ASCII printable, max 20 chars), updates the entity,
+  // replicates to all clients, and persists to PocketBase for logged-in
+  // users. Fire-and-forget — the name tag update arrives via replication.
+  setName(name: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_set_name", {
+      attributes: { "client.id": this.clientId ?? "" },
+    });
+    try {
+      const setName = context.with(trace.setSpan(context.active(), span), () =>
+        create(SetNameFrameSchema, { name, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "set_name", value: setName } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();

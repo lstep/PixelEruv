@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { fromBinary } from "@bufbuild/protobuf";
-import { AppearanceSchema } from "../proto/components_pb";
+import { AppearanceSchema, DisplayNameSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
 import { AvOverlay } from "../net/AvOverlay";
@@ -312,6 +312,8 @@ interface Avatar {
   // Local avatar only: predicted position in tile coordinates.
   predX: number;
   predY: number;
+  // Name tag above the avatar (null for props and local player's own avatar).
+  nameTag: Phaser.GameObjects.BitmapText | null;
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
@@ -472,6 +474,9 @@ export class GameScene extends Phaser.Scene {
         frameHeight: FRAME_H,
       });
     }
+
+    // Bitmap font for avatar name tags (Press Start 2P, 8x8 pixel art).
+    this.load.bitmapFont("pressstart2p", "fonts/pressstart2p.png", "fonts/pressstart2p.xml");
   }
 
   create(): void {
@@ -749,6 +754,7 @@ export class GameScene extends Phaser.Scene {
       },
     });
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
+    topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
 
     // Clean up A/V overlay + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -813,6 +819,12 @@ export class GameScene extends Phaser.Scene {
       avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
       avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
       avatar.sprite.setDepth(this.dynamicDepth(this.feetY(avatar.sprite)));
+      // Reposition name tag to follow the sprite.
+      if (avatar.nameTag) {
+        avatar.nameTag.x = avatar.sprite.x;
+        avatar.nameTag.y = avatar.sprite.y - 52;
+        avatar.nameTag.setDepth(avatar.sprite.depth + 0.01);
+      }
       // Animate based on whether the avatar is actually moving on screen.
       const dx = avatar.sprite.x - prevX, dy = avatar.sprite.y - prevY;
       const moving = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
@@ -880,6 +892,7 @@ export class GameScene extends Phaser.Scene {
       let x = 10 * TILE_SIZE;
       let y = 10 * TILE_SIZE;
       let gid = 0;
+      let displayName = "";
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
           // Position component
@@ -890,6 +903,10 @@ export class GameScene extends Phaser.Scene {
           // Appearance component — Tiled gid for tile-sprite rendering
           const appearance = fromBinary(AppearanceSchema, comp.data);
           gid = appearance.gid;
+        } else if (comp.componentId === 4) {
+          // DisplayName component — player avatar name tag
+          const dn = fromBinary(DisplayNameSchema, comp.data);
+          displayName = dn.name;
         }
       }
 
@@ -914,6 +931,7 @@ export class GameScene extends Phaser.Scene {
             targetY: y,
             predX: 0,
             predY: 0,
+            nameTag: null,
           });
           console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid}`);
           continue;
@@ -940,7 +958,14 @@ export class GameScene extends Phaser.Scene {
         targetY: y + TILE_SIZE / 2,
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
+        nameTag: null,
       });
+      // Create name tag if the server sent a DisplayName component. Hidden
+      // for the local player's own avatar (you don't need a tag over your
+      // own head).
+      if (displayName) {
+        this.createNameTag(spawn.entityId, displayName);
+      }
       // Start idle animation immediately.
       sprite.play(`${charKey}_idle_down`, true);
       // Camera follows the local player. roundPixels keeps pixel-art
@@ -992,6 +1017,16 @@ export class GameScene extends Phaser.Scene {
           avatar.targetX = px;
           avatar.targetY = py;
         }
+      } else if (upd.componentId === 4) {
+        // DisplayName component — update or create the name tag.
+        const dn = fromBinary(DisplayNameSchema, upd.data);
+        if (dn.name) {
+          if (avatar.nameTag) {
+            avatar.nameTag.setText(dn.name);
+          } else {
+            this.createNameTag(upd.entityId, dn.name);
+          }
+        }
       }
     }
 
@@ -999,10 +1034,26 @@ export class GameScene extends Phaser.Scene {
     for (const dest of batch.destroys) {
       const avatar = this.avatars.get(dest.entityId);
       if (avatar) {
+        avatar.nameTag?.destroy();
         avatar.sprite.destroy();
         this.avatars.delete(dest.entityId);
         console.log(`destroyed ${dest.entityId}`);
       }
     }
+  }
+
+  // createNameTag creates a BitmapText name tag above the avatar's sprite.
+  // Hidden for the local player's own avatar. Positioned above the head and
+  // depth-sorted just above the sprite so it doesn't hide behind decorations.
+  private createNameTag(entityId: string, name: string): void {
+    const avatar = this.avatars.get(entityId);
+    if (!avatar) return;
+    const tag = this.add.bitmapText(avatar.sprite.x, avatar.sprite.y - 52, "pressstart2p", name, 8);
+    tag.setOrigin(0.5, 1);
+    tag.setDepth(avatar.sprite.depth + 0.01);
+    tag.setDropShadow(1, 1, 0x000000, 1);
+    // Hide for the local player's own avatar.
+    tag.setVisible(entityId !== this.myEntityId);
+    avatar.nameTag = tag;
   }
 }

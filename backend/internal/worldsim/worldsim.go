@@ -30,6 +30,7 @@ const (
 	compPosition    = 1
 	compEntityState = 2
 	compAppearance  = 3
+	compDisplayName = 4
 )
 
 type Entity struct {
@@ -58,6 +59,7 @@ type Entity struct {
 	// dirty: which components changed since last replication tick
 	dirtyPosition bool
 	dirtyState    bool
+	dirtyName     bool
 	// pendingAnimations: animation IDs to replicate as PlayAnimation on the
 	// next tick, then cleared.
 	pendingAnimations []uint32
@@ -326,6 +328,24 @@ func (s *Simulator) subscribe() error {
 		s.handleChat(ctx, clientID, &chat)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.chat: %w", err)
+	}
+
+	// client.<id>.set_name — display name change request.
+	// See documentation/plans/2026-07-07-avatar-name-tags-design.md.
+	if _, err := s.nc.Subscribe("client.*.set_name", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.handle_set_name_sub")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "set_name")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var frame pb.SetNameFrame
+		if err := proto.Unmarshal(m.Data, &frame); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		s.handleSetName(ctx, clientID, &frame)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.set_name: %w", err)
 	}
 
 	// Extension lifecycle subscriptions.
@@ -767,6 +787,59 @@ func (s *Simulator) handleChat(ctx context.Context, clientID string, chat *pb.Ch
 	}
 }
 
+// maxNameRunes is the server-side limit for display names (truncation +
+// validation). See
+// documentation/plans/2026-07-07-avatar-name-tags-design.md.
+const maxNameRunes = 20
+
+// handleSetName processes a client-sent SetNameFrame: sanitizes the name
+// (ASCII printable only, max 20 runes), updates Entity.DisplayName, marks
+// it dirty for replication, and persists to PocketBase for logged-in users.
+// Guest names are session-only (not persisted). See
+// documentation/plans/2026-07-07-avatar-name-tags-design.md.
+func (s *Simulator) handleSetName(ctx context.Context, clientID string, frame *pb.SetNameFrame) {
+	ctx, span := s.tracer.Start(ctx, "worldsim.handle_set_name")
+	defer span.End()
+	span.SetAttributes(attribute.String("client.id", clientID))
+
+	// Sanitize: keep only ASCII printable chars (32–126).
+	raw := frame.GetName()
+	cleaned := make([]rune, 0, len(raw))
+	for _, r := range raw {
+		if r >= 32 && r <= 126 {
+			cleaned = append(cleaned, r)
+		}
+	}
+	// Truncate to maxNameRunes (rune-safe).
+	if len(cleaned) > maxNameRunes {
+		cleaned = cleaned[:maxNameRunes]
+	}
+	name := string(cleaned)
+
+	s.mu.Lock()
+	entity, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown client")
+		return
+	}
+	entity.DisplayName = name
+	entity.dirtyName = true
+	entityID := entity.ID
+	s.mu.Unlock()
+
+	// Persist to PocketBase for logged-in users. Guests have no
+	// PocketBase record, so findByEntityID returns nil and the update is
+	// a no-op — matching the design's "guest names are session-only".
+	if s.userStore != nil {
+		if err := s.userStore.UpdateDisplayName(entityID, name); err != nil {
+			s.logger.WarnContext(ctx, "persist display name failed",
+				"err", err, "entity", entityID)
+			span.RecordError(err)
+		}
+	}
+}
+
 // lastN returns the last n characters of s, or s if shorter.
 func lastN(s string, n int) string {
 	r := []rune(s)
@@ -852,6 +925,7 @@ func (s *Simulator) tick() {
 	for _, e := range s.entities {
 		e.dirtyPosition = false
 		e.dirtyState = false
+		e.dirtyName = false
 		e.pendingAnimations = nil
 	}
 
@@ -941,6 +1015,10 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				stateBytes, _ := proto.Marshal(&pb.EntityState{State: e.State})
 				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
 			}
+			if e.NetworkSession != nil && e.DisplayName != "" {
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName})
+				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
+			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
 				EntityId:    e.ID,
 				SnapshotSeq: s.snapshotSeq,
@@ -963,6 +1041,15 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compEntityState,
 					Data:        stateBytes,
+					SnapshotSeq: s.snapshotSeq,
+				})
+			}
+			if e.dirtyName {
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName})
+				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
+					EntityId:    e.ID,
+					ComponentId: compDisplayName,
+					Data:        nameBytes,
 					SnapshotSeq: s.snapshotSeq,
 				})
 			}

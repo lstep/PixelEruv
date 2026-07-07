@@ -138,6 +138,36 @@ func (s *UserStore) SavePosition(entityID string, x, y float32) error {
 	return nil
 }
 
+// UpdateDisplayName persists the player's display name to PocketBase. No-op
+// if the entity has no PocketBase record (guests). The name is JSON-escaped
+// to prevent injection.
+func (s *UserStore) UpdateDisplayName(entityID, name string) error {
+	user, err := s.findByEntityID(entityID)
+	if err != nil {
+		return fmt.Errorf("find user for name update: %w", err)
+	}
+	if user == nil {
+		return nil
+	}
+
+	escaped, err := json.Marshal(name)
+	if err != nil {
+		return fmt.Errorf("escape name: %w", err)
+	}
+	body := fmt.Sprintf(`{"display_name":%s}`, escaped)
+	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
+	resp, err := s.doRequest("PATCH", url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("pocketbase update %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
 func (s *UserStore) findBySub(sub string) (*UserRecord, error) {
 	url := fmt.Sprintf("%s/api/collections/players/records?filter=(oidc_sub=\"%s\")&perPage=1", s.pocketbaseURL, sub)
 	resp, err := s.doRequest("GET", url, nil)

@@ -399,6 +399,27 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish chat", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_SetName:
+			// Forward name change to worldsim on client.<id>.set_name.
+			// Worldsim sanitizes (ASCII printable, max 20 runes), updates
+			// Entity.DisplayName, marks dirty for replication, and persists
+			// to PocketBase for logged-in users. See
+			// documentation/plans/2026-07-07-avatar-name-tags-design.md.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.SetName.GetTraceparent()),
+				"pusher.nats.publish.set_name",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID))
+			nameBytes, _ := proto.Marshal(p.SetName)
+			subject := fmt.Sprintf("client.%s.set_name", clientID)
+			msg := &nats.Msg{Subject: subject, Data: nameBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish set_name")
+				s.logger.Warn("nats publish set_name", "client", clientID, "err", err)
+			}
+			pspan.End()
 		case *pb.ClientFrame_Action:
 			// Player-initiated input trigger (key/click) — see
 			// 14-zones-and-interactions.md §3a. Forwarded to worldsim like

@@ -15,6 +15,7 @@ message ClientFrame {
     PingFrame ping = 3;
     ActionFrame action = 4;
     ChatFrame chat = 5;
+    SetNameFrame set_name = 6;
   }
 }
 
@@ -60,6 +61,16 @@ message ChatFrame {
   string channel = 1;       // "global" or "proximity"
   string text = 2;
   string traceparent = 3;
+}
+
+// SetNameFrame is a client request to change their display name. The server
+// validates (max 20 chars, ASCII printable only), updates Entity.DisplayName,
+// replicates the change to all clients, and persists to PocketBase for
+// logged-in users. See
+// documentation/plans/2026-07-07-avatar-name-tags-design.md.
+message SetNameFrame {
+  string name = 1;
+  string traceparent = 2;
 }
 
 // === Server → Client frames ===

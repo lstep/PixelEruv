@@ -33,3 +33,13 @@ message EntityState {
 message Appearance {
   uint32 gid = 1;          // Tiled global tile ID (0 = no sprite)
 }
+
+// Component ID 4 — DisplayName
+// Player avatar display name, shown as a name tag above the sprite and
+// stamped on chat messages. Only present on player avatars (not props or
+// decorations). Set at provision time (PocketBase for logged-in, "Guest
+// <last4>" for guests) and updated via SetNameFrame. See
+// documentation/plans/2026-07-07-avatar-name-tags-design.md.
+message DisplayName {
+  string name = 1;
+}
