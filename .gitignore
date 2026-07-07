@@ -40,6 +40,10 @@ dist/
 # Docker
 .docker/
 
+# Local env files (e.g. PUBLIC_HOST, LIVEKIT_NODE_IP)
+.env
+*.env
+
 # PocketBase
 pb_data/
 
