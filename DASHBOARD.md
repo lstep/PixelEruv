@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 19)
+Last updated: 2026-07-07 (session 20)
 
 ## Overview
 
@@ -133,13 +133,16 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] 8 unit tests in `mapdata_spawn_test.go`: fallback (no zones), rect-zone pick, all-blocked fallback, distribution coverage, circle zone, JSON parsing of spawn zones, integrity warn/no-warn.
 - [x] Design doc: `docs/plans/2026-07-07-spawn-points-design.md`
 
-### Sprite Selection (phase 1: base sheet) — in design
-- [ ] Design doc: `docs/plans/2026-07-07-sprite-selection-design.md` (branch `feat/sprite-selection`, commit 99fd176)
-- [ ] PB `sprite_bases` collection (admin-managed catalog of base sheets) + `players.sprite_base` field
-- [ ] Proto: `Appearance.sprite_base` replaces `sprite_index` (field 2 reserved); new `SetSpriteBaseFrame` (ClientFrame tag 7)
-- [ ] Server: `Entity.SpriteBase` + `dirtyAppearance`; `handleSetSpriteBase` mirrors `handleSetName`; `SpriteStore` (ListBases, BaseExists, SeedIfEmpty, Seed)
-- [ ] Auto-seed `sprite_bases` from `SPRITES_DIR` on worldsim startup (idempotent); `cmd/seed-sprites` CLI with `-force` for adding sheets later
-- [ ] Frontend: `spriteLoader.ts` catalog fetch; `CharacterSelectScene` pre-join chooser; hot-swap on `UpdateComponent` for appearance
+### Sprite Selection (phase 1: base sheet) — implemented
+- [x] Design doc: `docs/plans/2026-07-07-sprite-selection-design.md` (branch `feat/sprite-selection`)
+- [x] PB `sprite_bases` collection (admin-managed catalog of base sheets) + `players.sprite_base` field
+- [x] Proto: `Appearance.sprite_base` replaces `sprite_index` (field 2 reserved); new `SetSpriteBaseFrame` (ClientFrame tag 7)
+- [x] Server: `Entity.SpriteBase` + `dirtyAppearance`; `handleSetSpriteBase` mirrors `handleSetName`; `SpriteStore` (ListBases, BaseExists, SeedIfEmpty, Seed)
+- [x] Auto-seed `sprite_bases` from `SPRITES_DIR` on worldsim startup (idempotent); `cmd/seed-sprites` CLI with `-force` for adding sheets later
+- [x] Frontend: `spriteLoader.ts` catalog fetch; `CharacterSelectScene` pre-join chooser; hot-swap on `UpdateComponent` for appearance; TopMenu "Character sheet" field
+- [x] 4 new tests: SetSpriteBase updates+replicates, guest updates, unknown client rejected, empty reverts to fallback
+- [x] Updated sprite tests for SpriteBase; updated addPlayer helper
+- [x] Docs: quick-start.md section 8 (spritesheets)
 - [ ] Phase 2 (deferred): in-game mirror, palette recolor + accessory overlays (recipe), per-player pixel customization
 
 ### Infrastructure
