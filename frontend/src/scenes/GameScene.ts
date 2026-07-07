@@ -230,8 +230,17 @@ const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
 // Vertical offset from Position.Y to the avatar's feet in tile coords.
 // Avatars render with origin (0.5, 0.75) on a 64px frame placed at
-// (pos*32+16, pos*32+16), so feet sit at Position.Y + 1.0. Collision is
+// (pos.X*32, pos.Y*32+16), so feet sit at Position.Y + 1.0. Collision is
 // evaluated at the feet — must match worldsim.go avatarFeetYOffset.
+//
+// Note the asymmetry with X: origin.x is 0.5 (centered), so sprite.x is
+// set to pos.X*32 directly with no added offset — that already puts the
+// sprite's horizontal center exactly at Position.X, matching how the
+// backend compares Position.X against zone bounds. Adding a `+16` to X
+// (as Y needs, to compensate for its off-center 0.75 origin) would shift
+// the visual center half a tile from the true collision point: overlapping
+// walls approached from the left, and leaving a half-tile gap approached
+// from the right.
 const FEET_Y_OFFSET = 1.0;
 
 // Player collision radius in tiles — must match worldsim.go
@@ -773,7 +782,7 @@ export class GameScene extends Phaser.Scene {
       const p = this.applyMovement(local.predX, local.predY, this.inputState, ticks);
       local.predX = p.x;
       local.predY = p.y;
-      local.sprite.x = local.predX * TILE_SIZE + TILE_SIZE / 2;
+      local.sprite.x = local.predX * TILE_SIZE;
       local.sprite.y = local.predY * TILE_SIZE + TILE_SIZE / 2;
       local.sprite.setDepth(this.dynamicDepth(this.feetY(local.sprite)));
 
@@ -907,7 +916,7 @@ export class GameScene extends Phaser.Scene {
 
       const charKey = CHAR_SPRITES[this.colorIndex % CHAR_SPRITES.length];
       this.colorIndex++;
-      const sprite = this.add.sprite(x + TILE_SIZE / 2, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
+      const sprite = this.add.sprite(x, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
       // 64px-tall frame: origin at 0.75 puts the feet at the tile bottom and
       // lets the taller-than-tile head extend up into the tile above.
       sprite.setOrigin(0.5, 0.75);
@@ -921,7 +930,7 @@ export class GameScene extends Phaser.Scene {
         dir: 0,
         moving: false,
         isProp: false,
-        targetX: x + TILE_SIZE / 2,
+        targetX: x,
         targetY: y + TILE_SIZE / 2,
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
@@ -951,7 +960,7 @@ export class GameScene extends Phaser.Scene {
           avatar.sprite.setDepth(this.dynamicDepth(avatar.sprite.y));
           continue;
         }
-        const px = pos.x * TILE_SIZE + TILE_SIZE / 2;
+        const px = pos.x * TILE_SIZE;
         const py = pos.y * TILE_SIZE + TILE_SIZE / 2;
         if (upd.entityId === this.myEntityId) {
           // Reconciliation: the server position is authoritative up to
@@ -970,7 +979,7 @@ export class GameScene extends Phaser.Scene {
           }
           avatar.predX = x;
           avatar.predY = y;
-          avatar.sprite.x = x * TILE_SIZE + TILE_SIZE / 2;
+          avatar.sprite.x = x * TILE_SIZE;
           avatar.sprite.y = y * TILE_SIZE + TILE_SIZE / 2;
         } else {
           // Remote avatar: store pixel-space lerp target.
