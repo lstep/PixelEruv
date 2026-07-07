@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 18)
+Last updated: 2026-07-07 (session 19)
 
 ## Overview
 
@@ -132,6 +132,15 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] `Simulator.rng` (`math/rand/v2`, seeded from `time.Now().UnixNano()`) wired into `provisionClient` (one-line call-site change; saved-position restore unchanged).
 - [x] 8 unit tests in `mapdata_spawn_test.go`: fallback (no zones), rect-zone pick, all-blocked fallback, distribution coverage, circle zone, JSON parsing of spawn zones, integrity warn/no-warn.
 - [x] Design doc: `docs/plans/2026-07-07-spawn-points-design.md`
+
+### Sprite Selection (phase 1: base sheet) — in design
+- [ ] Design doc: `docs/plans/2026-07-07-sprite-selection-design.md` (branch `feat/sprite-selection`, commit 99fd176)
+- [ ] PB `sprite_bases` collection (admin-managed catalog of base sheets) + `players.sprite_base` field
+- [ ] Proto: `Appearance.sprite_base` replaces `sprite_index` (field 2 reserved); new `SetSpriteBaseFrame` (ClientFrame tag 7)
+- [ ] Server: `Entity.SpriteBase` + `dirtyAppearance`; `handleSetSpriteBase` mirrors `handleSetName`; `SpriteStore` (ListBases, BaseExists, SeedIfEmpty, Seed)
+- [ ] Auto-seed `sprite_bases` from `SPRITES_DIR` on worldsim startup (idempotent); `cmd/seed-sprites` CLI with `-force` for adding sheets later
+- [ ] Frontend: `spriteLoader.ts` catalog fetch; `CharacterSelectScene` pre-join chooser; hot-swap on `UpdateComponent` for appearance
+- [ ] Phase 2 (deferred): in-game mirror, palette recolor + accessory overlays (recipe), per-player pixel customization
 
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit
@@ -269,3 +278,4 @@ cd backend && go test ./test/integration/ -v
 | main                     | Main branch |
 | zones                    | Zones + extension protocol (merged into main) |
 | netcode-lerp-prediction  | Client prediction + interpolation (not merged) |
+| feat/sprite-selection    | Sprite selection phase 1 (design doc only so far) |
