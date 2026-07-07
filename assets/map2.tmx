@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" nextlayerid="9" nextobjectid="21">
+<map version="1.10" tiledversion="1.12.2" orientation="orthogonal" renderorder="right-down" width="30" height="20" tilewidth="32" tileheight="32" infinite="0" nextlayerid="9" nextobjectid="22">
  <editorsettings>
   <export target="map1.json" format="json"/>
  </editorsettings>
@@ -191,5 +191,10 @@
    </properties>
   </object>
   <object id="20" x="779.549" y="409.985" height="1.15489"/>
+  <object id="21" name="spawn_entry" x="127.038" y="352.241" width="257.54" height="127.038">
+   <properties>
+    <property name="zone_type" value="spawn"/>
+   </properties>
+  </object>
  </objectgroup>
 </map>

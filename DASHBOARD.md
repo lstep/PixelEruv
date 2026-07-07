@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 17)
+Last updated: 2026-07-07 (session 18)
 
 ## Overview
 
@@ -124,6 +124,15 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] TopMenu: Save button calls `ws.setName()` (localStorage caches input only, no auto-send on boot)
 - [x] 4 unit tests in `worldsim_nametag_test.go`: name update + replication, sanitization/truncation, guest non-persistence, spawn includes DisplayName component
 
+### Spawn Points
+- [x] First-time/guest users spawn on a random walkable tile inside a random `zone_type=spawn` zone on the Zones layer; returning users keep their saved last position. Falls back to the existing center-spiral `FindSpawn()` when no spawn zones exist or none have walkable tiles.
+- [x] `MapData.SpawnZones` populated in `loadMapData` by filtering zones with `zone_type=spawn` (still registered as ordinary zones).
+- [x] `FindSpawnPoint(rng)`: enumerates walkable tiles in a random spawn zone's bbox (clamped to map) filtered by `Zone.Contains` (rect/circle/polygon all work), picks one uniformly at random; tries zones in shuffled order; falls back to `FindSpawn()` if none yield a tile. Shared `walkableTilesInZone` helper used by both spawn selection and the integrity check.
+- [x] Integrity check warns (LevelWarning) when a spawn zone has no walkable tiles; `"spawn"` added to `knownZoneTypes`.
+- [x] `Simulator.rng` (`math/rand/v2`, seeded from `time.Now().UnixNano()`) wired into `provisionClient` (one-line call-site change; saved-position restore unchanged).
+- [x] 8 unit tests in `mapdata_spawn_test.go`: fallback (no zones), rect-zone pick, all-blocked fallback, distribution coverage, circle zone, JSON parsing of spawn zones, integrity warn/no-warn.
+- [x] Design doc: `docs/plans/2026-07-07-spawn-points-design.md`
+
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit
 - [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
@@ -204,6 +213,8 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-07 | Single `PUBLIC_HOST` env var drives all remote-access config | Previously remote access required manually editing `TLS_HOSTS`, `docker/dex/config.yaml` redirectURIs, and `LIVEKIT_PUBLIC_URL` separately. Now `PUBLIC_HOST` (default: `localhost`) is the single knob: `frontend-entrypoint.sh` auto-appends it to the TLS cert SANs, `dex-entrypoint.sh` templates it into the redirect URI, and docker-compose interpolates it into `LIVEKIT_PUBLIC_URL`. One variable, rebuild, done. |
 | 2026-07-07 | nginx proxies `/api/` to PocketBase (same-origin) | `mapLoader.ts` hardcoded `http://localhost:8090`, so remote browsers fetched the map from the viewer's own machine. Adding the `/api/` proxy (mirroring the existing `/dex/` and `/ws/` proxies) and making `mapLoader.ts` use `window.location.origin` means the browser reaches PocketBase same-origin through nginx — no hardcoded address, works for localhost and remote alike. |
 | 2026-07-07 | Server-authoritative avatar sprite index (FNV-1a hash of entity ID) | Each client independently picked a sprite via a local `colorIndex` counter, so two anonymous players saw each other as different characters (each client received its own spawn first → char_0, then the other → char_1). The server now assigns `SpriteIndex = hash(entityID) % 5` at provision time and replicates it via `Appearance.sprite_index`. Deterministic from entity ID → stable across reconnects for logged-in users, and identical on all clients. |
+| 2026-07-07 | Spawn points = `zone_type=spawn` zones on the Zones layer (not a new layer or entity type) | Reuses the existing zone parser, `Zone.Contains` (rect/circle/polygon), and zone registry. Spawn zones are invisible to clients (server-side selection only, never replicated). One zone = random walkable tile within it; multiple zones = random zone then random tile. Falls back to `FindSpawn()` center-spiral when absent or unwalkable, so every existing map keeps working. |
+| 2026-07-07 | Enumerate walkable tiles in zone bbox (not rejection sampling) for spawn pick | Rejection sampling degrades badly on small or mostly-walled zones and needs a retry cap. Enumeration is O(bbox area), bounded by zone size, gives a true uniform distribution, and runs once per session (cost irrelevant). Shared `walkableTilesInZone` helper used by both `FindSpawnPoint` and the integrity check. |
 
 ## Test accounts
 
