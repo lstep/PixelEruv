@@ -17,6 +17,7 @@ type UserRecord struct {
 	DisplayName string  `json:"display_name"`
 	PosX        float32 `json:"pos_x"`
 	PosY        float32 `json:"pos_y"`
+	SpriteBase  string  `json:"sprite_base"`
 }
 
 type pbListResponse struct {
@@ -155,6 +156,35 @@ func (s *UserStore) UpdateDisplayName(entityID, name string) error {
 		return fmt.Errorf("escape name: %w", err)
 	}
 	body := fmt.Sprintf(`{"display_name":%s}`, escaped)
+	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
+	resp, err := s.doRequest("PATCH", url, strings.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("pocketbase update %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
+// UpdateSpriteBase persists the player's chosen sprite_bases record ID to
+// PocketBase. No-op if the entity has no PocketBase record (guests).
+func (s *UserStore) UpdateSpriteBase(entityID, spriteBase string) error {
+	user, err := s.findByEntityID(entityID)
+	if err != nil {
+		return fmt.Errorf("find user for sprite_base update: %w", err)
+	}
+	if user == nil {
+		return nil
+	}
+
+	escaped, err := json.Marshal(spriteBase)
+	if err != nil {
+		return fmt.Errorf("escape sprite_base: %w", err)
+	}
+	body := fmt.Sprintf(`{"sprite_base":%s}`, escaped)
 	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
 	resp, err := s.doRequest("PATCH", url, strings.NewReader(body))
 	if err != nil {

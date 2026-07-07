@@ -10,40 +10,17 @@ import (
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 )
 
-// TestSpriteIndex_Deterministic verifies that spriteIndexForEntity is
-// deterministic — the same entity ID always maps to the same sprite index,
-// and different entity IDs can map to different indices.
-func TestSpriteIndex_Deterministic(t *testing.T) {
-	idx1 := spriteIndexForEntity("e_abc123")
-	idx2 := spriteIndexForEntity("e_abc123")
-	if idx1 != idx2 {
-		t.Fatalf("spriteIndexForEntity not deterministic: %d vs %d", idx1, idx2)
-	}
-	if idx1 >= charSpriteCount {
-		t.Fatalf("sprite index %d >= charSpriteCount %d", idx1, charSpriteCount)
-	}
-
-	// At least two different entity IDs should produce different indices
-	// (extremely unlikely for a hash to collide on all 5 values).
-	found := make(map[uint32]bool)
-	for _, id := range []string{"e_a", "e_b", "e_c", "e_d", "e_e", "e_f", "e_g", "e_h"} {
-		found[spriteIndexForEntity(id)] = true
-	}
-	if len(found) < 2 {
-		t.Fatalf("expected at least 2 distinct sprite indices, got %d", len(found))
-	}
-}
-
-// TestReplication_SpawnIncludesSpriteIndex verifies that when a player avatar
+// TestReplication_SpawnIncludesSpriteBase verifies that when a player avatar
 // spawns, the SpawnEntity sent to other clients includes an Appearance
-// component (componentId=3) with the server-assigned SpriteIndex. This
+// component (componentId=3) with the server-assigned SpriteBase. This
 // ensures all clients render the same character sprite for the same player.
-func TestReplication_SpawnIncludesSpriteIndex(t *testing.T) {
+func TestReplication_SpawnIncludesSpriteBase(t *testing.T) {
 	sim, subNc := newChatTestSim(t)
 	addPlayer(sim, "e_a", "c_a", "Alice", "")
 	addPlayer(sim, "e_b", "c_b", "Bob", "")
 
-	expectedIdx := sim.entities["e_a"].SpriteIndex
+	// Set a sprite_base on Alice's entity to verify it replicates.
+	sim.entities["e_a"].SpriteBase = "sb_test123"
 
 	// Subscribe to B's replication subject.
 	got := make(chan *pb.ReplicationBatch, 1)
@@ -82,9 +59,9 @@ func TestReplication_SpawnIncludesSpriteIndex(t *testing.T) {
 				if err := proto.Unmarshal(comp.Data, &app); err != nil {
 					t.Fatalf("unmarshal Appearance: %v", err)
 				}
-				if app.SpriteIndex != expectedIdx {
-					t.Fatalf("replicated SpriteIndex = %d, want %d",
-						app.SpriteIndex, expectedIdx)
+				if app.SpriteBase != "sb_test123" {
+					t.Fatalf("replicated SpriteBase = %q, want %q",
+						app.SpriteBase, "sb_test123")
 				}
 				found = true
 			}
@@ -103,22 +80,11 @@ func TestReplication_SpawnIncludesSpriteIndex(t *testing.T) {
 
 // TestReplication_SpawnAlwaysIncludesAppearanceForPlayers verifies that the
 // Appearance component is always sent for player avatars, even when
-// SpriteIndex is 0 (which happens for 1 in 5 entity IDs). Without this, the
-// client would fall back to a client-side counter and desync.
+// SpriteBase is empty (the guest case). Without this, the client would fall
+// back to a client-side hash and could desync if the fallback differs.
 func TestReplication_SpawnAlwaysIncludesAppearanceForPlayers(t *testing.T) {
 	sim, subNc := newChatTestSim(t)
-	// Find an entity ID whose sprite index is 0.
-	var zeroID string
-	for _, id := range []string{"e_0", "e_1", "e_2", "e_3", "e_4", "e_5", "e_6", "e_7", "e_8", "e_9"} {
-		if spriteIndexForEntity(id) == 0 {
-			zeroID = id
-			break
-		}
-	}
-	if zeroID == "" {
-		t.Skip("could not find an entity ID with sprite index 0")
-	}
-	addPlayer(sim, zeroID, "c_a", "Alice", "")
+	addPlayer(sim, "e_a", "c_a", "Alice", "")
 	addPlayer(sim, "e_b", "c_b", "Bob", "")
 
 	got := make(chan *pb.ReplicationBatch, 1)
@@ -146,7 +112,7 @@ func TestReplication_SpawnAlwaysIncludesAppearanceForPlayers(t *testing.T) {
 	case batch := <-got:
 		found := false
 		for _, sp := range batch.Spawns {
-			if sp.EntityId != zeroID {
+			if sp.EntityId != "e_a" {
 				continue
 			}
 			for _, comp := range sp.Components {
@@ -156,7 +122,7 @@ func TestReplication_SpawnAlwaysIncludesAppearanceForPlayers(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Fatal("SpawnEntity for player with SpriteIndex=0 has no Appearance component — client would desync")
+			t.Fatal("SpawnEntity for player with empty SpriteBase has no Appearance component — client would desync")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for replication batch")

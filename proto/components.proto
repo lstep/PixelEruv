@@ -30,12 +30,15 @@ message EntityState {
 // Carries the Tiled global tile ID (gid) for base entities authored on the
 // "Entities" object layer, so the frontend can render the correct tile sprite
 // (resolved via the map's tilesets) instead of a default character sprite.
-// For player avatars (gid=0), sprite_index selects which character sheet to
-// use. The server assigns it at provision time (deterministic from entity ID)
-// so all clients agree on the same sprite for the same player.
+// For player avatars (gid=0), sprite_base references a sprite_bases PocketBase
+// record ID selecting which character sheet to use. The server sets it at
+// provision time from the player's persisted choice; clients fall back to a
+// hash-based index when sprite_base is empty (guests / unset). See
+// documentation/plans/2026-07-07-sprite-selection-design.md.
 message Appearance {
   uint32 gid = 1;          // Tiled global tile ID (0 = no sprite)
-  uint32 sprite_index = 2; // Character sheet index for player avatars (0 if unused)
+  reserved 2;              // was sprite_index (replaced by sprite_base)
+  string sprite_base = 3;  // sprite_bases record ID; empty for props / guests
 }
 
 // Component ID 4 — DisplayName
