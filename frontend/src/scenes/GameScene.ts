@@ -6,6 +6,7 @@ import { AvClient } from "../net/AvClient";
 import { AvOverlay } from "../net/AvOverlay";
 import type { MapAssets } from "../mapLoader";
 import type { TopMenu } from "../ui/TopMenu";
+import type { ChatPanel } from "../ui/ChatPanel";
 
 const TILE_SIZE = 32;
 
@@ -675,6 +676,7 @@ export class GameScene extends Phaser.Scene {
     this.avOverlay = new AvOverlay(this, this.avClient);
     const topMenu = this.game.registry.get("topMenu") as TopMenu | undefined;
     topMenu?.attachAvControls(this.avClient);
+    const chatPanel = this.game.registry.get("chatPanel") as ChatPanel | undefined;
     // "Server not available" overlay — a full-screen gray dim plus a red
     // centered message. Visible from the start (we boot in "connecting"),
     // hidden once the WS reaches "open", and reshown on any drop. While it
@@ -742,7 +744,11 @@ export class GameScene extends Phaser.Scene {
           console.error("AvClient handleTokenFrame error:", err)
         );
       },
+      onChatMessage: (msg) => {
+        chatPanel?.addMessage(msg);
+      },
     });
+    chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
 
     // Clean up A/V overlay + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {

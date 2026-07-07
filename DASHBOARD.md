@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 13)
+Last updated: 2026-07-07 (session 14)
 
 ## Overview
 
@@ -107,6 +107,14 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Fix: upgrade LiveKit server v1.9.8 → v1.13.2 (protocol 17, `/rtc/v1` path, data tracks enabled)
 - [x] Fix: reduce UDP ICE port range 50000-50100 → 50000-50020 (Docker Desktop UDP forwarding reliability)
 
+### Chat
+- [x] `ChatFrame` (client→server) + `ChatMessageFrame` (server→client) protos in `frames.proto`
+- [x] Worldsim `handleChat`: stamps `display_name` (PocketBase for logged-in, `Guest <last4>` for guests) + `timestamp`, truncates text to 500 runes, routes global → `chat.broadcast`, proximity → per-recipient `client.<id>.chat_inbox` (including sender echo)
+- [x] Worldsim `entityIDToClient` map + `DisplayName` on `Entity` (set at provision time, no per-message PocketBase lookup)
+- [x] Pusher: `chat.broadcast` subscription (fans out to all sessions) + per-session `chat_inbox` subscription (raw bytes pass-through)
+- [x] Frontend: `ChatPanel.ts` (right-side DOM sidebar, Global/Nearby tabs, message list, input row), `TopMenu` Chat toggle button, `WsClient.sendChat` + `onChatMessage`
+- [x] 8 unit tests in `worldsim_chat_test.go`: global broadcast, text truncation (rune-safe), proximity delivery + isolation, solo drop, guest display name, unknown client, unknown channel
+
 ### Infrastructure
 - [x] Docker Compose: nats, pocketbase, dex, pusher, worldsim, frontend, ext-demo, ext-walls, ext-props, ext-av, livekit
 - [x] Nginx proxy: `/dex/` → Dex (same-origin for browser)
@@ -124,7 +132,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] **Zones in Tiled**: wall zones on Zones object layer tested with ext-walls; client-side prediction matches server
 - [x] **Canvas fills browser window**: Scale.RESIZE mode (was hardcoded 640x640)
 - [x] **Entity ID fix**: server returns real entity ID via request-reply (was derived client-side, wrong for persistent identities)
-- [ ] **Chat**: chat UI + PocketBase collection, messages broadcast via NATS
+- [x] **Chat**: global + proximity chat, ephemeral (no persistence), server-stamped display_name + timestamp. Right-side DOM sidebar with Global/Nearby tabs, toggled from TopMenu. Worldsim-mediated routing: global → `chat.broadcast` (pusher fans out to all sessions); proximity → per-recipient `client.<id>.chat_inbox` (including sender echo). 8 unit tests in `worldsim_chat_test.go`
 
 ### Medium priority
 - [x] **LiveKit A/V**: positional audio/video (LiveKit server, bridge, token exchange, WebRTC client)
@@ -173,6 +181,9 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-07 | Frontend no longer force-redirects to Dex login before boot | Needed for guest browsing. `main.ts` now always boots the game; a floating `TopMenu` shows Login/Logout based on `isLoggedIn()`. |
 | 2026-07-07 | Guest = empty `id_token`, not the `"dev"` sentinel | `"dev"` was already used to mean "no Dex configured" (pusher ignores the token value entirely in that branch). Reusing it for guests would be ambiguous. `WsClient` now sends `""` when there's no stored token; pusher treats an empty token as a guest only when Dex *is* configured, and still rejects a non-empty-but-invalid token. |
 | 2026-07-07 | Username is client-side only (`localStorage`), no protocol change | Requested as a minimal stub for now — no `display_name` field on the wire, no name tags over avatars yet. |
+| 2026-07-07 | Chat routed by worldsim (not a separate ext-chat extension) | Worldsim already owns every entity↔client map and computes proximity groups each tick, so there's zero mapping problem and no new service. Chat *routing* is plumbing (like replication routing), not gameplay logic — doesn't violate "kernel stays clean of gameplay". ext-chat would have been a thin wrapper looking up data worldsim already has. |
+| 2026-07-07 | Chat is ephemeral (no PocketBase persistence) | Matches how A/V and movement work (live state only). No migration needed. A player who joins later or refreshes sees an empty chat. Scrollback/history fetch flagged for a future task. |
+| 2026-07-07 | Worldsim marshals full ServerFrame; pusher writes raw bytes for chat | Matches the existing replication path (worldsim marshals, pusher passes through). Keeps pusher free of chat-specific logic. The av_token path is the exception (JSON→proto in pusher) because ext-av publishes JSON; chat is worldsim-to-pusher so we stay in protobuf end-to-end. |
 
 ## Test accounts
 

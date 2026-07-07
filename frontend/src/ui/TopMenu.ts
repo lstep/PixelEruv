@@ -7,6 +7,7 @@
 import { isLoggedIn, redirectToLogin, logout } from "../auth";
 import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
+import type { ChatPanel } from "./ChatPanel";
 
 const PILL_STYLE =
   "padding:8px 16px;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
@@ -17,6 +18,8 @@ export class TopMenu {
   private micBtn: HTMLButtonElement;
   private camBtn: HTMLButtonElement;
   private avClient: AvClient | null = null;
+  private chatPanel: ChatPanel | null = null;
+  private chatBtn: HTMLButtonElement;
 
   constructor() {
     this.container = document.createElement("div");
@@ -40,6 +43,15 @@ export class TopMenu {
       this.updateAvLabels();
     });
     this.container.appendChild(this.camBtn);
+
+    // Chat toggle button, hidden until setChatPanel is called.
+    this.chatBtn = document.createElement("button");
+    this.chatBtn.textContent = "💬 Chat";
+    this.chatBtn.style.cssText = PILL_STYLE + "display:none;";
+    this.chatBtn.addEventListener("click", () => {
+      this.chatPanel?.toggle();
+    });
+    this.container.appendChild(this.chatBtn);
 
     const authBtn = document.createElement("button");
     const loggedIn = isLoggedIn();
@@ -116,6 +128,13 @@ export class TopMenu {
     this.avClient = null;
     this.micBtn.style.display = "none";
     this.camBtn.style.display = "none";
+  }
+
+  // setChatPanel wires the chat sidebar and shows the Chat toggle button.
+  // Called by main.ts after both TopMenu and ChatPanel are created.
+  setChatPanel(panel: ChatPanel): void {
+    this.chatPanel = panel;
+    this.chatBtn.style.display = "block";
   }
 
   private updateAvLabels(): void {

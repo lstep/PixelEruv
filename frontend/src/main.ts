@@ -4,6 +4,7 @@ import { initOtel, tracer } from "./otel";
 import { loadMapAssets, type MapAssets } from "./mapLoader";
 import { handleAuthCallback } from "./auth";
 import { TopMenu } from "./ui/TopMenu";
+import { ChatPanel } from "./ui/ChatPanel";
 
 // Initialize OpenTelemetry before any instrumented code runs. No-op when
 // VITE_OTEL_ENABLED != "true".
@@ -34,6 +35,8 @@ async function bootstrap(): Promise<void> {
   }
 
   const topMenu = new TopMenu();
+  const chatPanel = new ChatPanel();
+  topMenu.setChatPanel(chatPanel);
 
   let mapAssets: MapAssets | null = null;
   const span = tracer.startSpan("map.load", { attributes: { "map.source": "pocketbase" } });
@@ -52,6 +55,7 @@ async function bootstrap(): Promise<void> {
   const game = new Phaser.Game(config);
   game.registry.set("mapAssets", mapAssets);
   game.registry.set("topMenu", topMenu);
+  game.registry.set("chatPanel", chatPanel);
 }
 
 bootstrap();

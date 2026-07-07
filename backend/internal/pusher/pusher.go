@@ -49,6 +49,7 @@ type session struct {
 	conn      *websocket.Conn
 	sub       *nats.Subscription
 	avSub     *nats.Subscription
+	chatSub   *nats.Subscription
 	closeOnce sync.Once
 }
 
@@ -68,13 +69,32 @@ func New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID string, logger *slo
 		}
 		auth = NewAuthValidator(dexIssuer, dexJwksURL, dexClientID)
 	}
-	return &Server{
+	srv := &Server{
 		wsAddr: wsAddr,
 		nc:     nc,
 		logger: logger,
 		tracer: otel.Tracer("pusher"),
 		auth:   auth,
-	}, nil
+	}
+
+	// chat.broadcast — worldsim publishes a fully-marshaled ServerFrame
+	// (ChatMessageFrame) here for global chat. Fan out the raw bytes to
+	// every active session. See documentation/plans/2026-07-07-chat-design.md.
+	if _, err := nc.Subscribe("chat.broadcast", func(m *nats.Msg) {
+		srv.sessions.Range(func(_, v any) bool {
+			sess := v.(*session)
+			writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := sess.conn.Write(writeCtx, websocket.MessageBinary, m.Data); err != nil {
+				srv.logger.Warn("ws write chat broadcast", "client", sess.clientID, "err", err)
+			}
+			return true
+		})
+	}); err != nil {
+		return nil, fmt.Errorf("subscribe chat.broadcast: %w", err)
+	}
+
+	return srv, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -244,11 +264,31 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		sess.avSub = avSub
 	}
 
+	// Subscribe to per-session chat inbox (proximity chat). Worldsim
+	// publishes a fully-marshaled ServerFrame (ChatMessageFrame) here for
+	// each recipient of a proximity message. Raw bytes pass through
+	// unchanged — same pattern as the replication subscription.
+	chatSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.chat_inbox", clientID), func(m *nats.Msg) {
+		writeCtx, cancel := context.WithTimeout(authCtx, 5*time.Second)
+		defer cancel()
+		if err := c.Write(writeCtx, websocket.MessageBinary, m.Data); err != nil {
+			s.logger.Warn("ws write chat_inbox", "client", clientID, "err", err)
+		}
+	})
+	if err != nil {
+		s.logger.Warn("nats sub chat_inbox", "client", clientID, "err", err)
+	} else {
+		sess.chatSub = chatSub
+	}
+
 	s.sessions.Store(clientID, sess)
 	defer func() {
 		sess.sub.Unsubscribe()
 		if sess.avSub != nil {
 			sess.avSub.Unsubscribe()
+		}
+		if sess.chatSub != nil {
+			sess.chatSub.Unsubscribe()
 		}
 		s.sessions.Delete(clientID)
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
@@ -338,6 +378,27 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			pong := &pb.ServerFrame{Payload: &pb.ServerFrame_Pong{Pong: &pb.PongFrame{}}}
 			pongBytes, _ := proto.Marshal(pong)
 			c.Write(ctx, websocket.MessageBinary, pongBytes)
+		case *pb.ClientFrame_Chat:
+			// Forward chat to worldsim on client.<id>.chat. Worldsim stamps
+			// display_name + timestamp and routes to chat.broadcast (global)
+			// or per-recipient client.<id>.chat_inbox (proximity). The
+			// response comes back on chat.broadcast or this session's
+			// chat_inbox subscription — no separate reply subject.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.Chat.GetTraceparent()),
+				"pusher.nats.publish.chat",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.String("chat.channel", p.Chat.GetChannel()))
+			chatBytes, _ := proto.Marshal(p.Chat)
+			subject := fmt.Sprintf("client.%s.chat", clientID)
+			msg := &nats.Msg{Subject: subject, Data: chatBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish chat")
+				s.logger.Warn("nats publish chat", "client", clientID, "err", err)
+			}
+			pspan.End()
 		case *pb.ClientFrame_Action:
 			// Player-initiated input trigger (key/click) — see
 			// 14-zones-and-interactions.md §3a. Forwarded to worldsim like

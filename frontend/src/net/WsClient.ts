@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken } from "../auth";
@@ -24,6 +24,10 @@ export interface ConnectHandlers {
   // Fired when an AvTokenFrame is received (LiveKit join/leave instruction
   // from ext-av via the pusher).
   onAvToken?: (msg: { action: string; room: string; token: string; url: string; members: string[] }) => void;
+  // Fired when a ChatMessageFrame is received (global or proximity chat).
+  // The server stamps display_name + timestamp; the client never authors
+  // these directly. See documentation/plans/2026-07-07-chat-design.md.
+  onChatMessage?: (msg: { channel: string; entityId: string; displayName: string; text: string; timestamp: number }) => void;
 }
 
 export interface SpawnEntityView {
@@ -185,6 +189,17 @@ export class WsClient {
           });
           break;
         }
+        case "chatMessage": {
+          const cm = serverFrame.payload.value;
+          this.handlers.onChatMessage?.({
+            channel: cm.channel,
+            entityId: cm.entityId,
+            displayName: cm.displayName,
+            text: cm.text,
+            timestamp: Number(cm.timestamp),
+          });
+          break;
+        }
         case "error":
           console.error("server error:", serverFrame.payload.value);
           break;
@@ -288,6 +303,29 @@ export class WsClient {
       span.end();
     }
     return this.seq;
+  }
+
+  // sendChat sends a chat message on the given channel ("global" or
+  // "proximity"). Fire-and-forget — the server echoes the stamped message
+  // back (via chat.broadcast for global, or client.<id>.chat_inbox for
+  // proximity) which triggers onChatMessage, confirming delivery.
+  sendChat(channel: "global" | "proximity", text: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_chat", {
+      attributes: {
+        "client.id": this.clientId ?? "",
+        "chat.channel": channel,
+      },
+    });
+    try {
+      const chat = context.with(trace.setSpan(context.active(), span), () =>
+        create(ChatFrameSchema, { channel, text, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "chat", value: chat } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
   }
 
   getClientId(): string | null {

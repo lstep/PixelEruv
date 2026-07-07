@@ -27,15 +27,20 @@ import (
 // --- Minimal ECS ---
 
 const (
-	compPosition   = 1
+	compPosition    = 1
 	compEntityState = 2
-	compAppearance = 3
+	compAppearance  = 3
 )
 
 type Entity struct {
-	ID         string
-	Position   *pb.Position
+	ID             string
+	Position       *pb.Position
 	NetworkSession *NetworkSession
+	// DisplayName is the server-stamped name used in chat messages. Set at
+	// provision time: PocketBase display_name for logged-in users, or
+	// "Guest <short>" for anonymous sessions. Empty for base (non-player)
+	// entities.
+	DisplayName string
 	// EntityType/OwnerExtension/TriggerRadius: set for base entities loaded
 	// from the map's "Entities" object layer (see mapdata.go PropEntity).
 	// Included in input-trigger dispatch payloads so extensions can
@@ -49,7 +54,7 @@ type Entity struct {
 	Gid uint32
 	// State is a generic opaque string (EntityState component) that
 	// extensions can set via an input-trigger reply, e.g. "on"/"off".
-	State      string
+	State string
 	// dirty: which components changed since last replication tick
 	dirtyPosition bool
 	dirtyState    bool
@@ -84,23 +89,26 @@ type NetworkSession struct {
 // --- World Sim ---
 
 type Simulator struct {
-	nc           *nats.Conn
-	mapID        string
-	mapFilename  string
-	mapData      *MapData
-	zoneReg      *ZoneRegistry
-	userStore    *UserStore
-	extMgr       *ExtensionManager
+	nc            *nats.Conn
+	mapID         string
+	mapFilename   string
+	mapData       *MapData
+	zoneReg       *ZoneRegistry
+	userStore     *UserStore
+	extMgr        *ExtensionManager
 	pocketbaseURL string
-	tickHz       int
-	tickDur      time.Duration
-	tickCount    uint64
-	logger       *slog.Logger
-	tracer       trace.Tracer
+	tickHz        int
+	tickDur       time.Duration
+	tickCount     uint64
+	logger        *slog.Logger
+	tracer        trace.Tracer
 
 	mu       sync.Mutex
 	entities map[string]*Entity // entity_id -> entity
 	clients  map[string]*Entity // client_id -> entity (player avatar)
+	// entityIDToClient maps player entity_id -> client_id, used by handleChat
+	// to address proximity chat recipients. Maintained alongside s.clients.
+	entityIDToClient map[string]string
 	// destroyedEntities queues entity IDs removed since the last tick (base
 	// entities removed during a map reload, or player avatars despawned on
 	// disconnect), so the next replication tick can send DestroyEntity frames
@@ -129,19 +137,20 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 	}
 
 	s := &Simulator{
-		nc:            nc,
-		mapID:         mapID,
-		mapData:       mapData,
-		zoneReg:       NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
-		userStore:     NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
-		extMgr:        NewExtensionManager(logger),
-		pocketbaseURL: pocketbaseURL,
-		tickHz:        tickHz,
-		tickDur:       time.Second / time.Duration(tickHz),
-		logger:        logger,
-		tracer:        otel.Tracer("worldsim"),
-		entities:      make(map[string]*Entity),
-		clients:       make(map[string]*Entity),
+		nc:               nc,
+		mapID:            mapID,
+		mapData:          mapData,
+		zoneReg:          NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
+		userStore:        NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
+		extMgr:           NewExtensionManager(logger),
+		pocketbaseURL:    pocketbaseURL,
+		tickHz:           tickHz,
+		tickDur:          time.Second / time.Duration(tickHz),
+		logger:           logger,
+		tracer:           otel.Tracer("worldsim"),
+		entities:         make(map[string]*Entity),
+		clients:          make(map[string]*Entity),
+		entityIDToClient: make(map[string]string),
 	}
 
 	s.loadBaseEntities()
@@ -301,6 +310,24 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe client.action: %w", err)
 	}
 
+	// client.<id>.chat — text chat (global or proximity channel).
+	// See documentation/plans/2026-07-07-chat-design.md.
+	if _, err := s.nc.Subscribe("client.*.chat", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.handle_chat_sub")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "chat")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var chat pb.ChatFrame
+		if err := proto.Unmarshal(m.Data, &chat); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		s.handleChat(ctx, clientID, &chat)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.chat: %w", err)
+	}
+
 	// Extension lifecycle subscriptions.
 	if err := s.extMgr.Subscribe(s.nc); err != nil {
 		return fmt.Errorf("extension subscribe: %w", err)
@@ -375,6 +402,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 	}
 
 	entityID := defaultEntityID
+	displayName := ""
 
 	// Look up or create the user in PocketBase for persistent identity.
 	if s.userStore != nil && sub != "" && sub != "dev" {
@@ -384,10 +412,21 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 				"err", err, "sub", sub)
 		} else {
 			entityID = user.EntityID
+			displayName = user.DisplayName
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
 			}
+		}
+	}
+	// Guests (sub == "" or "dev") get a per-session display name derived
+	// from their entity ID. Logged-in users with an empty PocketBase
+	// display_name fall back to their entity ID.
+	if displayName == "" {
+		if sub == "" || sub == "dev" {
+			displayName = "Guest " + lastN(entityID, 4)
+		} else {
+			displayName = entityID
 		}
 	}
 
@@ -398,6 +437,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 			ClientID: clientID,
 			Input:    &pb.InputState{},
 		},
+		DisplayName:  displayName,
 		spawnedTo:    make(map[string]bool),
 		currentZones: make(map[string]bool),
 	}
@@ -422,6 +462,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 	}
 	s.entities[entityID] = e
 	s.clients[clientID] = e
+	s.entityIDToClient[entityID] = clientID
 
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
@@ -455,6 +496,7 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	}
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
+	delete(s.entityIDToClient, e.ID)
 	// Queue a DestroyEntity so the next replication tick notifies all other
 	// clients. Without this, remaining clients never learn the entity is gone
 	// and the avatar sprite stays on screen after the player disconnects.
@@ -501,9 +543,9 @@ type adjacentEntityInfo struct {
 // actionDispatchMsg is published to extension.<id>.action for every
 // extension registered for the triggered input type.
 type actionDispatchMsg struct {
-	EntityID         string                `json:"entity_id"` // the acting player
-	Input            string                `json:"input"`
-	AdjacentEntities []adjacentEntityInfo  `json:"adjacent_entities"`
+	EntityID         string               `json:"entity_id"` // the acting player
+	Input            string               `json:"input"`
+	AdjacentEntities []adjacentEntityInfo `json:"adjacent_entities"`
 }
 
 // actionReplyMsg is the extension's reply to an actionDispatchMsg.
@@ -639,6 +681,99 @@ func (s *Simulator) sendActionResult(ctx context.Context, clientID string, seq u
 	if err := s.nc.Publish(subject, frameBytes); err != nil {
 		s.logger.WarnContext(ctx, "action result publish", "client", clientID, "err", err)
 	}
+}
+
+// maxChatRunes is the server-side truncation limit for chat messages.
+const maxChatRunes = 500
+
+// handleChat processes a client-sent ChatFrame: stamps display_name +
+// timestamp, truncates text, then routes it to the appropriate NATS
+// subject for the pusher to forward to recipients. Global messages go to
+// chat.broadcast (pusher fans out to all sessions); proximity messages go
+// to client.<recipientID>.chat_inbox per group member (including the
+// sender, so they see their own message echoed). Messages from clients
+// with no current proximity group are dropped silently (no one to hear).
+// See documentation/plans/2026-07-07-chat-design.md.
+func (s *Simulator) handleChat(ctx context.Context, clientID string, chat *pb.ChatFrame) {
+	ctx, span := s.tracer.Start(ctx, "worldsim.handle_chat")
+	defer span.End()
+	span.SetAttributes(attribute.String("client.id", clientID), attribute.String("chat.channel", chat.GetChannel()))
+
+	// Truncate text to maxChatRunes (rune-safe).
+	text := chat.GetText()
+	if r := []rune(text); len(r) > maxChatRunes {
+		text = string(r[:maxChatRunes])
+	}
+
+	s.mu.Lock()
+	sender, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown client")
+		return
+	}
+	msg := &pb.ChatMessageFrame{
+		Channel:     chat.GetChannel(),
+		EntityId:    sender.ID,
+		DisplayName: sender.DisplayName,
+		Text:        text,
+		Timestamp:   uint64(time.Now().UnixMilli()),
+	}
+	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_ChatMessage{ChatMessage: msg}}
+	frameBytes, err := proto.Marshal(frame)
+	if err != nil {
+		s.mu.Unlock()
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "marshal")
+		return
+	}
+
+	var recipients []string // client IDs to deliver to
+	switch chat.GetChannel() {
+	case "global":
+		recipients = nil // broadcast subject handles fan-out
+	case "proximity":
+		group := sender.currentProximityGroup
+		if group == "" {
+			s.mu.Unlock()
+			return // solo — no one to hear
+		}
+		for _, e := range s.entities {
+			if e.NetworkSession != nil && e.currentProximityGroup == group {
+				if cid, ok := s.entityIDToClient[e.ID]; ok {
+					recipients = append(recipients, cid)
+				}
+			}
+		}
+	default:
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown channel")
+		return
+	}
+	s.mu.Unlock()
+
+	if chat.GetChannel() == "global" {
+		if err := s.nc.Publish("chat.broadcast", frameBytes); err != nil {
+			s.logger.WarnContext(ctx, "chat broadcast publish", "err", err)
+			span.RecordError(err)
+		}
+		return
+	}
+	for _, cid := range recipients {
+		subject := fmt.Sprintf("client.%s.chat_inbox", cid)
+		if err := s.nc.Publish(subject, frameBytes); err != nil {
+			s.logger.WarnContext(ctx, "chat inbox publish", "client", cid, "err", err)
+		}
+	}
+}
+
+// lastN returns the last n characters of s, or s if shorter.
+func lastN(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[len(r)-n:])
 }
 
 // tick runs the game loop: movement system + replication.
@@ -1274,7 +1409,7 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 	}
 
 	// Assign group IDs and detect changes.
-	newGroup := make(map[string]string)    // entity_id -> group_id
+	newGroup := make(map[string]string)       // entity_id -> group_id
 	groupMembers := make(map[string][]string) // group_id -> sorted member entity IDs
 	for _, comp := range groups {
 		if len(comp) < 2 {
