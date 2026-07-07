@@ -172,6 +172,8 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 	// Auto-seed the sprite_bases catalog from the bundled sprites directory on
 	// first run. Non-fatal: if PB is down or seeding fails, worldsim still
 	// starts and the frontend falls back to static char_0..char_4 sheets.
+	// SPRITES_DIR defaults to ./sprites (bundled in dist/) for production; for
+	// local dev, set SPRITES_DIR=frontend/public/sprites.
 	spritesDir := os.Getenv("SPRITES_DIR")
 	if spritesDir == "" {
 		spritesDir = "./sprites"

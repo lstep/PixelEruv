@@ -14,6 +14,7 @@ COPY proto/ ../proto/
 # Build both binaries
 RUN go build -o /out/pusher ./cmd/pusher
 RUN go build -o /out/worldsim ./cmd/worldsim
+RUN go build -o /out/seed-sprites ./cmd/seed-sprites
 RUN go build -o /out/ext-demo ./cmd/ext-demo
 RUN go build -o /out/ext-walls ./cmd/ext-walls
 RUN go build -o /out/ext-props ./cmd/ext-props
@@ -29,6 +30,9 @@ ENTRYPOINT ["pusher"]
 FROM alpine:3.20 AS worldsim
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/worldsim /usr/local/bin/worldsim
+COPY --from=builder /out/seed-sprites /usr/local/bin/seed-sprites
+COPY frontend/public/sprites /sprites
+ENV SPRITES_DIR=/sprites
 ENTRYPOINT ["worldsim"]
 
 # --- ext-demo image ---
