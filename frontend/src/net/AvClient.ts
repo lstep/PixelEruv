@@ -20,7 +20,7 @@ export type AvParticipantsHandler = (participants: Map<string, AvParticipant>) =
 export class AvClient {
   private room: Room | null = null;
   private currentRoom: string | null = null;
-  private micMuted = false;
+  private micMuted = true;
   private cameraEnabled = false;
   // LiveKit SDK module, loaded on first use.
   private lkModule: typeof import("livekit-client") | null = null;
