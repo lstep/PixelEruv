@@ -5,6 +5,7 @@ import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from 
 import { AvClient } from "../net/AvClient";
 import { AvOverlay } from "../net/AvOverlay";
 import type { MapAssets } from "../mapLoader";
+import type { SpriteBaseAsset } from "../spriteLoader";
 import type { TopMenu } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
 
@@ -278,9 +279,9 @@ const COLS_PER_ROW = 24;
 const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3", "char_4"];
 const WALK_ROW = 2;        // frame-row used for the movement animation (run)
 
-// FNV-1a hash (matches the server's spriteIndexForEntity) so the fallback
-// sprite index is deterministic from the entity ID — all clients agree even
-// if the Appearance component doesn't arrive.
+// FNV-1a hash used for the guest fallback: when a player has no sprite_base
+// (guests / unset), the sprite index is deterministic from the entity ID so
+// all clients agree on the same fallback sprite.
 function fnv1aHash(s: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -482,11 +483,24 @@ export class GameScene extends Phaser.Scene {
 
     // Load character sprite sheets (768x192). Frames are 32x64 so each frame
     // captures the full ~48px-tall character (see FRAME_H comment above).
+    // Static fallback sheets are always loaded (for guests / PB unavailable).
     for (const key of CHAR_SPRITES) {
       this.load.spritesheet(key, `/sprites/${key}.png`, {
         frameWidth: FRAME_W,
         frameHeight: FRAME_H,
       });
+    }
+
+    // Load PB-backed sprite sheets, keyed by their PocketBase record ID.
+    // These are used when a player's Appearance.sprite_base is set.
+    const spriteBases = this.registry.get("spriteBases") as SpriteBaseAsset[] | null;
+    if (spriteBases) {
+      for (const base of spriteBases) {
+        this.load.spritesheet(base.id, base.url, {
+          frameWidth: FRAME_W,
+          frameHeight: FRAME_H,
+        });
+      }
     }
 
     // Bitmap font for avatar name tags (Press Start 2P, 8x8 pixel art).
@@ -642,7 +656,13 @@ export class GameScene extends Phaser.Scene {
     // Create movement + idle animations for each character sheet. The
     // movement animation uses WALK_ROW (the run cycle, frame-row 2). Idle
     // reuses the same frames at a slower rate for a subtle breathing effect.
-    for (const key of CHAR_SPRITES) {
+    // Register for both static fallback sheets and PB-backed sheets.
+    const animKeys: string[] = [...CHAR_SPRITES];
+    const spriteBases = this.registry.get("spriteBases") as SpriteBaseAsset[] | null;
+    if (spriteBases) {
+      for (const base of spriteBases) animKeys.push(base.id);
+    }
+    for (const key of animKeys) {
       for (let dir = 0; dir < 4; dir++) {
         const start = DIR_FRAME_START[dir];
         const frames = this.anims.generateFrameNumbers(key, { start, end: start + FRAMES_PER_DIR - 1 });
@@ -751,6 +771,12 @@ export class GameScene extends Phaser.Scene {
         // PocketBase-stored identity exists (persistent entity_id).
         this.myEntityId = this.ws?.getEntityId() ?? null;
         console.log("ready, myEntityId=", this.myEntityId);
+        // If the pre-join chooser stashed a pending sprite_base, send it now.
+        const pending = this.registry.get("pendingSpriteBase") as string | undefined;
+        if (pending) {
+          this.ws?.setSpriteBase(pending);
+          this.registry.remove("pendingSpriteBase");
+        }
       },
       onReplication: (batch: ReplicationBatchView) => this.handleReplication(batch),
       onReconnect: (_clientId: string, entityId: string) => {
@@ -791,6 +817,7 @@ export class GameScene extends Phaser.Scene {
     });
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
+    topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
 
     // Clean up A/V overlay + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -930,7 +957,7 @@ export class GameScene extends Phaser.Scene {
       let x = 10 * TILE_SIZE;
       let y = 10 * TILE_SIZE;
       let gid = 0;
-      let spriteIndex = -1;
+      let spriteBase = "";
       let displayName = "";
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
@@ -939,10 +966,10 @@ export class GameScene extends Phaser.Scene {
           x = pos.x * TILE_SIZE;
           y = pos.y * TILE_SIZE;
         } else if (comp.componentId === 3) {
-          // Appearance component — gid for props, sprite_index for player avatars
+          // Appearance component — gid for props, sprite_base for player avatars
           const appearance = fromBinary(AppearanceSchema, comp.data);
           gid = appearance.gid;
-          spriteIndex = appearance.spriteIndex;
+          spriteBase = appearance.spriteBase;
         } else if (comp.componentId === 4) {
           // DisplayName component — player avatar name tag
           const dn = fromBinary(DisplayNameSchema, comp.data);
@@ -978,14 +1005,13 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // Use the server-assigned sprite index (deterministic from entity ID)
-      // so all clients render the same sprite for the same player. Fall back
-      // to a client-side hash of the entity ID (same FNV-1a as the server) if
-      // no Appearance component arrived — still deterministic, still agrees.
-      const idx = spriteIndex >= 0
-        ? spriteIndex % CHAR_SPRITES.length
-        : spriteIndexForEntity(spawn.entityId);
-      const charKey = CHAR_SPRITES[idx];
+      // Use the server-assigned sprite_base (a PB record ID) if set. Fall back
+      // to a client-side hash of the entity ID (same FNV-1a as the old server
+      // code) for guests / unset — still deterministic, still agrees across
+      // clients.
+      const charKey = spriteBase
+        ? spriteBase
+        : CHAR_SPRITES[spriteIndexForEntity(spawn.entityId)];
       const sprite = this.add.sprite(x, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
       // 64px-tall frame: origin at 0.75 puts the feet at the tile bottom and
       // lets the taller-than-tile head extend up into the tile above.
@@ -1071,6 +1097,24 @@ export class GameScene extends Phaser.Scene {
             avatar.nameTag.setText(dn.name);
           } else {
             this.createNameTag(upd.entityId, dn.name);
+          }
+        }
+      } else if (upd.componentId === 3) {
+        // Appearance component — hot-swap the character sheet if sprite_base
+        // changed. Only applies to player avatars (props use gid, unchanged).
+        if (!avatar.isProp) {
+          const app = fromBinary(AppearanceSchema, upd.data);
+          const newKey = app.spriteBase
+            ? app.spriteBase
+            : CHAR_SPRITES[spriteIndexForEntity(upd.entityId)];
+          if (newKey !== avatar.charKey) {
+            avatar.sprite.setTexture(newKey, DIR_FRAME_START[avatar.dir]);
+            avatar.charKey = newKey;
+            // Re-play the current animation on the new texture.
+            const animKey = avatar.moving
+              ? `${newKey}_walk_${DIR_NAMES[avatar.dir]}`
+              : `${newKey}_idle_${DIR_NAMES[avatar.dir]}`;
+            avatar.sprite.play(animKey, true);
           }
         }
       }

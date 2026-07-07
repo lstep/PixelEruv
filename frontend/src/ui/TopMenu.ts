@@ -21,6 +21,7 @@ export class TopMenu {
   private chatPanel: ChatPanel | null = null;
   private chatBtn: HTMLButtonElement;
   private setNameHandler: ((name: string) => void) | null = null;
+  private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
 
   constructor() {
     this.container = document.createElement("div");
@@ -106,6 +107,33 @@ export class TopMenu {
     });
     row.appendChild(saveBtn);
 
+    // Character sheet picker — opens a prompt to enter a sprite_bases ID.
+    // In phase 1 this is a simple text input; a richer UI is phase 2.
+    const charLabel = document.createElement("div");
+    charLabel.textContent = "Character sheet";
+    charLabel.style.cssText = "color:#aaa;font-size:12px;margin-top:12px;margin-bottom:6px;";
+    this.dropdown.appendChild(charLabel);
+
+    const charRow = document.createElement("div");
+    charRow.style.cssText = "display:flex;gap:6px;";
+    this.dropdown.appendChild(charRow);
+
+    const charInput = document.createElement("input");
+    charInput.type = "text";
+    charInput.placeholder = "Sprite ID (blank = fallback)";
+    charInput.style.cssText =
+      "flex:1;padding:6px 8px;font-size:14px;background:#1a1a2e;color:#fff;border:1px solid #555;border-radius:6px;";
+    charRow.appendChild(charInput);
+
+    const charBtn = document.createElement("button");
+    charBtn.textContent = "Set";
+    charBtn.style.cssText = PILL_STYLE + "padding:6px 12px;";
+    charBtn.addEventListener("click", () => {
+      this.setSpriteBaseHandler?.(charInput.value.trim());
+      this.dropdown.style.display = "none";
+    });
+    charRow.appendChild(charBtn);
+
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.dropdown.style.display = this.dropdown.style.display === "none" ? "block" : "none";
@@ -145,6 +173,13 @@ export class TopMenu {
   // to the server (which sanitizes, replicates, and persists it).
   setSetNameHandler(fn: (name: string) => void): void {
     this.setNameHandler = fn;
+  }
+
+  // setSetSpriteBaseHandler wires the callback invoked when the user enters a
+  // sprite_bases ID in the dropdown. GameScene passes ws.setSpriteBase so the
+  // change is sent to the server (which validates, replicates, and persists).
+  setSetSpriteBaseHandler(fn: (spriteBase: string) => void): void {
+    this.setSpriteBaseHandler = fn;
   }
 
   private updateAvLabels(): void {

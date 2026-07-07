@@ -1,7 +1,9 @@
 import Phaser from "phaser";
 import { GameScene } from "./scenes/GameScene";
+import { CharacterSelectScene, shouldShowCharacterSelect } from "./scenes/CharacterSelectScene";
 import { initOtel, tracer } from "./otel";
 import { loadMapAssets, type MapAssets } from "./mapLoader";
+import { loadSpriteBases, type SpriteBaseAsset } from "./spriteLoader";
 import { handleAuthCallback } from "./auth";
 import { TopMenu } from "./ui/TopMenu";
 import { ChatPanel } from "./ui/ChatPanel";
@@ -21,7 +23,7 @@ const config: Phaser.Types.Core.GameConfig = {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
-  scene: [GameScene],
+  scene: [CharacterSelectScene, GameScene],
 };
 
 // Fetch map assets from PocketBase before starting Phaser so that GameScene's
@@ -52,8 +54,15 @@ async function bootstrap(): Promise<void> {
     span.end();
   }
 
+  // Fetch the sprite catalog from PocketBase (parallel with map load would be
+  // ideal, but keeping it sequential matches the existing pattern and the
+  // catalog is small). Empty array = PB unavailable; GameScene falls back to
+  // static char_0..char_4.
+  const spriteBases = await loadSpriteBases();
+
   const game = new Phaser.Game(config);
   game.registry.set("mapAssets", mapAssets);
+  game.registry.set("spriteBases", spriteBases);
   game.registry.set("topMenu", topMenu);
   game.registry.set("chatPanel", chatPanel);
 }
