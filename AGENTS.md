@@ -80,5 +80,5 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - Use ginkgo for testing
 - Before planning, query memory for stable facts about this repo. At the end, save only durable facts that will help future sessions. Do not save secrets, logs, guesses, or one-off errors.
-- **Git workflow**: Commit locally as you go, but do NOT push automatically. Only push and create a PR when explicitly asked. Never push directly to main — always create a PR.
+- **Git workflow**: Do not commit in branch "main". Check you are in a branch and if not, create one. Commit locally as you go, but do NOT push automatically. Only push and create a PR when explicitly asked. Never push directly to main — always create a PR.
 - Keep a DASHBOARD.md up to date: progress, what remains, decisions made. Update it at the end of each session.
