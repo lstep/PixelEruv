@@ -31,7 +31,7 @@ backend/ext-props
 backend/ext-av
 
 # Node
-frontend/node_modules/
+node_modules/
 frontend/src/proto/
 
 # Build outputs (binaries + web assets)

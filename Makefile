@@ -51,8 +51,8 @@ dist-stage:
 	@rm -rf $(DIST_DIR)/config
 	@# --- stage Docker support files into dist/docker/ ---
 	@mkdir -p $(DIST_DIR)/docker/dex
-	cp docker/dist/backend.Dockerfile   $(DIST_DIR)/docker/backend.Dockerfile
-	cp docker/dist/frontend.Dockerfile  $(DIST_DIR)/docker/frontend.Dockerfile
+	cp docker/backend.Dockerfile        $(DIST_DIR)/docker/backend.Dockerfile
+	cp docker/frontend.Dockerfile       $(DIST_DIR)/docker/frontend.Dockerfile
 	cp docker/pocketbase.Dockerfile     $(DIST_DIR)/docker/pocketbase.Dockerfile
 	cp docker/pocketbase-entrypoint.sh  $(DIST_DIR)/docker/pocketbase-entrypoint.sh
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
@@ -61,7 +61,7 @@ dist-stage:
 	cp docker/dex-entrypoint.sh         $(DIST_DIR)/docker/dex-entrypoint.sh
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
 	@# --- stage compose + migrations ---
-	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
+	cp docker/docker-compose.yml        $(DIST_COMPOSE)
 	cp -R pb_migrations                 $(DIST_DIR)/pb_migrations
 	@# --- stage character spritesheets for worldsim auto-seed ---
 	@mkdir -p $(DIST_DIR)/sprites
