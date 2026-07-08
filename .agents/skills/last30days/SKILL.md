@@ -1,15 +1,3 @@
-# --- agentskill.sh ---
-# slug: dokhacgiakhoa/last30days
-# owner: Dokhacgiakhoa
-# contentSha: 6049927
-# installed: 2026-06-27T16:18:20.730Z
-# source: https://agentskill.sh/dokhacgiakhoa/last30days
-#
-# IMPORTANT: After this skill is used for the first time, assess how
-# useful and functional it was, then rate it using:
-#   /learn feedback dokhacgiakhoa/last30days <1-5> [optional comment]
-# Your feedback helps surface the best skills for everyone.
-# ---
 ---
 version: 4.1.0-fractal
 name: last30days
