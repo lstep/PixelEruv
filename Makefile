@@ -62,6 +62,7 @@ dist-stage:
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
 	@# --- stage compose + migrations ---
 	cp docker/docker-compose.yml        $(DIST_COMPOSE)
+	rm -rf $(DIST_DIR)/pb_migrations
 	cp -R pb_migrations                 $(DIST_DIR)/pb_migrations
 	@# --- stage character spritesheets for worldsim auto-seed ---
 	@mkdir -p $(DIST_DIR)/sprites
