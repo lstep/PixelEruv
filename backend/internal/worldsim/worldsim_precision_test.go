@@ -68,7 +68,7 @@ func TestMovement_PlayerRadius(t *testing.T) {
 	// player should stop at X = 5.0 - r (feet center can't get closer than
 	// r to the wall). Without a radius, the player reaches X = 4.9 (feet
 	// 0.1 from the wall) or even X = 5.0 (touching).
-	const playerRadius = 0.3
+	const playerRadius = 0.1
 	if e.Position.X > 5.0-playerRadius {
 		t.Errorf("no collision radius: player X = %v (feet %v), wall at X=5.0, "+
 			"expected to stop at X <= %v (wall edge minus radius %v)",

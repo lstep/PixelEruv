@@ -1436,12 +1436,12 @@ const avatarFeetYOffset = 1.0
 const proximityRadius = 2.0
 
 // playerCollisionRadius is the half-width of the player's collision box in
-// tiles, centered on the feet. The sprite is 1 tile wide, but a smaller
-// radius (0.3) gives a tighter feel and lets the player squeeze through
-// 1-tile gaps. Zone shapes are expanded by this radius (Minkowski sum)
-// before the swept segment test, so the feet center stops `radius` tiles
-// before the wall edge instead of at it.
-const playerCollisionRadius float32 = 0.3
+// tiles, centered on the feet. Zone shapes are expanded by this radius
+// (Minkowski sum) before the swept segment test, so the feet center stops
+// `radius` tiles before the wall edge instead of at it. A small radius
+// (0.1) keeps the visible gap against walls tight while still letting the
+// player squeeze through 1-tile gaps without snagging on corners.
+const playerCollisionRadius float32 = 0.1
 
 // isMoveBlocked checks whether the movement segment from (oldX, oldY) to
 // (newX, newY) in tile coords is blocked. Zone collision uses swept

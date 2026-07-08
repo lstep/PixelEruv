@@ -248,8 +248,9 @@ const FEET_Y_OFFSET = 1.0;
 // Player collision radius in tiles — must match worldsim.go
 // playerCollisionRadius. Zone shapes are expanded by this radius before
 // the swept segment test so the feet center stops `r` tiles before the
-// wall edge.
-const PLAYER_COLLISION_RADIUS = 0.3;
+// wall edge. A small radius keeps the visible gap tight while still
+// allowing the player to squeeze through 1-tile gaps.
+const PLAYER_COLLISION_RADIUS = 0.1;
 
 // Camera zoom bounds and default. The wheel handler adjusts zoom within
 // [ZOOM_MIN, ZOOM_MAX]; ZOOM_SENSITIVITY converts DOM wheel deltaY (~100

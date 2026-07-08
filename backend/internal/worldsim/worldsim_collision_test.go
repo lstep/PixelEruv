@@ -16,7 +16,7 @@ import (
 // (moving up).
 func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 	// Wall zone w1 covers continuous tile space X[5,6], Y[5,6], expanded by
-	// playerCollisionRadius (0.3) → effective X[4.7,6.3], Y[4.7,6.3].
+	// playerCollisionRadius (0.1) → effective X[4.9,6.1], Y[4.9,6.1].
 	zones := []*Zone{{ID: "w1", Shape: ShapeRect, X: 5, Y: 5, W: 1, H: 1}}
 	s := &Simulator{
 		zoneReg: NewZoneRegistry(zones, 20, 20),
@@ -32,21 +32,21 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 		t.Fatalf("RegisterTriggers: %v", err)
 	}
 
-	// Feet render at Position.Y + 1.0. Wall Y[5,6] expanded by 0.3 → [4.7,6.3].
+	// Feet render at Position.Y + 1.0. Wall Y[5,6] expanded by 0.1 → [4.9,6.1].
 	// Zero-length segment = point check at the feet.
 	cases := []struct {
 		name      string
 		px, py    float32
 		wantBlock bool
 	}{
-		{"feet above expanded wall (py=3.3 -> feet=4.3)", 5.5, 3.3, false},
-		{"feet at expanded wall top edge (py=3.7 -> feet=4.7)", 5.5, 3.7, true},
+		{"feet above expanded wall (py=3.8 -> feet=4.8)", 5.5, 3.8, false},
+		{"feet at expanded wall top edge (py=3.9 -> feet=4.9)", 5.5, 3.9, true},
 		{"feet below expanded wall (py=5.4 -> feet=6.4)", 5.5, 5.4, false},
 	}
 	for _, c := range cases {
 		got := s.isMoveBlocked(c.px, c.py, c.px, c.py)
 		if got != c.wantBlock {
-			t.Errorf("%s: isMoveBlocked(%v, %v) = %v, want %v (feet at Y=%v, wall Y[5,6] expanded to [4.7,6.3])",
+			t.Errorf("%s: isMoveBlocked(%v, %v) = %v, want %v (feet at Y=%v, wall Y[5,6] expanded to [4.9,6.1])",
 				c.name, c.px, c.py, got, c.wantBlock, c.py+1.0)
 		}
 	}
