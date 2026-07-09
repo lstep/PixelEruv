@@ -42,6 +42,10 @@ export class AvClient {
   // Debounce timer for "leave" events — delays disconnect so momentary
   // proximity zone exits (2-tile radius) don't thrash the LiveKit room.
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
+  // Selected input device IDs, persisted across room connections so the
+  // user's device choice survives disconnect/reconnect cycles.
+  private selectedMicId: string | null = null;
+  private selectedCamId: string | null = null;
 
   constructor() {
     // Unlock audio on the very first click anywhere on the page. Safari
@@ -163,6 +167,8 @@ export class AvClient {
   // uses room.switchActiveDevice to swap on the fly. Otherwise stores the
   // deviceId for use when the next room connects.
   async switchDevice(kind: "audioinput" | "videoinput", deviceId: string): Promise<void> {
+    if (kind === "audioinput") this.selectedMicId = deviceId;
+    else this.selectedCamId = deviceId;
     if (this.room) {
       try {
         await this.room.switchActiveDevice(kind, deviceId);
@@ -249,7 +255,16 @@ export class AvClient {
 
   private async connect(url: string, token: string, roomName: string): Promise<void> {
     const lk = await this.ensureModule();
-    this.room = new lk.Room({ adaptiveStream: true, dynacast: true });
+    this.room = new lk.Room({
+      adaptiveStream: true,
+      dynacast: true,
+      audioCaptureDefaults: this.selectedMicId
+        ? { deviceId: this.selectedMicId }
+        : undefined,
+      videoCaptureDefaults: this.selectedCamId
+        ? { deviceId: this.selectedCamId }
+        : undefined,
+    });
     this.currentRoom = roomName;
     this.participants.clear();
     // Set up event handlers before connecting.
