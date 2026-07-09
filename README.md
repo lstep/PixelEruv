@@ -271,6 +271,8 @@ Project layout
     dist/
       bin/                  Native binaries (build output)
       web/                  Frontend build output + map assets
+      sprites/              Character spritesheets (worldsim auto-seeds sprite_bases)
+      maps/                 Default Tiled map + tileset PNGs (worldsim auto-seeds the maps record)
       docker/               Dockerfiles, nginx.conf, livekit.yaml, dex config
       docker-compose.yml    Self-contained compose (run from dist/)
       pb_migrations/        PocketBase collection schemas

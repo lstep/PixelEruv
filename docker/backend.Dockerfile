@@ -32,7 +32,9 @@ RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/worldsim /usr/local/bin/worldsim
 COPY --from=builder /out/seed-sprites /usr/local/bin/seed-sprites
 COPY spritesheets /sprites
+COPY maps /maps
 ENV SPRITES_DIR=/sprites
+ENV MAP_DIR=/maps
 ENTRYPOINT ["worldsim"]
 
 # --- ext-demo image ---

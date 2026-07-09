@@ -36,7 +36,27 @@ The `maps` collection is created automatically by the migration in
 | `tiled_json` | file (single) | The Tiled **JSON export** (not `.tmx`) |
 | `tilesets` | file (multiple) | Tileset PNG images referenced by the JSON |
 
-### Steps
+### First run (automatic)
+
+On worldsim's first startup, if no `maps` record named `MAP_ID` (default
+`map1`) exists, worldsim uploads `default-map.json` and the tileset PNGs
+referenced inside it from `MAP_DIR` as a new `maps` record. No manual upload
+step is needed for a fresh deploy — the world boots with the bundled office
+map. This mirrors the `SpriteStore.SeedIfEmpty` pattern used for
+`sprite_bases`.
+
+| Var | Default | Notes |
+|---|---|---|
+| `MAP_DIR` | `./maps` (native) / `/maps` (Docker) | Directory containing `default-map.json` + tileset PNGs for first-run seeding |
+| `MAP_ID` | `map1` | Name of the map record to seed and load |
+
+The seed is **idempotent**: once a record with the configured name exists,
+worldsim never overwrites it. To replace the map, edit the PocketBase record
+(see "Replacing a map" below). The seed retries for up to 30s while PocketBase
+is still booting (it logs `map seed failed` on each attempt and proceeds once
+PocketBase is up).
+
+### Manual upload (replacing or adding maps)
 
 1. **Start PocketBase** — `docker compose -f docker/docker-compose.yml up pocketbase` (or `make up` for all services). PocketBase serves on `http://localhost:8090`.
 
@@ -48,7 +68,7 @@ The `maps` collection is created automatically by the migration in
    external `source` field) — Phaser 4 does not support external tileset
    references.
 
-4. **Create a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record":
+4. **Create or edit a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record" (or edit the existing `map1`):
    - `name`: `map1` (or whatever `VITE_MAP_NAME` is set to)
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`)
