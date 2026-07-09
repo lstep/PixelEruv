@@ -49,7 +49,7 @@ type triggerMsg struct {
 func main() {
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	pbURL := envOr("POCKETBASE_URL", "http://localhost:8090")
-	mapID := envOr("MAP_ID", "test-map")
+	mapID := envOr("MAP_ID", "map1")
 	extID := "walls"
 	heartbeatS := 10
 

@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-09 (session fix/docker-dist-config)
+Last updated: 2026-07-09 (session map1-default)
 
 ## Overview
 
@@ -12,6 +12,11 @@ Remote deployment note: the `dist/` backend image now bundles `sprites/` so
 worldsim can seed the `sprite_bases` catalog on first run. The `docker/dist/`
 templates are now tracked (`.gitignore` previously ignored them due to an
 overly broad `dist/` pattern).
+
+Default map: `map1` (the `assets/map1.json` office map). The `test-map.json`
+starter file has been removed; `make web` copies `map1.json` and its tileset
+PNGs to `frontend/public/maps/` so the static fallback and the `dist/` build
+serve the same map. `MAP_ID` and `VITE_MAP_NAME` default to `map1`.
 
 ## Current architecture
 

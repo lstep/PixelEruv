@@ -343,7 +343,7 @@ players are near each other or inside an `av_enabled` zone.
 
 Maps are authored in [Tiled](https://www.mapeditor.org/) and stored in
 PocketBase's `maps` collection. The worldsim loads the map named by
-`MAP_ID` (default `test-map`) and hot-reloads within ~30s when the
+`MAP_ID` (default `map1`) and hot-reloads within ~30s when the
 PocketBase record changes.
 
 ### 7a. Author in Tiled
@@ -363,8 +363,9 @@ PocketBase record changes.
      `entity_type` or `owner_extension`).
 3. Export as **JSON** (`File → Export As… → *.json`).
 
-A starter map and tileset ship in `web/maps/` (`test-map.json`,
-`tileset.json`, `tileset.png`) — use them as a template.
+A starter map and tilesets ship in `assets/` (`map1.json`, `map1.tmx`,
+`Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`) — `make web`
+copies the JSON and PNGs to `dist/web/maps/` for the static fallback.
 
 ### 7b. Upload to PocketBase
 
@@ -376,7 +377,7 @@ record's file field, with the record's `name` matching `MAP_ID`.
 1. Open `http://<host-ip>:8090/_/` (or your tunnel/proxy).
 2. Log in with `admin@pixeleruv.local` / `password123`.
 3. Go to **Collections → maps**.
-4. Edit the record whose `name` = `test-map` (or create one), attach your
+4. Edit the record whose `name` = `map1` (or create one), attach your
    `*.json` file, and save.
 
 **Via the API** (scriptable):
@@ -388,10 +389,10 @@ TOKEN=$(curl -s http://127.0.0.1:8090/api/admins/auth-with-password \
   -d '{"identity":"admin@pixeleruv.local","password":"password123"}' \
   | jq -r .token)
 
-# 2. Update the test-map record's file (replace <record-id>)
+# 2. Update the map1 record's file (replace <record-id>)
 curl -s -X PATCH http://127.0.0.1:8090/api/collections/maps/records/<record-id> \
   -H "Authorization: $TOKEN" \
-  -F "file=@/path/to/your-map.json"
+  -F "tiled_json=@/path/to/your-map.json"
 ```
 
 Within ~30s worldsim detects the new filename, publishes `map.updated` over

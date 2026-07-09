@@ -300,7 +300,7 @@ Player walks near entity, presses E
 2. Open PocketBase admin UI at `http://localhost:8090/_/`
 3. Go to the `maps` collection → New record
 4. Fill in:
-   - `name`: the map name (must match `VITE_MAP_NAME`, default `test-map`)
+   - `name`: the map name (must match `VITE_MAP_NAME`, default `map1`)
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload all tileset PNG images
 5. Save
