@@ -296,9 +296,16 @@ Player walks near entity, presses E
 
 ## Uploading to PocketBase
 
+> **First run is automatic.** worldsim seeds `default-map.json` + its tileset
+> PNGs from `MAP_DIR` (bundled at `/maps` in Docker) into a `maps` record
+> named `MAP_ID` on first startup, if no such record exists. The seed is
+> idempotent — once the record exists, worldsim never overwrites it. The
+> steps below are for **replacing** the default map or **adding** new ones.
+
 1. In Tiled: File → Export As… → choose `*.json` format
 2. Open PocketBase admin UI at `http://localhost:8090/_/`
-3. Go to the `maps` collection → New record
+3. Go to the `maps` collection → edit the existing `map1` record (or New
+   record to add a new map)
 4. Fill in:
    - `name`: the map name (must match `VITE_MAP_NAME`, default `map1`)
    - `tiled_json`: upload the exported JSON file

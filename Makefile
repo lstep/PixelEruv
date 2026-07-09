@@ -80,6 +80,9 @@ dist-stage:
 	@# --- stage character spritesheets for worldsim auto-seed ---
 	@mkdir -p $(DIST_DIR)/sprites
 	cp -R frontend/public/sprites/.      $(DIST_DIR)/sprites/
+	@# --- stage default map (Tiled JSON + tileset PNGs) for worldsim auto-seed ---
+	@mkdir -p $(DIST_DIR)/maps
+	cp -R maps/.                         $(DIST_DIR)/maps/
 
 # dist: native platform (convenience alias).
 dist: build web dist-stage

@@ -10,4 +10,8 @@ COPY bin/${BINARY} /usr/local/bin/app
 # first run. Other services ignore SPRITES_DIR.
 COPY sprites /sprites
 ENV SPRITES_DIR=/sprites
+# Bundle the default map (Tiled JSON + tileset PNGs) so worldsim can seed the
+# maps collection on first run. Other services ignore MAP_DIR.
+COPY maps /maps
+ENV MAP_DIR=/maps
 ENTRYPOINT ["app"]

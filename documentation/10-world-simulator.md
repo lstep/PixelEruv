@@ -170,6 +170,8 @@ World Simulator process
 ├── NATS publisher        (per-client replication batches, cross-shard events, trigger queries)
 ├── JetStream KV client   (player positions, player status; reads zone state)
 ├── PocketBase client     (HTTP: user lookup/create, world config, audit)
+├── SpriteStore           (auto-seeds sprite_bases from SPRITES_DIR on first run)
+├── MapStore              (auto-seeds the default maps record from MAP_DIR on first run)
 └── Extension manager     (registration, entity hosting, heartbeat, input trigger dispatch)
 ```
 
@@ -682,11 +684,14 @@ positions, user status) is in JetStream KV. On restart, the World Sim:
 1. Reads all JetStream KV keys for its shard(s) to reconstruct zone state and
    user positions.
 2. Reads world configuration from PocketBase.
-3. Re-registers all entities in the ECS.
-4. Resumes the tick loop.
-5. Sends a fresh initial snapshot to each connected client (via NATS → Pusher
+3. Auto-seeds the default `maps` record from `MAP_DIR` if no record named
+   `MAP_ID` exists (idempotent; retries for 30s while PocketBase is booting).
+   Mirrors the `SpriteStore.SeedIfEmpty` pattern for `sprite_bases`.
+4. Re-registers all entities in the ECS.
+5. Resumes the tick loop.
+6. Sends a fresh initial snapshot to each connected client (via NATS → Pusher
    → client).
-6. Publishes `world_sim.restarted` on NATS Core so extensions can re-register
+7. Publishes `world_sim.restarted` on NATS Core so extensions can re-register
    their triggers and re-spawn their entities.
 
 Connected clients experience a brief replication pause but do not disconnect

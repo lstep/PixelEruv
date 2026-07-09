@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-09 (session assets-reorg)
+Last updated: 2026-07-09 (session map-auto-seed)
 
 ## Overview
 
@@ -8,18 +8,21 @@ Last updated: 2026-07-09 (session assets-reorg)
 extensible zone system, and first-party extensions. Kernel architecture
 (worldsim + pusher) + extensions communicating via NATS.
 
-Remote deployment note: the `dist/` backend image now bundles `sprites/` so
-worldsim can seed the `sprite_bases` catalog on first run. The `docker/dist/`
-templates are now tracked (`.gitignore` previously ignored them due to an
-overly broad `dist/` pattern).
+Remote deployment note: the `dist/` backend image now bundles `sprites/` and
+`maps/` so worldsim can seed the `sprite_bases` catalog **and** the default
+`maps` record on first run. The `docker/dist/` templates are now tracked
+(`.gitignore` previously ignored them due to an overly broad `dist/` pattern).
 
 Default map: `map1` (the `maps/default-map.json` office map). The
 `test-map.json` starter file has been removed. Map sources (tmx, json and
 tileset PNGs) live in `maps/`; spritesheets live in `spritesheets/`. `make`
 copies them to `frontend/public/assets/maps` and `frontend/public/sprites` for
 the Vite dev server and the `dist/` build. The frontend loads the map from
-PocketBase only — upload `maps/default-map.json` and its tileset PNGs to a
-`maps` record named `map1` (or the configured `MAP_ID`/`VITE_MAP_NAME`).
+PocketBase only. On worldsim's first startup, if no `maps` record named `map1`
+(or the configured `MAP_ID`) exists, worldsim uploads `maps/default-map.json`
+and its tileset PNGs to PocketBase automatically — no manual upload step needed
+for a fresh deploy. To replace the map, re-upload to the `maps` collection
+(section 7b of quick-start).
 
 ## Current architecture
 
@@ -82,6 +85,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Walls migrated to extension system (Walls tile layer = fallback only)
 - [x] Map hot-reload: worldsim detects map changes in PocketBase every 30s, publishes `map.updated` NATS event
 - [x] ext-walls subscribes to `map.updated`, re-reads map and re-registers triggers
+- [x] **Default map auto-seed**: on worldsim startup, if no `maps` record named `MAP_ID` exists in PocketBase, worldsim uploads `maps/default-map.json` + referenced tileset PNGs from `MAP_DIR` (default `./maps`, `/maps` in Docker). Retries for 30s while PocketBase is still booting. Idempotent — no-op once the record exists. Mirrors the `SpriteStore.SeedIfEmpty` pattern for `sprite_bases`.
 
 ### Decoration Layers & Interactive Entities
 - [x] Decoration layers identified by `layer_type=decoration` custom property (tile layers + object layers with `gid`)
@@ -240,6 +244,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-07 | Server-authoritative avatar sprite index (FNV-1a hash of entity ID) | Each client independently picked a sprite via a local `colorIndex` counter, so two anonymous players saw each other as different characters (each client received its own spawn first → char_0, then the other → char_1). The server now assigns `SpriteIndex = hash(entityID) % 5` at provision time and replicates it via `Appearance.sprite_index`. Deterministic from entity ID → stable across reconnects for logged-in users, and identical on all clients. |
 | 2026-07-07 | Spawn points = `zone_type=spawn` zones on the Zones layer (not a new layer or entity type) | Reuses the existing zone parser, `Zone.Contains` (rect/circle/polygon), and zone registry. Spawn zones are invisible to clients (server-side selection only, never replicated). One zone = random walkable tile within it; multiple zones = random zone then random tile. Falls back to `FindSpawn()` center-spiral when absent or unwalkable, so every existing map keeps working. |
 | 2026-07-07 | Enumerate walkable tiles in zone bbox (not rejection sampling) for spawn pick | Rejection sampling degrades badly on small or mostly-walled zones and needs a retry cap. Enumeration is O(bbox area), bounded by zone size, gives a true uniform distribution, and runs once per session (cost irrelevant). Shared `walkableTilesInZone` helper used by both `FindSpawnPoint` and the integrity check. |
+| 2026-07-09 | worldsim auto-seeds the default `maps` record from `MAP_DIR` on first run | A fresh deploy with an empty `pb_data` volume left `ext-walls`/`ext-av` logging "no map found" forever — the map had to be uploaded manually before the world would boot. Mirroring the existing `SpriteStore.SeedIfEmpty` pattern for `sprite_bases`, worldsim now uploads `default-map.json` + referenced tileset PNGs as a `maps` record named `MAP_ID` when (and only when) no such record exists. Idempotent: subsequent edits to the PocketBase record are never overwritten. Retries for 30s while PocketBase is still starting. `MAP_DIR` defaults to `./maps` (native) and is set to `/maps` in the Docker image (bundled by `dist-stage`). |
 
 ## Test accounts
 

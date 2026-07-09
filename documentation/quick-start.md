@@ -346,6 +346,14 @@ PocketBase's `maps` collection. The worldsim loads the map named by
 `MAP_ID` (default `map1`) and hot-reloads within ~30s when the
 PocketBase record changes.
 
+> **First run is automatic.** On worldsim's first startup, if no `maps`
+> record named `MAP_ID` exists, worldsim uploads `default-map.json` and the
+> tileset PNGs referenced inside it from `MAP_DIR` (bundled at `/maps` in the
+> Docker image). A fresh deploy boots straight into the office map with no
+> manual upload step. The seed is idempotent — once a record exists,
+> worldsim never overwrites it. The steps below are for **replacing** the
+> default map or **adding** new ones.
+
 ### 7a. Author in Tiled
 
 1. New map: **Orthogonal**, tile size **32×32**.
@@ -364,14 +372,16 @@ PocketBase record changes.
 3. Export as **JSON** (`File → Export As… → *.json`).
 
 A starter map and tilesets ship in `maps/` (`default-map.json`, `map1.json`,
-`map1.tmx`, `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). Upload
-`maps/default-map.json` and its tileset PNGs to PocketBase; the frontend loads
-the map from PocketBase, not from static files.
+`map1.tmx`, `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). The
+committed `default-map.json` is the seed worldsim uploads on first run; the
+frontend loads the map from PocketBase, not from static files.
 
 ### 7b. Upload to PocketBase
 
 The `maps` collection holds one record per map. Upload the JSON file as the
-record's file field, with the record's `name` matching `MAP_ID`.
+record's file field, with the record's `name` matching `MAP_ID`. To replace
+the seeded `map1` record, edit it in place (do not delete and recreate —
+worldsim would re-seed the default on the next restart).
 
 **Via the PocketBase admin UI** (easiest):
 

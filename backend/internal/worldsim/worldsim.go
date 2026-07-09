@@ -140,6 +140,26 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
 
+	// Auto-seed the default map into PocketBase on first run, so a fresh
+	// deployment boots without a manual upload step. MAP_DIR defaults to
+	// ./maps (bundled in dist/) for production; for local dev, set MAP_DIR
+	// to the repo's maps/ directory. Retries for up to 30s while PocketBase
+	// is still starting. Non-fatal: if seeding ultimately fails, worldsim
+	// still starts and LoadMap below will surface the real error.
+	mapDir := os.Getenv("MAP_DIR")
+	if mapDir == "" {
+		mapDir = "./maps"
+	}
+	mapStore := NewMapStore(pocketbaseURL, pbAdminEmail, pbAdminPassword)
+	for i := 0; i < 30; i++ {
+		if err := mapStore.SeedMapIfMissing(mapID, mapDir, "default-map.json"); err == nil {
+			break
+		} else if i == 29 {
+			logger.Warn("map seed failed", "err", err, "dir", mapDir)
+		}
+		time.Sleep(time.Second)
+	}
+
 	// Load map data (dimensions + collision grid + zones) from PocketBase.
 	mapData, err := LoadMap(pocketbaseURL, mapID)
 	if err != nil {
