@@ -7,9 +7,10 @@
 
 ## Source
 
-Characters come from the limezu **Modern Interiors** pack:
-`assets/moderninteriors-win/2_Characters/`. We use the 32px legacy single
-character sheets (`Old/Single_Characters_Legacy/32x32/`) as the art source.
+Characters come from the limezu **Modern Interiors** pack.
+The original third-party art pack is in `assets/moderninteriors-win/` (gitignored).
+We use the 32px legacy single character sheets (`Old/Single_Characters_Legacy/32x32/`)
+as the art source, extracted into `spritesheets/char_0.png` … `char_5.png`.
 
 The in-game sheets are `spritesheets/char_0.png` … `char_5.png` (copied to
 `frontend/public/sprites/` by `make`), each **768×192** px.
