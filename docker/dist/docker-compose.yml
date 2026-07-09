@@ -1,0 +1,170 @@
+# Self-contained compose for the dist/ directory.
+# Uses pre-built binaries from dist/bin/ and pre-built web assets from dist/web/.
+# Run from dist/:  docker compose up --build
+name: pixeleruv
+
+services:
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    restart: unless-stopped
+
+  pocketbase:
+    build:
+      context: .
+      dockerfile: docker/pocketbase.Dockerfile
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb/pb_data
+    environment:
+      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
+      PB_ADMIN_PASSWORD: "password123"
+    restart: unless-stopped
+
+  dex:
+    image: ghcr.io/dexidp/dex:latest
+    entrypoint: ["/entrypoint.sh"]
+    environment:
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+    ports:
+      - "5556:5556"
+    volumes:
+      - ./docker/dex/config.yaml:/etc/dex/config.yaml.template:ro
+      - ./docker/dex-entrypoint.sh:/entrypoint.sh:ro
+      - dex_data:/var/dex
+    restart: unless-stopped
+
+  pusher:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: pusher
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+      WS_ADDR: ":8081"
+      DEX_ISSUER: "http://localhost:5556/dex"
+      DEX_JWKS_URL: "http://dex:5556/dex/keys"
+      DEX_CLIENT_ID: "pixeleruv"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+  worldsim:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: worldsim
+    depends_on:
+      - nats
+      - pocketbase
+    environment:
+      NATS_URL: "nats://nats:4222"
+      TICK_HZ: "20"
+      MAP_ID: "test-map"
+      POCKETBASE_URL: "http://pocketbase:8090"
+      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
+      PB_ADMIN_PASSWORD: "password123"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    depends_on:
+      - pusher
+    ports:
+      - "4080:80"
+      - "4043:443"
+    environment:
+      TLS_HOSTS: "localhost,127.0.0.1"
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+    restart: unless-stopped
+
+  ext-demo:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: ext-demo
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+      EXTENSION_ID: "demo"
+    restart: unless-stopped
+
+  ext-walls:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: ext-walls
+    depends_on:
+      - nats
+      - pocketbase
+    environment:
+      NATS_URL: "nats://nats:4222"
+      POCKETBASE_URL: "http://pocketbase:8090"
+      MAP_ID: "test-map"
+    restart: unless-stopped
+
+  ext-props:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: ext-props
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+    restart: unless-stopped
+
+  # LiveKit SFU server for A/V. API keys must match ext-av.
+  livekit:
+    image: livekit/livekit-server:v1.13.2
+    command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    ports:
+      - "7880:7880"   # WebSocket signaling
+      - "7881:7881"   # TCP (fallback)
+      - "7882:7882/udp" # UDP (WebRTC media)
+      - "50000-50020:50000-50020/udp" # WebRTC ICE range
+    volumes:
+      - ./docker/livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+
+  ext-av:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: ext-av
+    depends_on:
+      - nats
+      - pocketbase
+      - livekit
+    environment:
+      NATS_URL: "nats://nats:4222"
+      POCKETBASE_URL: "http://pocketbase:8090"
+      MAP_ID: "test-map"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_PUBLIC_URL: "ws://${PUBLIC_HOST:-localhost}:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+    restart: unless-stopped
+
+volumes:
+  pb_data:
+  dex_data:
