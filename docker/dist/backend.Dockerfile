@@ -6,6 +6,10 @@ FROM alpine:3.20
 ARG BINARY
 RUN apk add --no-cache ca-certificates
 COPY bin/${BINARY} /usr/local/bin/app
+# Include the seed-sprites CLI so admins can add sheets to a running worldsim
+# container (docker compose exec worldsim seed-sprites -dir /sprites -force).
+# Other services ignore it.
+COPY bin/seed-sprites /usr/local/bin/seed-sprites
 # Bundle the character spritesheets so worldsim can seed sprite_bases on the
 # first run. Other services ignore SPRITES_DIR.
 COPY sprites /sprites
