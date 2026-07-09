@@ -32,7 +32,7 @@ The `maps` collection is created automatically by the migration in
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | text | Human-readable; the frontend loads by this name (`VITE_MAP_NAME`, default `test-map`) |
+| `name` | text | Human-readable; the frontend loads by this name (`VITE_MAP_NAME`, default `map1`) |
 | `tiled_json` | file (single) | The Tiled **JSON export** (not `.tmx`) |
 | `tilesets` | file (multiple) | Tileset PNG images referenced by the JSON |
 
@@ -45,9 +45,9 @@ The `maps` collection is created automatically by the migration in
 3. **Author or export your map** — in Tiled, use File → Export As… and choose `*.json` (Phaser loads JSON, not `.tmx`). The tileset must be **embedded inline** in the JSON (no external `source` field) — Phaser 4 does not support external tileset references.
 
 4. **Create a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record":
-   - `name`: `test-map` (or whatever `VITE_MAP_NAME` is set to)
+   - `name`: `map1` (or whatever `VITE_MAP_NAME` is set to)
    - `tiled_json`: upload the exported JSON file
-   - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `tileset.png`)
+   - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`)
 
 5. **Load the app** — the frontend fetches the record by name from PocketBase, retrieves the JSON and tileset images via PB file URLs, and renders the map. If PocketBase is unreachable, it falls back to static files in `frontend/public/maps/`.
 
@@ -56,7 +56,7 @@ The `maps` collection is created automatically by the migration in
 | Var | Default | Notes |
 |---|---|---|
 | `VITE_POCKETBASE_URL` | `http://localhost:8090` | PocketBase base URL (browser-reachable) |
-| `VITE_MAP_NAME` | `test-map` | Name of the map record to load |
+| `VITE_MAP_NAME` | `map1` | Name of the map record to load |
 
 ## To be specified (the hard parts)
 

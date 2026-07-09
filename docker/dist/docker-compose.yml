@@ -70,7 +70,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"
-      MAP_ID: "test-map"
+      MAP_ID: "map1"
       POCKETBASE_URL: "http://pocketbase:8090"
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
       PB_ADMIN_PASSWORD: "password123"
@@ -117,7 +117,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       POCKETBASE_URL: "http://pocketbase:8090"
-      MAP_ID: "test-map"
+      MAP_ID: "map1"
     restart: unless-stopped
 
   ext-props:
@@ -158,7 +158,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       POCKETBASE_URL: "http://pocketbase:8090"
-      MAP_ID: "test-map"
+      MAP_ID: "map1"
       LIVEKIT_URL: "ws://livekit:7880"
       LIVEKIT_PUBLIC_URL: "ws://${PUBLIC_HOST:-localhost}:7880"
       LIVEKIT_API_KEY: "devkey"

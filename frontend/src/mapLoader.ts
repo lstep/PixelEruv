@@ -7,7 +7,7 @@
 //
 // Env vars:
 //   VITE_POCKETBASE_URL — PocketBase base URL (dev only; default http://localhost:8090)
-//   VITE_MAP_NAME       — map record name to load (default "test-map")
+//   VITE_MAP_NAME       — map record name to load (default "map1")
 //
 // In production (served by nginx), PB_URL derives from window.location.origin so
 // the browser reaches PocketBase via the nginx /api/ proxy (same-origin), which
@@ -16,7 +16,7 @@
 const PB_URL = window.location.port === "5173"
   ? (import.meta.env.VITE_POCKETBASE_URL ?? "http://localhost:8090")
   : window.location.origin;
-const MAP_NAME = import.meta.env.VITE_MAP_NAME || "test-map";
+const MAP_NAME = import.meta.env.VITE_MAP_NAME || "map1";
 
 export interface TilesetAsset {
   // The tileset name as defined in the Tiled JSON (used by addTilesetImage).

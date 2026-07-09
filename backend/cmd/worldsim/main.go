@@ -15,7 +15,7 @@ import (
 func main() {
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	tickHz := envInt("TICK_HZ", 20)
-	mapID := envOr("MAP_ID", "test-map")
+	mapID := envOr("MAP_ID", "map1")
 	pocketbaseURL := envOr("POCKETBASE_URL", "http://localhost:8090")
 	pbAdminEmail := envOr("PB_ADMIN_EMAIL", "admin@pixeleruv.local")
 	pbAdminPassword := envOr("PB_ADMIN_PASSWORD", "password123")
