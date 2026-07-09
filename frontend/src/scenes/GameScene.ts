@@ -464,27 +464,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   preload(): void {
-    const mapAssets = this.registry.get("mapAssets") as MapAssets | null;
-    if (mapAssets) {
-      // Load from PocketBase — pass the parsed JSON object directly.
-      this.load.tilemapTiledJSON("map1", mapAssets.tiledJson);
-      for (const ts of mapAssets.tilesets) {
-        this.load.image(ts.name, ts.url);
-        // Also load as a spritesheet so individual tiles can be drawn as
-        // standalone sprites for object-layer decorations (see create()).
-        // Assumes a single, unspaced tileset grid matching the map's tile
-        // size — the same assumption the rest of the map pipeline makes.
-        this.load.spritesheet(`${ts.name}__tiles`, ts.url, { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
-      }
-    } else {
-      // Fallback: static files served by Vite / nginx.
-      this.load.tilemapTiledJSON("map1", "/maps/map1.json");
-      this.load.json("map1-raw", "/maps/map1.json");
-      // map1.json uses the room-builder-office and modern-office tilesets.
-      this.load.image("room-builder-office", "/maps/Room_Builder_Office_32x32.png");
-      this.load.spritesheet("room-builder-office__tiles", "/maps/Room_Builder_Office_32x32.png", { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
-      this.load.image("modern-office", "/maps/Modern_Office_32x32.png");
-      this.load.spritesheet("modern-office__tiles", "/maps/Modern_Office_32x32.png", { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
+    const mapAssets = this.registry.get("mapAssets") as MapAssets;
+    // Load from PocketBase — pass the parsed JSON object directly.
+    this.load.tilemapTiledJSON("map", mapAssets.tiledJson);
+    for (const ts of mapAssets.tilesets) {
+      this.load.image(ts.name, ts.url);
+      // Also load as a spritesheet so individual tiles can be drawn as
+      // standalone sprites for object-layer decorations (see create()).
+      // Assumes a single, unspaced tileset grid matching the map's tile
+      // size — the same assumption the rest of the map pipeline makes.
+      this.load.spritesheet(`${ts.name}__tiles`, ts.url, { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
     }
 
     // Load character sprite sheets (768x192). Frames are 32x64 so each frame
@@ -515,17 +504,17 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     // Render the Tiled map
-    const map = this.make.tilemap({ key: "map1" });
-    const mapAssets = this.registry.get("mapAssets") as MapAssets | null;
-    const rawJson = (mapAssets?.tiledJson ?? this.cache.json.get("map1-raw")) as TiledMapJSON;
+    const mapAssets = this.registry.get("mapAssets") as MapAssets;
+    const map = this.make.tilemap({ key: "map" });
+    const rawJson = mapAssets.tiledJson as TiledMapJSON;
     this.mapW = map.width;
     this.mapH = map.height;
-    this.tilesets = rawJson?.tilesets ?? [];
+    this.tilesets = rawJson.tilesets;
 
     // Add ALL tilesets so layers using any tileset render correctly. A map
     // can have multiple tilesets with different firstgids; createLayer must
     // be passed the tileset(s) that contain the layer's tile GIDs.
-    const allTilesets = (mapAssets ? mapAssets.tilesets : (rawJson?.tilesets ?? [])).map(
+    const allTilesets = mapAssets.tilesets.map(
       (ts) => map.addTilesetImage(ts.name, ts.name),
     );
     const validTilesets = allTilesets.filter((t) => t !== null);

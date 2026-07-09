@@ -49,7 +49,7 @@ The `maps` collection is created automatically by the migration in
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`)
 
-5. **Load the app** — the frontend fetches the record by name from PocketBase, retrieves the JSON and tileset images via PB file URLs, and renders the map. If PocketBase is unreachable, it falls back to static files in `frontend/public/maps/`.
+5. **Load the app** — the frontend fetches the record by name from PocketBase, retrieves the JSON and tileset images via PB file URLs, and renders the map. PocketBase must be available; there is no static fallback.
 
 ### Env vars
 
