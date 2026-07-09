@@ -147,9 +147,65 @@ export class TopMenu {
     });
     charRow.appendChild(charBtn);
 
+    // --- Device selectors (mic + camera) ---
+    // Added to the dropdown so users can pick the right input device.
+    // Labels are empty until mic/camera permission is granted, so we
+    // populate the lists when the dropdown is opened.
+    const micLabel = document.createElement("div");
+    micLabel.textContent = "Microphone";
+    micLabel.style.cssText = "color:#aaa;font-size:12px;margin-top:12px;margin-bottom:6px;";
+    this.dropdown.appendChild(micLabel);
+
+    const micSelect = document.createElement("select");
+    micSelect.style.cssText =
+      "width:100%;padding:6px 8px;font-size:14px;background:#1a1a2e;color:#fff;border:1px solid #555;border-radius:6px;";
+    this.dropdown.appendChild(micSelect);
+
+    const camLabel = document.createElement("div");
+    camLabel.textContent = "Camera";
+    camLabel.style.cssText = "color:#aaa;font-size:12px;margin-top:12px;margin-bottom:6px;";
+    this.dropdown.appendChild(camLabel);
+
+    const camSelect = document.createElement("select");
+    camSelect.style.cssText =
+      "width:100%;padding:6px 8px;font-size:14px;background:#1a1a2e;color:#fff;border:1px solid #555;border-radius:6px;";
+    this.dropdown.appendChild(camSelect);
+
+    // Populate device lists when the dropdown opens (labels may have
+    // become available after the first permission grant).
+    const refreshDevices = async () => {
+      if (!this.avClient) return;
+      const mics = await this.avClient.getDevices("audioinput");
+      micSelect.innerHTML = "";
+      for (const d of mics) {
+        const opt = document.createElement("option");
+        opt.value = d.deviceId;
+        opt.textContent = d.label;
+        micSelect.appendChild(opt);
+      }
+      const cams = await this.avClient.getDevices("videoinput");
+      camSelect.innerHTML = "";
+      for (const d of cams) {
+        const opt = document.createElement("option");
+        opt.value = d.deviceId;
+        opt.textContent = d.label;
+        camSelect.appendChild(opt);
+      }
+    };
+
+    micSelect.addEventListener("change", () => {
+      this.avClient?.switchDevice("audioinput", micSelect.value);
+    });
+    camSelect.addEventListener("change", () => {
+      this.avClient?.switchDevice("videoinput", camSelect.value);
+    });
+
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.dropdown.style.display = this.dropdown.style.display === "none" ? "block" : "none";
+      if (this.dropdown.style.display === "block") {
+        refreshDevices();
+      }
     });
     document.addEventListener("click", () => {
       this.dropdown.style.display = "none";

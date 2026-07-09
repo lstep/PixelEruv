@@ -18,6 +18,12 @@ export interface AvParticipant {
 export type AvParticipantsHandler = (participants: Map<string, AvParticipant>) => void;
 export type AvAudioBlockedHandler = (blocked: boolean) => void;
 
+export interface AvDeviceInfo {
+  deviceId: string;
+  label: string;
+  kind: "audioinput" | "videoinput";
+}
+
 export class AvClient {
   private room: Room | null = null;
   private currentRoom: string | null = null;
@@ -136,6 +142,34 @@ export class AvClient {
 
   isCameraEnabled(): boolean {
     return this.cameraEnabled;
+  }
+
+  // getDevices enumerates available audio/video input devices. Requires
+  // microphone/camera permission to have been granted for labels to be
+  // populated (browsers hide labels until permission is given).
+  async getDevices(kind: "audioinput" | "videoinput"): Promise<AvDeviceInfo[]> {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+      .filter((d) => d.kind === kind)
+      .map((d) => ({
+        deviceId: d.deviceId,
+        label: d.label || (kind === "audioinput" ? "Microphone" : "Camera"),
+        kind,
+      }));
+  }
+
+  // switchDevice changes the active mic or camera. If a room is connected,
+  // uses room.switchActiveDevice to swap on the fly. Otherwise stores the
+  // deviceId for use when the next room connects.
+  async switchDevice(kind: "audioinput" | "videoinput", deviceId: string): Promise<void> {
+    if (this.room) {
+      try {
+        await this.room.switchActiveDevice(kind, deviceId);
+      } catch (err) {
+        console.warn(`AvClient: switchDevice ${kind} failed:`, err);
+      }
+    }
   }
 
   // handleTokenFrame processes an AvTokenFrame from the server. On "join",
