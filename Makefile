@@ -1,4 +1,4 @@
-.PHONY: proto build web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend debug-pocketbase
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend debug-pocketbase
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -40,8 +40,22 @@ build:
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
 
+# Sync root assets into frontend/public/ so Vite serves them in dev and bundles
+# them into dist/web/. The root maps/ and spritesheets/ directories are the
+# authoritative sources; frontend/public/assets/maps and frontend/public/sprites
+# are generated copies.
+sync-assets: sync-maps sync-sprites
+
+sync-maps:
+	@mkdir -p frontend/public/assets/maps
+	cp -R maps/. frontend/public/assets/maps/
+
+sync-sprites:
+	@mkdir -p frontend/public/sprites
+	cp -R spritesheets/. frontend/public/sprites/
+
 # Build frontend static assets into dist/web/
-web:
+web: sync-assets
 	cd frontend && npx vite build
 
 # Stage Docker support files, compose, and migrations into dist/.
@@ -87,7 +101,7 @@ dist-macos: build web dist-stage
 	@echo "==> dist/ built for darwin/arm64. Binaries run natively on macOS."
 	@echo "    Run Go services directly from dist/bin/; use Docker for nats/pocketbase/dex/livekit."
 
-up:
+up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build
 
 down:
@@ -137,6 +151,6 @@ debug-stop:
 
 # Start the Vite dev server with frontend OTel enabled.
 # Traces go to /v1/traces (proxied to motel by Vite) to avoid CORS.
-debug-frontend:
+debug-frontend: sync-assets
 	@echo "==> frontend at http://localhost:5173 (OTel enabled, traces proxied to $(OTEL_ENDPOINT))"
 	cd frontend && VITE_OTEL_ENABLED=true VITE_OTEL_ENDPOINT=/v1/traces npx vite

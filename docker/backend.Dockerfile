@@ -31,7 +31,7 @@ FROM alpine:3.20 AS worldsim
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/worldsim /usr/local/bin/worldsim
 COPY --from=builder /out/seed-sprites /usr/local/bin/seed-sprites
-COPY frontend/public/sprites /sprites
+COPY spritesheets /sprites
 ENV SPRITES_DIR=/sprites
 ENTRYPOINT ["worldsim"]
 

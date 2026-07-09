@@ -11,8 +11,8 @@ Characters come from the limezu **Modern Interiors** pack:
 `assets/moderninteriors-win/2_Characters/`. We use the 32px legacy single
 character sheets (`Old/Single_Characters_Legacy/32x32/`) as the art source.
 
-The in-game sheets are `frontend/public/sprites/char_0.png` … `char_5.png`,
-each **768×192** px.
+The in-game sheets are `spritesheets/char_0.png` … `char_5.png` (copied to
+`frontend/public/sprites/` by `make`), each **768×192** px.
 
 ## The key quirk: characters are ~48px tall, not 32px
 
