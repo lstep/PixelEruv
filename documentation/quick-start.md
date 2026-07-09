@@ -158,11 +158,42 @@ export LIVEKIT_NODE_IP=192.168.1.10
 `LIVEKIT_PUBLIC_URL` (the WebSocket URL the browser's LiveKit SDK uses) is
 already driven by `PUBLIC_HOST` (section 3b) — no separate edit needed. If
 you proxy LiveKit's signaling WebSocket through a host nginx (section 5c),
-override `LIVEKIT_PUBLIC_URL` in `docker-compose.yml` to the proxied `wss://`
-URL instead.
+override `LIVEKIT_PUBLIC_URL` in `docker-compose.yml` to the proxied path,
+e.g. `ws://pixeleruv.example.com/livekit` (the frontend auto-upgrades
+`ws://` → `wss://` on HTTPS pages — see section 5c).
 
 > The UDP media range `50000-50020` must also be reachable by browsers —
-> open it in the firewall, or proxy via nginx's `stream` module.
+> open it in the firewall, or proxy via nginx's `stream` module. See
+> **Required open ports** below for the full port list.
+
+### 3d. Environment variables reference
+
+All deploy-relevant variables can be set either on the command line or in a
+`.env` file next to `docker-compose.yml` (compose reads it automatically, so
+you don't need to repeat them on every `docker compose up`):
+
+```bash
+cat > .env <<'EOF'
+PUBLIC_HOST=pixeleruv.example.org
+LIVEKIT_NODE_IP=203.0.113.10
+LIVEKIT_PUBLIC_URL=ws://pixeleruv.example.org/livekit
+EOF
+docker compose up --build -d
+```
+
+| Variable | Default | Set on | Purpose |
+|----------|---------|--------|---------|
+| `PUBLIC_HOST` | `localhost` | compose | Hostname/IP remote browsers use. Drives the self-signed TLS cert SAN, the Dex redirect URI, and the default `LIVEKIT_PUBLIC_URL`. |
+| `LIVEKIT_PUBLIC_URL` | `ws://${PUBLIC_HOST:-localhost}:7880` | `ext-av` in compose | WebSocket URL the browser's LiveKit SDK connects to. Override to the proxied `ws://<host>/livekit` path when proxying signaling through nginx (§5c). The frontend auto-upgrades `ws://`→`wss://` on HTTPS. |
+| `LIVEKIT_NODE_IP` | `127.0.0.1` | compose (LiveKit `--node-ip`) | IP LiveKit advertises in WebRTC ICE candidates. Must be routable from the browser — set to the host's public/LAN IP for remote A/V. |
+| `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `devkey` / `devsecret…` | `ext-av` in compose **and** `docker/livekit.yaml` | Shared secret for signing LiveKit join tokens. **Must match** in both places. Rotate for production (§3a). |
+| `TLS_HOSTS` | `localhost,127.0.0.1` | `frontend` in compose | Comma-separated DNS/IP entries for the self-signed cert's SAN. `PUBLIC_HOST` is auto-appended at startup, so you usually don't set this directly. |
+| `MAP_ID` | `map1` | `worldsim` + `ext-av` + `ext-walls` in compose | Name of the PocketBase `maps` record to load. |
+| `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `pocketbase` + `worldsim` in compose | PocketBase superuser credentials. **Change before exposing to the internet.** |
+
+> Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
+> deploy. The rest have working defaults; override them for production
+> hardening (secrets) or non-standard topologies (proxied LiveKit).
 
 ---
 
@@ -344,12 +375,18 @@ curl -sk https://pixeleruv.example.org/ | head
 
 ### 5c. (Optional) Proxy LiveKit signaling through nginx
 
-If you'd rather not expose `:7880` directly, add a `location` for the
-LiveKit WebSocket and point `LIVEKIT_PUBLIC_URL` at it:
+The in-container nginx already proxies `/livekit/` → the LiveKit SFU, so if
+your host nginx forwards everything to `:4080` (the single-file config in
+section 5, or `docker/dist/example.nginx.conf`), LiveKit signaling is already
+TLS-terminated same-origin — no extra `location` block needed on the host.
+
+If you'd rather not expose `:7880` directly and want a host-level `location`
+instead, use a trailing slash on both the location and `proxy_pass` so the
+`/livekit` prefix is stripped (the LiveKit SDK appends `/rtc/v1` to the URL):
 
 ```nginx
-    location /livekit {
-        proxy_pass         http://127.0.0.1:7880;
+    location /livekit/ {
+        proxy_pass         http://127.0.0.1:7880/;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade    $http_upgrade;
         proxy_set_header   Connection $connection_upgrade;
@@ -357,10 +394,74 @@ LiveKit WebSocket and point `LIVEKIT_PUBLIC_URL` at it:
     }
 ```
 
-Then set `LIVEKIT_PUBLIC_URL: "wss://pixeleruv.example.com/livekit"` in
-`docker-compose.yml`. The UDP media range (`50000-50020`) still needs to
-reach the host directly — open it in the firewall or proxy via nginx's
-`stream` module.
+Then set `LIVEKIT_PUBLIC_URL: "ws://pixeleruv.example.com/livekit"` in
+`docker-compose.yml`. The frontend auto-upgrades `ws://` → `wss://` when the
+page is served over HTTPS, so the LiveKit SDK connects to
+`wss://pixeleruv.example.com/livekit/rtc/v1` — same origin, no mixed-content
+block. (You can also write `wss://` directly in `LIVEKIT_PUBLIC_URL`; either
+works.) The UDP media range (`50000-50020`) still needs to reach the host
+directly — open it in the firewall or proxy via nginx's `stream` module.
+
+A ready-to-copy host config is provided at
+`docker/dist/example.nginx.conf` — copy it to
+`/etc/nginx/sites-available/`, symlink into `sites-enabled/`, edit the domain
+and cert paths, and reload nginx.
+
+---
+
+## 5d. Required open ports
+
+For the stack to work end-to-end, the browser must be able to reach these
+ports on the host. With a host nginx terminating TLS (section 5), only
+**443/tcp** and the **LiveKit UDP media range** need to be public; everything
+else stays on localhost.
+
+| Port | Proto | Direction | Purpose | Must be public? |
+|------|-------|-----------|---------|-----------------|
+| 443 | TCP | host → browser | HTTPS (frontend + `/ws` + `/dex/` + `/api/` + `/livekit/`, all proxied by nginx) | **Yes** (or 4043 for the self-signed-cert path without a host nginx) |
+| 80 | TCP | host → browser | HTTP → HTTPS redirect | Yes (redirect only; can be dropped if you don't want auto-redirect) |
+| 4043 | TCP | host → browser | In-container HTTPS (self-signed cert) — use this instead of 443 when you have no host nginx | Only if not using a host nginx |
+| 4080 | TCP | host → browser | In-container HTTP — localhost only (PKCE auth needs a secure context) | No |
+| 50000-50020 | UDP | host ↔ browser | **LiveKit WebRTC media (audio/video).** Browsers send and receive RTP here. | **Yes** — this is the one that bites people |
+| 7880 | TCP | host → browser | LiveKit signaling (raw `ws://`) — **not needed** if you proxy `/livekit/` through nginx (§5c) | Only if not proxying through nginx |
+| 7881 | TCP | host ↔ browser | LiveKit WebRTC-over-TCP fallback (only used if UDP fails) | Optional — open if UDP is blocked and you want TCP fallback |
+| 8090 | TCP | host → admin | PocketBase admin UI (`/_/`) — not proxied by the container nginx | No — SSH tunnel instead (`ssh -L 8090:127.0.0.1:8090 …`) |
+| 5556 | TCP | — | Dex (container-internal; proxied as `/dex/` by nginx) | No |
+| 8081 | TCP | — | Pusher (container-internal; proxied as `/ws` by nginx) | No |
+| 4222 | TCP | — | NATS (container-internal) | No |
+
+### The UDP 50000-50020 warning
+
+This is the most common reason A/V fails on a remote deploy. LiveKit's
+signaling can connect fine over `wss://` (fixed in §5c), but the actual
+audio/video media flows over **UDP** in this range, and it must be reachable
+**both inbound and outbound** from the browser's perspective.
+
+Symptoms when it's blocked:
+- Signaling connects (no mixed-content error), but no video/audio appears.
+- Browser console: ICE connection stays in `checking` then fails.
+- `docker compose logs ext-av` shows joins, but `livekit` logs show no media.
+
+Fixes, in order of preference:
+1. **Open UDP 50000-50020 in the host firewall** (and any cloud security
+   group). This is the simplest fix.
+   ```bash
+   # ufw (Ubuntu)
+   sudo ufw allow 50000:50020/udp
+
+   # iptables
+   sudo iptables -A INPUT -p udp --dport 50000:50020 -j ACCEPT
+   ```
+2. **Run a TURN server** (e.g. `coturn`) if the host is behind NAT or UDP is
+   blocked on the client side. LiveKit supports external TURN; configure it
+   in `docker/livekit.yaml` under `rtc.turn`. Out of scope for this guide.
+3. **Fall back to WebRTC-over-TCP** by opening `7881/tcp` — slower and not
+   ideal for real-time media, but works when UDP is impossible.
+
+> The range is configurable in `docker/livekit.yaml`
+> (`rtc.port_range_start`/`port_range_end`) and must match the
+> `docker-compose.yml` port mapping. Narrowing it reduces concurrent A/V
+> capacity; widening it requires updating both files and the firewall rule.
 
 ---
 
