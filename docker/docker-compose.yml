@@ -151,7 +151,6 @@ services:
     ports:
       - "7880:7880"   # WebSocket signaling
       - "7881:7881"   # TCP (fallback)
-      - "7882:7882/udp" # UDP (WebRTC media)
       - "50000-50020:50000-50020/udp" # WebRTC ICE range
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
@@ -171,8 +170,10 @@ services:
       POCKETBASE_URL: "http://pocketbase:8090"
       MAP_ID: "map1"
       LIVEKIT_URL: "ws://livekit:7880"
-      # Browser-facing URL (host-exposed port, not Docker-internal).
-      LIVEKIT_PUBLIC_URL: "ws://${PUBLIC_HOST:-localhost}:7880"
+      # Browser-facing URL (host-exposed port, not Docker-internal). Defaults
+      # to ws://<PUBLIC_HOST>:7880; override in .env to proxy through nginx
+      # (e.g. ws://<host>/livekit — the frontend upgrades to wss:// on HTTPS).
+      LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://${PUBLIC_HOST:-localhost}:7880}"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
     restart: unless-stopped
