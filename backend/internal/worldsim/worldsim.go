@@ -173,7 +173,8 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 	// first run. Non-fatal: if PB is down or seeding fails, worldsim still
 	// starts and the frontend falls back to static char_0..char_4 sheets.
 	// SPRITES_DIR defaults to ./sprites (bundled in dist/) for production; for
-	// local dev, set SPRITES_DIR=frontend/public/sprites.
+	// local dev, run `make sync-assets` and set SPRITES_DIR=frontend/public/sprites
+	// (or point directly at spritesheets/ when running the binary outside Vite).
 	spritesDir := os.Getenv("SPRITES_DIR")
 	if spritesDir == "" {
 		spritesDir = "./sprites"

@@ -1,6 +1,6 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-09 (session map1-default)
+Last updated: 2026-07-09 (session assets-reorg)
 
 ## Overview
 
@@ -13,11 +13,13 @@ worldsim can seed the `sprite_bases` catalog on first run. The `docker/dist/`
 templates are now tracked (`.gitignore` previously ignored them due to an
 overly broad `dist/` pattern).
 
-Default map: `map1` (the `assets/map1.json` office map). The `test-map.json`
-starter file has been removed. The frontend now loads the map from PocketBase
-only; there is no static fallback. Upload `assets/map1.json` and its tileset
-PNGs to a `maps` record named `map1` before starting the app. `MAP_ID` and
-`VITE_MAP_NAME` default to `map1`.
+Default map: `map1` (the `maps/default-map.json` office map). The
+`test-map.json` starter file has been removed. Map sources (tmx, json and
+tileset PNGs) live in `maps/`; spritesheets live in `spritesheets/`. `make`
+copies them to `frontend/public/assets/maps` and `frontend/public/sprites` for
+the Vite dev server and the `dist/` build. The frontend loads the map from
+PocketBase only — upload `maps/default-map.json` and its tileset PNGs to a
+`maps` record named `map1` (or the configured `MAP_ID`/`VITE_MAP_NAME`).
 
 ## Current architecture
 
@@ -113,7 +115,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - [x] Frontend: `AvClient` (LiveKit SDK wrapper, lazy-loaded), `AvOverlay` (DOM video tiles + HUD)
 - [x] Frontend: spatial volume (linear falloff, 0 at 10 tiles), billboarded video tiles, mic/camera HUD
 - [x] Infrastructure: LiveKit + ext-av in docker-compose, `docker/livekit.yaml` config
-- [x] Map: `meeting-room-1` zone marked `av_enabled=true` in `assets/map1.json`
+- [x] Map: `meeting-room-1` zone marked `av_enabled=true` in `maps/default-map.json`
 - [x] Fix: AvClient retry (3 attempts) on transient ICE failure + unhandled promise rejection fix
 - [x] Fix: upgrade LiveKit server v1.9.8 → v1.13.2 (protocol 17, `/rtc/v1` path, data tracks enabled)
 - [x] Fix: reduce UDP ICE port range 50000-50100 → 50000-50020 (Docker Desktop UDP forwarding reliability)
@@ -220,7 +222,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 | 2026-07-06 | `LIVEKIT_PUBLIC_URL` separate from `LIVEKIT_URL` | ext-av (in Docker) connects to `ws://livekit:7880` (Docker-internal), but the browser needs `ws://localhost:7880` (host-exposed). ext-av sends `LIVEKIT_PUBLIC_URL` in the token frame so the browser can reach the SFU. |
 | 2026-07-06 | LiveKit SDK lazy-loaded in frontend | `livekit-client` is dynamically imported on first A/V token, keeping the main bundle small (~1.5MB vs +2MB if statically imported). |
 | 2026-07-06 | Pin livekit image to v1.9.8 (not `latest`) + fixed config schema | `livekit/livekit-server:latest` drifted to a config schema that rejects top-level `tcp_port`/`udp_port`; the SFU crash-looped silently. `tcp_port` now lives under `rtc:`; top-level `udp_port` removed. Pinning prevents future drift. |
-| 2026-07-06 | Re-upload map to PocketBase after editing assets/map1.json | ext-av reads the map from PocketBase, not the repo. The committed `av_enabled` property on `meeting-room-1` was invisible until the map was re-uploaded (superuser PATCH on the `maps` record). Workflow: edit in Tiled → save to `assets/` → re-upload file to PocketBase → worldsim hot-reloads within 30s → ext-av/ext-walls re-read. |
+| 2026-07-06 | Re-upload map to PocketBase after editing maps/default-map.json | ext-av reads the map from PocketBase, not the repo. The committed `av_enabled` property on `meeting-room-1` was invisible until the map was re-uploaded (superuser PATCH on the `maps` record). Workflow: edit in Tiled → save to `maps/` → re-upload file to PocketBase → worldsim hot-reloads within 30s → ext-av/ext-walls re-read. |
 | 2026-07-07 | Despawn queues a DestroyEntity (not just deletes from ECS) | `despawnClient` deleted the entity from `s.entities` but never told other clients, so avatars lingered on screen after a player closed their browser. The existing `destroyedBaseEntities` queue (map-reload destroys) is generalized to `destroyedEntities` and reused for player despawns — drained each tick after replication. |
 | 2026-07-07 | Frontend no longer force-redirects to Dex login before boot | Needed for guest browsing. `main.ts` now always boots the game; a floating `TopMenu` shows Login/Logout based on `isLoggedIn()`. |
 | 2026-07-07 | Guest = empty `id_token`, not the `"dev"` sentinel | `"dev"` was already used to mean "no Dex configured" (pusher ignores the token value entirely in that branch). Reusing it for guests would be ambiguous. `WsClient` now sends `""` when there's no stored token; pusher treats an empty token as a guest only when Dex *is* configured, and still rejects a non-empty-but-invalid token. |

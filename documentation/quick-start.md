@@ -58,7 +58,7 @@ On the host, the layout should look like:
 ~/pixeleruv/
 ├── docker-compose.yml
 ├── bin/                  # pusher, worldsim, ext-* (linux/amd64)
-├── web/                  # built frontend + maps/ + sprites/
+├── web/                  # built frontend (assets/maps/, sprites/, fonts/)
 ├── docker/               # Dockerfiles, nginx.conf, livekit.yaml, dex/, entrypoint scripts
 └── pb_migrations/        # PocketBase collection schemas
 ```
@@ -363,9 +363,10 @@ PocketBase record changes.
      `entity_type` or `owner_extension`).
 3. Export as **JSON** (`File → Export As… → *.json`).
 
-A starter map and tilesets ship in `assets/` (`map1.json`, `map1.tmx`,
-`Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). Upload them to
-PocketBase; the frontend loads the map from PocketBase, not from static files.
+A starter map and tilesets ship in `maps/` (`default-map.json`, `map1.json`,
+`map1.tmx`, `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). Upload
+`maps/default-map.json` and its tileset PNGs to PocketBase; the frontend loads
+the map from PocketBase, not from static files.
 
 ### 7b. Upload to PocketBase
 
@@ -399,7 +400,7 @@ Within ~30s worldsim detects the new filename, publishes `map.updated` over
 NATS, and `ext-walls` / `ext-av` re-read the map and re-register triggers.
 No restart needed.
 
-> Editing the committed `assets/map1.json` in the repo does **not** update
+> Editing the committed `maps/default-map.json` in the repo does **not** update
 > the running world — the worldsim reads from PocketBase, not the
 > filesystem. Always re-upload to PocketBase after editing.
 
@@ -421,21 +422,23 @@ populated on first boot.
 **Docker (`make up`):** the worldsim image bundles the sprites at `/sprites`
 and sets `SPRITES_DIR=/sprites` automatically. No configuration needed.
 
-**Native / local dev:** the sprites live at `frontend/public/sprites/` in the
-repo. Set `SPRITES_DIR` before starting worldsim:
+**Native / local dev:** the authoritative sprites live in `spritesheets/` at
+the repo root. `make` copies them to `frontend/public/sprites/` so the dev
+server and `dist` builds have them. Set `SPRITES_DIR` before starting
+worldsim:
 
 ```bash
 SPRITES_DIR=frontend/public/sprites ./dist/bin/worldsim
 ```
 
-For the self-contained `dist/` deployment, `make dist-*` stages sprites into
-`dist/sprites/`, so the default `SPRITES_DIR=./sprites` works when running
-from the `dist/` directory.
+For the self-contained `dist/` deployment, `make dist-*` stages spritesheets
+into `dist/sprites/`, so the default `SPRITES_DIR=./sprites` works when
+running from the `dist/` directory.
 
 ### 8b. Adding new spritesheets later
 
-Drop new 768×192 PNGs into the sprites directory and run the seed-sprites CLI
-with `-force`:
+Drop new 768×192 PNGs into `spritesheets/` at the repo root and run the
+seed-sprites CLI with `-force`:
 
 ```bash
 # Native / local dev:

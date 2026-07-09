@@ -42,7 +42,11 @@ The `maps` collection is created automatically by the migration in
 
 2. **Create an admin account** — open `http://localhost:8090/_/` in a browser and create the first admin user.
 
-3. **Author or export your map** — in Tiled, use File → Export As… and choose `*.json` (Phaser loads JSON, not `.tmx`). The tileset must be **embedded inline** in the JSON (no external `source` field) — Phaser 4 does not support external tileset references.
+3. **Author or export your map** — map sources live in the repo root `maps/`
+   directory. In Tiled, use File → Export As… and choose `*.json` (Phaser loads
+   JSON, not `.tmx`). The tileset must be **embedded inline** in the JSON (no
+   external `source` field) — Phaser 4 does not support external tileset
+   references.
 
 4. **Create a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record":
    - `name`: `map1` (or whatever `VITE_MAP_NAME` is set to)
