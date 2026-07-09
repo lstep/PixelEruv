@@ -271,11 +271,75 @@ server {
 }
 ```
 
+A complete single-file variant — one `server` block handling both HTTP
+(redirected to HTTPS) and HTTPS, with access/error logging, Cloudflare
+real-IP forwarding, WebSocket upgrade, and streaming-friendly proxy
+settings (no buffering, no chunked, unlimited body size):
+
+```nginx
+server {
+        listen 0.0.0.0:443 ssl;
+        http2 on;
+
+        listen 80;
+
+        server_name pixeleruv.example.org;
+        root /var/www/blank;
+
+        if ($https != 'on') {
+           rewrite ^/(.*)$ https://pixeleruv.example.org/$1 permanent;
+        }
+
+        # SSL
+        ssl_certificate /etc/nginx/ssl/example.org.crt;
+        ssl_certificate_key /etc/nginx/ssl/example.org.key;
+
+        # logging
+        access_log /var/log/nginx/pixeleruv.access.log;
+        error_log /var/log/nginx/pixeleruv.error.log warn;
+
+        # reverse proxy
+        location / {
+                proxy_pass http://localhost:4080;
+                proxy_http_version 1.1;
+                proxy_set_header Upgrade $http_upgrade;
+                proxy_set_header Connection "upgrade";
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                proxy_set_header X-Forwarded-Proto $scheme;
+                proxy_set_header CF-Connecting-IP $http_cf_connecting_ip; # only set if this nginx sits behind Cloudflare: real visitor IP from Cloudflare's edge
+                proxy_read_timeout 3600s;
+
+                chunked_transfer_encoding off;
+                proxy_buffering off;
+                proxy_cache off;
+        }
+
+        client_max_body_size 0;
+        location /robots.txt { return 200 "User-agent: *\nDisallow: /"; }
+}
+```
+
+> Notes on this variant:
+> - It forwards to `http://localhost:4080` (the in-container nginx's HTTP
+>   endpoint), which already proxies `/ws` → pusher, `/dex/` → dex, and
+>   `/api/` → pocketbase same-origin. No need to re-implement those
+>   `location` blocks here.
+> - `proxy_buffering off` + `chunked_transfer_encoding off` matter for the
+>   WebSocket and any streaming responses; keep them off.
+> - `client_max_body_size 0` disables the body limit — needed for map
+>   uploads to PocketBase through the proxy.
+> - The `CF-Connecting-IP` header is only meaningful when this nginx sits
+>   behind Cloudflare; remove that line otherwise.
+> - Replace `pixeleruv.example.org` and the cert paths with your real
+>   domain and certificate files.
+
 Reload and verify:
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx
-curl -sk https://pixeleruv.example.com/ | head
+curl -sk https://pixeleruv.example.org/ | head
 ```
 
 ### 5c. (Optional) Proxy LiveKit signaling through nginx
