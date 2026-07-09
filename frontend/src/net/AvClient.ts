@@ -35,18 +35,53 @@ export class AvClient {
     this.onParticipantsChange = handler;
   }
 
-  setMicMuted(muted: boolean): void {
+  // setMicMuted toggles the local microphone. When no room is connected and
+  // the user is unmuting, we pre-request mic permission via getUserMedia so
+  // the browser prompt fires at click time (not later, when proximity joins
+  // a LiveKit room and would interrupt the user). On denial the flag reverts.
+  async setMicMuted(muted: boolean): Promise<void> {
+    if (!muted && !this.room) {
+      try {
+        await this.requestPermission("audio");
+      } catch {
+        return; // denied — keep previous mute state
+      }
+    }
     this.micMuted = muted;
     if (this.room) {
       this.room.localParticipant.setMicrophoneEnabled(!muted);
     }
   }
 
-  setCameraEnabled(enabled: boolean): void {
+  // setCameraEnabled toggles the local camera. Same pre-prompt rationale as
+  // setMicMuted: trigger the permission prompt at click time when alone, so
+  // proximity-driven room joins don't surface an interrupting popup.
+  async setCameraEnabled(enabled: boolean): Promise<void> {
+    if (enabled && !this.room) {
+      try {
+        await this.requestPermission("video");
+      } catch {
+        return; // denied — keep previous camera-off state
+      }
+    }
     this.cameraEnabled = enabled;
     if (this.room) {
       this.room.localParticipant.setCameraEnabled(enabled);
     }
+  }
+
+  // requestPermission triggers the browser's mic/camera permission prompt by
+  // acquiring the matching media stream and immediately stopping its tracks.
+  // This caches the grant so later LiveKit publishing reuses it without a
+  // prompt. Resolves silently when mediaDevices is unavailable (insecure
+  // context), falling back to LiveKit's connect-time prompt.
+  private async requestPermission(kind: "audio" | "video"): Promise<void> {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: kind === "audio",
+      video: kind === "video",
+    });
+    for (const t of stream.getTracks()) t.stop();
   }
 
   isMicMuted(): boolean {
