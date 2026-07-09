@@ -718,11 +718,12 @@ export class GameScene extends Phaser.Scene {
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     // Connect to Pusher via WebSocket.
-    // In Docker (nginx on 8080): ws://host:8080/ws (proxied to pusher:8081)
+    // In Docker (nginx on 8080): wss://host/ws over HTTPS, ws://host/ws over HTTP
     // In dev (vite on 5173): ws://host:8081/ws (direct to pusher)
+    const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
     const wsUrl = window.location.port === "5173"
-      ? `ws://${window.location.hostname}:8081/ws`
-      : `ws://${window.location.host}/ws`;
+      ? `${wsScheme}://${window.location.hostname}:8081/ws`
+      : `${wsScheme}://${window.location.host}/ws`;
     console.log("connecting to", wsUrl);
     this.ws = new WsClient(wsUrl);
     // A/V client + DOM overlay for video tiles. Mic/camera HUD controls
