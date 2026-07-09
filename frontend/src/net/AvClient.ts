@@ -114,7 +114,6 @@ export class AvClient {
     this.room = new lk.Room({ adaptiveStream: true, dynacast: true });
     this.currentRoom = roomName;
     this.participants.clear();
-
     // Set up event handlers before connecting.
     this.room.on(lk.RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
       this.updateParticipant(participant.identity, participant);
@@ -129,6 +128,17 @@ export class AvClient {
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
       this.updateParticipant(participant.identity, participant);
     });
+
+    // Upgrade the LiveKit signaling URL to a secure scheme when the page is
+    // served over HTTPS. Browsers block insecure ws:// from an HTTPS page
+    // (mixed content), so a server-provided ws:// URL would fail. The LiveKit
+    // SDK derives both the signaling WebSocket and the /rtc/v1/validate fetch
+    // from this URL's scheme, so upgrading here fixes both.
+    if (window.location.protocol === "https:" && url.startsWith("ws://")) {
+      url = "wss://" + url.slice("ws://".length);
+    } else if (window.location.protocol === "https:" && url.startsWith("http://")) {
+      url = "https://" + url.slice("http://".length);
+    }
 
     try {
       await this.room.connect(url, token);
