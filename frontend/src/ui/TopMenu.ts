@@ -20,6 +20,7 @@ export class TopMenu {
   private avClient: AvClient | null = null;
   private chatPanel: ChatPanel | null = null;
   private chatBtn: HTMLButtonElement;
+  private audioBtn: HTMLButtonElement;
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
 
@@ -45,6 +46,18 @@ export class TopMenu {
       this.updateAvLabels();
     });
     this.container.appendChild(this.camBtn);
+
+    // "Enable Audio" button — shown when the browser's autoplay policy
+    // blocks remote audio playback. Clicking calls room.startAudio()
+    // within the user gesture, satisfying the browser requirement.
+    this.audioBtn = document.createElement("button");
+    this.audioBtn.textContent = "🔇 Enable Audio";
+    this.audioBtn.title = "Click to enable remote audio playback";
+    this.audioBtn.style.cssText = PILL_STYLE + "display:none;background:#c0392b;";
+    this.audioBtn.addEventListener("click", async () => {
+      if (this.avClient) await this.avClient.startAudio();
+    });
+    this.container.appendChild(this.audioBtn);
 
     // Chat toggle button, hidden until setChatPanel is called.
     this.chatBtn = document.createElement("button");
@@ -150,6 +163,11 @@ export class TopMenu {
     this.avClient = avClient;
     this.micBtn.style.display = "block";
     this.camBtn.style.display = "block";
+    // Wire the audio-blocked callback so the "Enable Audio" button
+    // appears when the browser blocks autoplay.
+    avClient.setAudioBlockedHandler((blocked) => {
+      this.audioBtn.style.display = blocked ? "block" : "none";
+    });
     this.updateAvLabels();
   }
 
@@ -159,6 +177,7 @@ export class TopMenu {
     this.avClient = null;
     this.micBtn.style.display = "none";
     this.camBtn.style.display = "none";
+    this.audioBtn.style.display = "none";
   }
 
   // setChatPanel wires the chat sidebar and shows the Chat toggle button.
