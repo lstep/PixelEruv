@@ -271,10 +271,10 @@ server {
 }
 ```
 
-A complete single-file variant — one `server` block handling both HTTP
-(redirected to HTTPS) and HTTPS, with access/error logging, Cloudflare
-real-IP forwarding, WebSocket upgrade, and streaming-friendly proxy
-settings (no buffering, no chunked, unlimited body size):
+A complete single-file variant — two `server` blocks (HTTP redirects to
+HTTPS, HTTPS handles SSL and proxying), with access/error logging,
+Cloudflare real-IP forwarding, WebSocket upgrade, and streaming-friendly
+proxy settings (no buffering, no chunked, unlimited body size):
 
 ```nginx
 server {
