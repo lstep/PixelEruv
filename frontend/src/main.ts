@@ -1,9 +1,9 @@
 import Phaser from "phaser";
 import { GameScene } from "./scenes/GameScene";
 import { CharacterSelectScene, shouldShowCharacterSelect } from "./scenes/CharacterSelectScene";
-import { initOtel, tracer } from "./otel";
-import { loadMapAssets, type MapAssets } from "./mapLoader";
-import { loadSpriteBases, type SpriteBaseAsset } from "./spriteLoader";
+import { initOtel } from "./otel";
+import { loadMapAssets } from "./mapLoader";
+import { loadSpriteBases } from "./spriteLoader";
 import { handleAuthCallback } from "./auth";
 import { TopMenu } from "./ui/TopMenu";
 import { ChatPanel } from "./ui/ChatPanel";
@@ -27,8 +27,8 @@ const config: Phaser.Types.Core.GameConfig = {
 };
 
 // Fetch map assets from PocketBase before starting Phaser so that GameScene's
-// preload() has the URLs ready. Falls back to static files in /maps/ if
-// PocketBase is unavailable (e.g. not yet set up in dev).
+// preload() has the URLs ready. PocketBase must be available; there is no
+// static fallback.
 async function bootstrap(): Promise<void> {
   // Handle OAuth callback from Dex.
   if (window.location.pathname === "/auth/callback") {
@@ -40,24 +40,12 @@ async function bootstrap(): Promise<void> {
   const chatPanel = new ChatPanel();
   topMenu.setChatPanel(chatPanel);
 
-  let mapAssets: MapAssets | null = null;
-  const span = tracer.startSpan("map.load", { attributes: { "map.source": "pocketbase" } });
-  try {
-    mapAssets = await loadMapAssets();
-    span.setAttribute("map.fallback", false);
-    console.log("loaded map from PocketBase");
-  } catch (err) {
-    span.setAttribute("map.fallback", true);
-    span.recordException(err as Error);
-    console.warn("PocketBase map load failed, falling back to static files:", err);
-  } finally {
-    span.end();
-  }
+  const mapAssets = await loadMapAssets();
+  console.log("loaded map from PocketBase");
 
-  // Fetch the sprite catalog from PocketBase (parallel with map load would be
-  // ideal, but keeping it sequential matches the existing pattern and the
-  // catalog is small). Empty array = PB unavailable; GameScene falls back to
-  // static char_0..char_4.
+  // Fetch the sprite catalog from PocketBase. Empty array means the
+  // sprite_bases collection has not been seeded yet; the default char_0..char_4
+  // sheets are always available as a baseline.
   const spriteBases = await loadSpriteBases();
 
   const game = new Phaser.Game(config);

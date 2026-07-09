@@ -364,8 +364,8 @@ PocketBase record changes.
 3. Export as **JSON** (`File → Export As… → *.json`).
 
 A starter map and tilesets ship in `assets/` (`map1.json`, `map1.tmx`,
-`Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`) — `make web`
-copies the JSON and PNGs to `dist/web/maps/` for the static fallback.
+`Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). Upload them to
+PocketBase; the frontend loads the map from PocketBase, not from static files.
 
 ### 7b. Upload to PocketBase
 

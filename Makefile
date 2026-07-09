@@ -1,4 +1,4 @@
-.PHONY: proto build sync-map web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend debug-pocketbase
+.PHONY: proto build web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend debug-pocketbase
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -40,15 +40,8 @@ build:
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
 
-# Copy the canonical map assets from assets/ into frontend/public/maps/ so Vite
-# serves them in dev and bundles them into dist/web/.
-sync-map:
-	cp assets/map1.json frontend/public/maps/map1.json
-	cp assets/Room_Builder_Office_32x32.png frontend/public/maps/
-	cp assets/Modern_Office_32x32.png frontend/public/maps/
-
 # Build frontend static assets into dist/web/
-web: sync-map
+web:
 	cd frontend && npx vite build
 
 # Stage Docker support files, compose, and migrations into dist/.
@@ -143,6 +136,6 @@ debug-stop:
 
 # Start the Vite dev server with frontend OTel enabled.
 # Traces go to /v1/traces (proxied to motel by Vite) to avoid CORS.
-debug-frontend: sync-map
+debug-frontend:
 	@echo "==> frontend at http://localhost:5173 (OTel enabled, traces proxied to $(OTEL_ENDPOINT))"
 	cd frontend && VITE_OTEL_ENABLED=true VITE_OTEL_ENDPOINT=/v1/traces npx vite
