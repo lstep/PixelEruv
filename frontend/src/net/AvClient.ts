@@ -16,6 +16,7 @@ export interface AvParticipant {
 }
 
 export type AvParticipantsHandler = (participants: Map<string, AvParticipant>) => void;
+export type AvAudioBlockedHandler = (blocked: boolean) => void;
 
 export class AvClient {
   private room: Room | null = null;
@@ -30,9 +31,30 @@ export class AvClient {
   // Increments on each join attempt so stale retry loops can bail out
   // when a newer token frame supersedes them.
   private connectGeneration = 0;
+  // Notifies the UI when browser autoplay policy blocks audio playback.
+  private onAudioBlocked: AvAudioBlockedHandler | null = null;
+  // Debounce timer for "leave" events — delays disconnect so momentary
+  // proximity zone exits (2-tile radius) don't thrash the LiveKit room.
+  private leaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   setParticipantsHandler(handler: AvParticipantsHandler): void {
     this.onParticipantsChange = handler;
+  }
+
+  setAudioBlockedHandler(handler: AvAudioBlockedHandler): void {
+    this.onAudioBlocked = handler;
+  }
+
+  // startAudio resumes audio playback after the browser's autoplay policy
+  // blocked it. Must be called within a user gesture handler (click/tap).
+  async startAudio(): Promise<void> {
+    if (this.room) {
+      try {
+        await this.room.startAudio();
+      } catch (err) {
+        console.warn("AvClient: startAudio failed:", err);
+      }
+    }
   }
 
   // setMicMuted toggles the local microphone. When no room is connected and
@@ -50,6 +72,11 @@ export class AvClient {
     this.micMuted = muted;
     if (this.room) {
       this.room.localParticipant.setMicrophoneEnabled(!muted);
+      // Unmuting is a user gesture — proactively unlock audio playback
+      // in case the browser's autoplay policy blocked remote audio.
+      if (!muted) {
+        this.room.startAudio().catch(() => {});
+      }
     }
   }
 
@@ -93,8 +120,9 @@ export class AvClient {
   }
 
   // handleTokenFrame processes an AvTokenFrame from the server. On "join",
-  // it disconnects from any current room and connects to the new one. On
-  // "leave", it disconnects from the specified room.
+  // it connects to the new room (skipping if already connected to the same
+  // room). On "leave", it disconnects after a short debounce so momentary
+  // proximity zone exits don't thrash the LiveKit connection.
   async handleTokenFrame(msg: {
     action: string;
     room: string;
@@ -104,12 +132,34 @@ export class AvClient {
   }): Promise<void> {
     if (msg.action === "leave") {
       if (this.currentRoom === msg.room) {
-        await this.disconnect();
+        // Debounce: delay disconnect by 1.5s so a rapid re-join for the
+        // same (or a new) room can cancel it. With a 2-tile proximity
+        // radius, players briefly step out of range and back in within a
+        // few ticks — immediate disconnect would tear down the LiveKit
+        // room and require a fresh user gesture to re-enable audio.
+        if (this.leaveTimer) clearTimeout(this.leaveTimer);
+        const leavingRoom = msg.room;
+        this.leaveTimer = setTimeout(() => {
+          this.leaveTimer = null;
+          if (this.currentRoom === leavingRoom) {
+            this.disconnect();
+          }
+        }, 1500);
       }
       return;
     }
 
     if (msg.action === "join") {
+      // Cancel any pending leave — we're rejoining (possibly the same room).
+      if (this.leaveTimer) {
+        clearTimeout(this.leaveTimer);
+        this.leaveTimer = null;
+      }
+      // Skip if already connected to this room — avoids creating a new
+      // Room object and orphaning the old one's WebRTC/audio elements.
+      if (this.currentRoom === msg.room && this.room) {
+        return;
+      }
       // Disconnect from the current room before joining a new one.
       if (this.currentRoom && this.currentRoom !== msg.room) {
         await this.disconnect();
@@ -163,6 +213,13 @@ export class AvClient {
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
       this.updateParticipant(participant.identity, participant);
     });
+    // Browsers block audio playback not initiated by a user gesture. When
+    // LiveKit's auto-play is blocked, notify the UI so it can show an
+    // "Enable Audio" button (whose click calls room.startAudio()).
+    this.room.on(lk.RoomEvent.AudioPlaybackStatusChanged, () => {
+      const blocked = !this.room?.canPlaybackAudio;
+      this.onAudioBlocked?.(blocked);
+    });
 
     // Upgrade the LiveKit signaling URL to a secure scheme when the page is
     // served over HTTPS. Browsers block insecure ws:// from an HTTPS page
@@ -209,12 +266,17 @@ export class AvClient {
   }
 
   private async disconnect(): Promise<void> {
+    if (this.leaveTimer) {
+      clearTimeout(this.leaveTimer);
+      this.leaveTimer = null;
+    }
     if (this.room) {
       await this.room.disconnect();
       console.log(`AvClient: disconnected from room ${this.currentRoom}`);
       this.room = null;
       this.currentRoom = null;
       this.participants.clear();
+      this.onAudioBlocked?.(false);
       this.notifyChange();
     }
   }
