@@ -1,12 +1,17 @@
 # PixelEruv.o — Dashboard
 
-Last updated: 2026-07-07 (session 20)
+Last updated: 2026-07-09 (session fix/docker-dist-config)
 
 ## Overview
 
 2D top-down spatial MMO with OIDC authentication, persistent identity,
 extensible zone system, and first-party extensions. Kernel architecture
 (worldsim + pusher) + extensions communicating via NATS.
+
+Remote deployment note: the `dist/` backend image now bundles `sprites/` so
+worldsim can seed the `sprite_bases` catalog on first run. The `docker/dist/`
+templates are now tracked (`.gitignore` previously ignored them due to an
+overly broad `dist/` pattern).
 
 ## Current architecture
 
