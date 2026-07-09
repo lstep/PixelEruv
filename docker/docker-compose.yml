@@ -141,12 +141,13 @@ services:
   # LiveKit SFU server for A/V. API keys must match ext-av.
   livekit:
     image: livekit/livekit-server:v1.13.2
-    # --node-ip sets the IP advertised in WebRTC ICE candidates. Defaults to
-    # 127.0.0.1 (same-machine dev via Docker port mapping). For LAN testing
-    # with two machines, set LIVEKIT_NODE_IP to the host's LAN IP, e.g.
+    # --node-ip is a fallback ICE IP (used if STUN discovery fails). The
+    # livekit.yaml has use_external_ip: true, so LiveKit auto-discovers its
+    # public IP via STUN and advertises that to remote browsers. For local
+    # dev, enable_loopback_candidate adds 127.0.0.1 as a candidate too.
+    # Override LIVEKIT_NODE_IP only if STUN is unavailable, e.g.
     #   LIVEKIT_NODE_IP=192.168.1.10 docker compose up
-    # and point browsers at ws://<host-lan-ip>:7880 (also set
-    # LIVEKIT_PUBLIC_URL in ext-av accordingly).
+    # For remote access, ensure UDP 50000-50020 are open on the host firewall.
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
     ports:
       - "7880:7880"   # WebSocket signaling

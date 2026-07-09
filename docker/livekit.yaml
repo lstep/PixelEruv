@@ -18,16 +18,20 @@ bind_addresses:
   - "0.0.0.0"
 
 # WebRTC ICE port range (must match docker-compose port mapping).
+# For remote access, ensure UDP 50000-50020 are open on the host firewall.
 rtc:
   tcp_port: 7881
   port_range_start: 50000
   port_range_end: 50020
-  # node_ip is injected via the --node-ip flag in docker-compose (defaults to
-  # 127.0.0.1 for same-machine dev). use_external_ip MUST be false, otherwise
-  # LiveKit ignores --node-ip and advertises a STUN-discovered public IP that
-  # a localhost browser can't route back to (ICE failure).
-  use_external_ip: false
-  # Allow 127.0.0.1 candidates so same-machine dev works.
+  # use_external_ip: true makes LiveKit discover its public IP via STUN and
+  # advertise it in ICE candidates, so remote browsers can reach the WebRTC
+  # media ports. enable_loopback_candidate (below) keeps same-machine dev
+  # working by also advertising 127.0.0.1 as a candidate. The --node-ip flag
+  # in docker-compose is used as a fallback if STUN discovery fails.
+  use_external_ip: true
+  # Allow 127.0.0.1 candidates so same-machine dev works alongside
+  # the STUN-discovered public IP candidate.
   enable_loopback_candidate: true
 
-# No external TURN/STUN for local dev.
+# use_external_ip: true uses LiveKit's built-in STUN servers (Google public
+# STUN by default) to discover the external IP. No explicit STUN config needed.

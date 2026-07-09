@@ -133,6 +133,8 @@ services:
     restart: unless-stopped
 
   # LiveKit SFU server for A/V. API keys must match ext-av.
+  # use_external_ip: true in livekit.yaml auto-discovers the public IP via
+  # STUN. For remote access, ensure UDP 50000-50020 are open on the firewall.
   livekit:
     image: livekit/livekit-server:v1.13.2
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
