@@ -278,17 +278,17 @@ settings (no buffering, no chunked, unlimited body size):
 
 ```nginx
 server {
-        listen 0.0.0.0:443 ssl;
-        http2 on;
-
         listen 80;
+        server_name pixeleruv.example.org;
+        return 301 https://$host$request_uri;
+}
+
+server {
+        listen 443 ssl;
+        http2 on;
 
         server_name pixeleruv.example.org;
         root /var/www/blank;
-
-        if ($https != 'on') {
-           rewrite ^/(.*)$ https://pixeleruv.example.org/$1 permanent;
-        }
 
         # SSL
         ssl_certificate /etc/nginx/ssl/example.org.crt;
