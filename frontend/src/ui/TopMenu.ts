@@ -32,16 +32,16 @@ export class TopMenu {
     // A/V controls, hidden until a scene attaches an AvClient.
     this.micBtn = document.createElement("button");
     this.micBtn.style.cssText = PILL_STYLE + "display:none;";
-    this.micBtn.addEventListener("click", () => {
-      this.avClient?.setMicMuted(!this.avClient.isMicMuted());
+    this.micBtn.addEventListener("click", async () => {
+      if (this.avClient) await this.avClient.setMicMuted(!this.avClient.isMicMuted());
       this.updateAvLabels();
     });
     this.container.appendChild(this.micBtn);
 
     this.camBtn = document.createElement("button");
     this.camBtn.style.cssText = PILL_STYLE + "display:none;";
-    this.camBtn.addEventListener("click", () => {
-      this.avClient?.setCameraEnabled(!this.avClient.isCameraEnabled());
+    this.camBtn.addEventListener("click", async () => {
+      if (this.avClient) await this.avClient.setCameraEnabled(!this.avClient.isCameraEnabled());
       this.updateAvLabels();
     });
     this.container.appendChild(this.camBtn);
