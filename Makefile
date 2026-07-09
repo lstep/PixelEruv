@@ -39,6 +39,7 @@ build:
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 
 # Sync root assets into frontend/public/ so Vite serves them in dev and bundles
 # them into dist/web/. The root maps/ and spritesheets/ directories are the
