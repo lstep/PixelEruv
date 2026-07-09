@@ -36,9 +36,26 @@ export class AvClient {
   // Debounce timer for "leave" events — delays disconnect so momentary
   // proximity zone exits (2-tile radius) don't thrash the LiveKit room.
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
-  // Tracks whether the document-level click listener for startAudio has
-  // been installed. Done lazily on first room connect.
-  private audioUnlockListenerInstalled = false;
+
+  constructor() {
+    // Unlock audio on the very first click anywhere on the page. Safari
+    // blocks audio autoplay unless a media element was played during a user
+    // gesture. By playing a silent sample on the first click (before any
+    // LiveKit room exists), we unlock audio for the entire page. When
+    // LiveKit later subscribes remote audio tracks, they play automatically
+    // — no second click needed. This is the standard WebRTC workaround.
+    document.addEventListener("click", () => this.unlockAudio(), { once: true });
+  }
+
+  // unlockAudio plays a silent audio element to satisfy browser autoplay
+  // policies. After this call, all future audio on the page (including
+  // LiveKit remote tracks) plays without restriction.
+  private unlockAudio(): void {
+    const audio = document.createElement("audio");
+    // 1-byte silent WAV — the smallest valid audio file.
+    audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+    audio.play().then(() => audio.remove()).catch(() => {});
+  }
 
   setParticipantsHandler(handler: AvParticipantsHandler): void {
     this.onParticipantsChange = handler;
@@ -75,8 +92,6 @@ export class AvClient {
     this.micMuted = muted;
     if (this.room) {
       this.room.localParticipant.setMicrophoneEnabled(!muted);
-      // Unmuting is a user gesture — proactively unlock audio playback
-      // in case the browser's autoplay policy blocked remote audio.
       if (!muted) {
         this.room.startAudio().catch(() => {});
       }
@@ -97,7 +112,6 @@ export class AvClient {
     this.cameraEnabled = enabled;
     if (this.room) {
       this.room.localParticipant.setCameraEnabled(enabled);
-      // Camera toggle is a user gesture — proactively unlock audio.
       this.room.startAudio().catch(() => {});
     }
   }
@@ -247,23 +261,6 @@ export class AvClient {
       throw err;
     }
     console.log(`AvClient: connected to room ${roomName}`);
-
-    // Install a document-level click listener to unlock audio playback.
-    // Browsers block audio autoplay unless startAudio() is called within a
-    // user gesture. The user typically clicks mic/camera BEFORE the room
-    // connects (proximity join happens later), so the startAudio() calls
-    // in setMicMuted/setCameraEnabled miss the room. This listener catches
-    // ANY click after the room connects, unlocking audio on the next
-    // interaction (movement key, menu click, etc.). Installed once.
-    if (!this.audioUnlockListenerInstalled) {
-      this.audioUnlockListenerInstalled = true;
-      document.addEventListener("click", () => {
-        if (this.room && !this.room.canPlaybackAudio) {
-          this.room.startAudio().catch(() => {});
-          this.onAudioBlocked?.(false);
-        }
-      });
-    }
 
     // Publish mic + camera tracks based on current settings. These can fail
     // independently (e.g. Safari NotAllowedError if the user denied camera
