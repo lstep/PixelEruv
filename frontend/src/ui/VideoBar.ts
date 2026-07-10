@@ -63,7 +63,7 @@ export class VideoBar {
     // Tiles row — flex with wrap so tiles flow onto additional rows.
     this.tilesRow = document.createElement("div");
     this.tilesRow.style.cssText =
-      "display:flex;flex-wrap:wrap;gap:8px;pointer-events:auto;";
+      "display:flex;flex-wrap:wrap;gap:8px;justify-content:center;pointer-events:auto;";
     this.container.appendChild(this.tilesRow);
 
     // Draggable handle bar below the tiles. Vertical drag resizes all tiles.
