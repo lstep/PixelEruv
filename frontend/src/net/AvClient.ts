@@ -130,8 +130,20 @@ export class AvClient {
       console.error("AvClient: localStorage.setItem failed:", e);
     }
     if (this.room) {
-      this.room.localParticipant.setMicrophoneEnabled(!muted);
-      if (!muted) {
+      const lk = await this.ensureModule();
+      const pub = this.room.localParticipant.getTrackPublication(lk.Track.Source.Microphone);
+      if (muted) {
+        // Pause upstream instead of muting — calls sender.replaceTrack(null),
+        // stopping all media flow (not just silence). The track stays
+        // published and alive, so resume is instant with no getUserMedia.
+        await pub?.pauseUpstream().catch((err) => console.warn("AvClient: mic pauseUpstream failed:", err));
+      } else {
+        if (pub?.isUpstreamPaused) {
+          await pub.resumeUpstream().catch((err) => console.warn("AvClient: mic resumeUpstream failed:", err));
+        } else if (!pub) {
+          // No track published yet (mic was muted on connect) — publish now.
+          this.room.localParticipant.setMicrophoneEnabled(true).catch((err) => console.warn("AvClient: mic publish failed:", err));
+        }
         this.room.startAudio().catch(() => {});
       }
     }
@@ -158,8 +170,18 @@ export class AvClient {
       console.error("AvClient: localStorage.setItem failed:", e);
     }
     if (this.room) {
-      this.room.localParticipant.setCameraEnabled(enabled);
-      this.room.startAudio().catch(() => {});
+      const lk = await this.ensureModule();
+      const pub = this.room.localParticipant.getTrackPublication(lk.Track.Source.Camera);
+      if (!enabled) {
+        await pub?.pauseUpstream().catch((err) => console.warn("AvClient: camera pauseUpstream failed:", err));
+      } else {
+        if (pub?.isUpstreamPaused) {
+          await pub.resumeUpstream().catch((err) => console.warn("AvClient: camera resumeUpstream failed:", err));
+        } else if (!pub) {
+          this.room.localParticipant.setCameraEnabled(true).catch((err) => console.warn("AvClient: camera publish failed:", err));
+        }
+        this.room.startAudio().catch(() => {});
+      }
     }
   }
 
@@ -356,6 +378,11 @@ export class AvClient {
     this.room = new lk.Room({
       adaptiveStream: true,
       dynacast: true,
+      // Keep local MediaStreamTracks alive when unpublished. Combined with
+      // pauseUpstream/resumeUpstream (used in setMicMuted/setCameraEnabled),
+      // this avoids re-acquiring getUserMedia on mute/unmute cycles — the
+      // track stays alive and can be resumed instantly.
+      stopLocalTrackOnUnpublish: false,
       // Disable RED (Redundant Audio Data) — enabled by default in the
       // LiveKit SDK, but Safari cannot decode audio/red. Without this,
       // Chrome-published audio is silent on Safari: the track subscribes
