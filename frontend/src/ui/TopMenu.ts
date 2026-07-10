@@ -34,6 +34,7 @@ export class TopMenu {
     this.micBtn = document.createElement("button");
     this.micBtn.style.cssText = PILL_STYLE + "display:none;";
     this.micBtn.addEventListener("click", async () => {
+      console.log("micBtn click, avClient=", !!this.avClient);
       if (this.avClient) await this.avClient.setMicMuted(!this.avClient.isMicMuted());
       this.updateAvLabels();
     });
@@ -42,6 +43,7 @@ export class TopMenu {
     this.camBtn = document.createElement("button");
     this.camBtn.style.cssText = PILL_STYLE + "display:none;";
     this.camBtn.addEventListener("click", async () => {
+      console.log("camBtn click, avClient=", !!this.avClient);
       if (this.avClient) await this.avClient.setCameraEnabled(!this.avClient.isCameraEnabled());
       this.updateAvLabels();
     });

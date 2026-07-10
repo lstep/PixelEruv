@@ -10,6 +10,7 @@ import type { Room, RemoteParticipant, LocalParticipant, Track, TrackPublication
 
 export interface AvParticipant {
   entityId: string;
+  isLocal: boolean;
   hasCamera: boolean;
   hasMic: boolean;
   cameraTrack: Track | null;
@@ -17,6 +18,9 @@ export interface AvParticipant {
 
 export type AvParticipantsHandler = (participants: Map<string, AvParticipant>) => void;
 export type AvAudioBlockedHandler = (blocked: boolean) => void;
+
+const MIC_MUTED_KEY = "av.micMuted";
+const CAM_ENABLED_KEY = "av.cameraEnabled";
 
 export interface AvDeviceInfo {
   deviceId: string;
@@ -27,8 +31,8 @@ export interface AvDeviceInfo {
 export class AvClient {
   private room: Room | null = null;
   private currentRoom: string | null = null;
-  private micMuted = true;
-  private cameraEnabled = false;
+  private micMuted = localStorage.getItem(MIC_MUTED_KEY) === "false" ? false : true;
+  private cameraEnabled = localStorage.getItem(CAM_ENABLED_KEY) === "true";
   // LiveKit SDK module, loaded on first use.
   private lkModule: typeof import("livekit-client") | null = null;
   // Participants indexed by entity_id (LiveKit participant identity).
@@ -48,6 +52,7 @@ export class AvClient {
   private selectedCamId: string | null = null;
 
   constructor() {
+    console.log(`AvClient: init micMuted=${this.micMuted} cameraEnabled=${this.cameraEnabled}`);
     // Unlock audio on the very first click anywhere on the page. Safari
     // blocks audio autoplay unless a media element was played during a user
     // gesture. By playing a silent sample on the first click (before any
@@ -92,14 +97,22 @@ export class AvClient {
   // the browser prompt fires at click time (not later, when proximity joins
   // a LiveKit room and would interrupt the user). On denial the flag reverts.
   async setMicMuted(muted: boolean): Promise<void> {
+    console.log(`AvClient.setMicMuted(${muted}) room=${!!this.room}`);
     if (!muted && !this.room) {
       try {
         await this.requestPermission("audio");
       } catch {
+        console.log("AvClient.setMicMuted: permission denied, not saving");
         return; // denied — keep previous mute state
       }
     }
     this.micMuted = muted;
+    try {
+      localStorage.setItem(MIC_MUTED_KEY, String(muted));
+      console.log(`AvClient: saved ${MIC_MUTED_KEY}=${muted}`);
+    } catch (e) {
+      console.error("AvClient: localStorage.setItem failed:", e);
+    }
     if (this.room) {
       this.room.localParticipant.setMicrophoneEnabled(!muted);
       if (!muted) {
@@ -112,14 +125,22 @@ export class AvClient {
   // setMicMuted: trigger the permission prompt at click time when alone, so
   // proximity-driven room joins don't surface an interrupting popup.
   async setCameraEnabled(enabled: boolean): Promise<void> {
+    console.log(`AvClient.setCameraEnabled(${enabled}) room=${!!this.room}`);
     if (enabled && !this.room) {
       try {
         await this.requestPermission("video");
       } catch {
+        console.log("AvClient.setCameraEnabled: permission denied, not saving");
         return; // denied — keep previous camera-off state
       }
     }
     this.cameraEnabled = enabled;
+    try {
+      localStorage.setItem(CAM_ENABLED_KEY, String(enabled));
+      console.log(`AvClient: saved ${CAM_ENABLED_KEY}=${enabled}`);
+    } catch (e) {
+      console.error("AvClient: localStorage.setItem failed:", e);
+    }
     if (this.room) {
       this.room.localParticipant.setCameraEnabled(enabled);
       this.room.startAudio().catch(() => {});
@@ -281,6 +302,10 @@ export class AvClient {
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
       this.updateParticipant(participant.identity, participant);
     });
+    // Local track events — keep the local participant entry in sync so the
+    // VideoBar self-view appears/disappears when the camera is toggled.
+    this.room.on(lk.RoomEvent.LocalTrackPublished, () => this.updateLocalParticipant());
+    this.room.on(lk.RoomEvent.LocalTrackUnpublished, () => this.updateLocalParticipant());
     // Browsers block audio playback not initiated by a user gesture. When
     // LiveKit's auto-play is blocked, notify the UI so it can show an
     // "Enable Audio" button (whose click calls room.startAudio()).
@@ -330,6 +355,8 @@ export class AvClient {
     for (const p of this.room.remoteParticipants.values()) {
       this.updateParticipant(p.identity, p);
     }
+    // Add the local participant so the VideoBar can show a self-view tile.
+    this.updateLocalParticipant();
     this.notifyChange();
   }
 
@@ -362,6 +389,7 @@ export class AvClient {
     }
     this.participants.set(identity, {
       entityId: identity,
+      isLocal: false,
       hasCamera,
       hasMic,
       cameraTrack,
@@ -373,6 +401,62 @@ export class AvClient {
     if (this.onParticipantsChange) {
       this.onParticipantsChange(new Map(this.participants));
     }
+  }
+
+  // updateLocalParticipant syncs the local participant entry in the map so
+  // the VideoBar can render a self-view tile. The local camera track is read
+  // from the local participant's track publications.
+  private updateLocalParticipant(): void {
+    if (!this.room) return;
+    const lp = this.room.localParticipant;
+    const identity = lp.identity;
+    if (!identity) return;
+    let cameraTrack: Track | null = null;
+    for (const pub of lp.getTrackPublications().values()) {
+      if (pub.source === "camera" && pub.track) {
+        cameraTrack = pub.track;
+        break;
+      }
+    }
+    this.participants.set(identity, {
+      entityId: identity,
+      isLocal: true,
+      hasCamera: lp.isCameraEnabled,
+      hasMic: lp.isMicrophoneEnabled,
+      cameraTrack,
+    });
+    this.notifyChange();
+  }
+
+  // getAudioLevel returns the current audio level (0..1) for a participant,
+  // read live from the LiveKit SDK. Called each frame by the VideoBar to
+  // drive the spectrogram. Returns 0 when no room is connected.
+  getAudioLevel(entityId: string): number {
+    if (!this.room) return 0;
+    const lp = this.room.localParticipant;
+    if (entityId === lp.identity) {
+      return (lp as any).audioLevel ?? 0;
+    }
+    const p = this.room.remoteParticipants.get(entityId);
+    return (p as any)?.audioLevel ?? 0;
+  }
+
+  // isSpeaking returns whether a participant is currently speaking, per
+  // LiveKit's voice activity detection.
+  isSpeaking(entityId: string): boolean {
+    if (!this.room) return false;
+    const lp = this.room.localParticipant;
+    if (entityId === lp.identity) {
+      return (lp as any).isSpeaking ?? false;
+    }
+    const p = this.room.remoteParticipants.get(entityId);
+    return (p as any)?.isSpeaking ?? false;
+  }
+
+  // getLocalEntityId returns the LiveKit identity of the local participant,
+  // or null when no room is connected.
+  getLocalEntityId(): string | null {
+    return this.room?.localParticipant.identity ?? null;
   }
 
   getParticipants(): Map<string, AvParticipant> {
