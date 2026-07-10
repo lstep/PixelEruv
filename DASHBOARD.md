@@ -90,7 +90,6 @@ Currently all three flags are controlled by a single `noiseCancellation` boolean
 - **autoGainControl** — normalizes voice volume automatically
 
 This means splitting `noiseCancellation` into three separate persisted booleans (with their own localStorage keys), three getters/setters, and three checkboxes in the TopMenu dropdown.
-<<<<<<< HEAD
 
 ### TODO: Safari echo cancellation not working (unresolved)
 
@@ -115,8 +114,6 @@ This means splitting `noiseCancellation` into three separate persisted booleans 
   - LiveKit client-sdk-js issue #1541: `echoCancellation` capture option regression in 2.9.2+ (can't disable it). We're on 2.20.0 and want it ON, so this is not our issue.
 
 - **How AEC works:** The echo canceller needs a reference signal (the far-end audio being played out the speakers) to subtract it from the mic input. Safari's AEC may fail to get the correct reference signal, or its VPIO unit may not be properly initialized. Chrome uses its own software AEC (AEC3) that doesn't depend on the platform audio session.
-
-- **WorkAdventure approach:** They manage their own `getUserMedia` calls with explicit constraints (`buildMicrophoneAudioConstraints` in `MicrophoneSettings.ts`) and have a custom noise suppression pipeline (DTLN-based, `workadventure/noise-suppression` repo). They do NOT set `navigator.audioSession`. Their LiveKit Room options are minimal (`adaptiveStream`, `dynacast`, `publishDefaults`, `videoCaptureDefaults`, `stopLocalTrackOnUnpublish: false`). No Safari-specific echo fix was found in their codebase — they may simply rely on headphones or accept the limitation.
 
 - **Gather.town:** Has a "Reduce echo" toggle in audio settings (user-facing), suggesting they also expose this as a user-controllable option rather than fully fixing it programmatically.
 
