@@ -196,6 +196,22 @@ machines. Both players walk into proximity range. Both hear each other.
 Narrate: "this required disabling RED and manually attaching audio
 elements — two non-obvious fixes."
 
+### 2.9a Cross-Browser Testing
+
+The full feature set — proximity video, spatial audio, speaking
+indicators, mic/camera controls, device selection, text chat, movement,
+and the day/night overlay — has been tested and works on Chrome,
+Safari, and Firefox. Mixed-browser calls (e.g. Chrome + Safari on
+different machines) are confirmed working: both sides publish and
+receive audio and video, with speaking indicators and distance-based
+volume functioning correctly.
+
+**Storyboard:** Show three browser windows side by side: Chrome, Safari,
+and Firefox. All three characters walk into proximity range. Video
+tiles appear in all three. Each participant speaks — the green speaking
+border lights up on all sides. Narrate: "three browsers, three
+machines, one proximity room — everything works."
+
 ### 2.10 Text Chat
 
 A DOM sidebar fixed to the right edge of the window with two tabs:
