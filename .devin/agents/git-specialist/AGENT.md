@@ -9,7 +9,13 @@ allowed-tools:
   - exec
 permissions:
   allow:
-    - Exec(git)
+    - Exec(git push)
+    - Exec(git branch)
+    - Exec(git log)
+    - Exec(git add)
+    - Exec(git commit)
+    - Exec(git status)
+    - Exec(git diff)
   deny:
     - write
     - edit
