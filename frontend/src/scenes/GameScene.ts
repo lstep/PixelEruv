@@ -730,6 +730,7 @@ export class GameScene extends Phaser.Scene {
       this.inputState.right = false;
       this.inputDirty = true;
       eHeld = false;
+      this.joystick?.reset();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") clearMovementInput();
@@ -741,7 +742,7 @@ export class GameScene extends Phaser.Scene {
     // devices so desktop mouse/keyboard is unaffected. Feeds the same
     // inputState booleans as the keyboard handlers above.
     if (navigator.maxTouchPoints > 0) {
-      this.joystick = new VirtualJoystick(this, (j) => {
+      this.joystick = new VirtualJoystick((j) => {
         this.inputState.up = j.up;
         this.inputState.down = j.down;
         this.inputState.left = j.left;
