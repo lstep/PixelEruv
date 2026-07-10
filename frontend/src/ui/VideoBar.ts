@@ -132,9 +132,34 @@ export class VideoBar {
     this.handle.addEventListener("pointercancel", onUp);
   }
 
+  // maxTileHeight returns the largest tile height that keeps the entire bar
+  // (tiles + handle) within the screen. Uses binary search because the number
+  // of wrap rows changes with tile size, making the relationship non-linear.
+  private maxTileHeight(): number {
+    const n = this.tiles.size;
+    if (n === 0) return DEFAULT_TILE_HEIGHT;
+    const availWidth = window.innerWidth - 2 * BAR_MARGIN_X;
+    const availHeight = window.innerHeight - BAR_TOP - HANDLE_HEIGHT - 4 - 12;
+    let lo = MIN_TILE_HEIGHT;
+    let hi = 500;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi + 1) / 2);
+      const tileW = mid * TILE_ASPECT;
+      const perRow = Math.max(1, Math.floor((availWidth + 8) / (tileW + 8)));
+      const rows = Math.ceil(n / perRow);
+      const totalH = rows * mid + (rows - 1) * 8;
+      if (totalH <= availHeight) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
   // applyTileSizes sets every tile to the current tileHeight (width derived
-  // from the 4:3 aspect ratio).
+  // from the 4:3 aspect ratio). Clamps to maxTileHeight so the bar never
+  // extends past the screen bottom.
   private applyTileSizes(): void {
+    const max = this.maxTileHeight();
+    if (this.tileHeight > max) this.tileHeight = max;
     const w = Math.round(this.tileHeight * TILE_ASPECT);
     const h = Math.round(this.tileHeight);
     for (const tile of this.tiles.values()) {
