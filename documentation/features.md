@@ -970,8 +970,8 @@ seamlessly.
 3. 0.4 Extensions in Any Language (vs sandboxed scripting)
 4. 0.5 Enterprise Identity from Day One (vs custom auth bridges)
 5. 0.6 The Kernel Has No Gameplay Logic (vs hardcoded features)
-6. 0.9 Easy Branding and Customization (vs logo + color theme)
-7. 0.8 Observable by Default (vs black box)
+6. 0.8 Observable by Default (vs black box)
+7. 0.9 Easy Branding and Customization (vs logo + color theme)
 
 ### Arc B: "How It Works Under the Hood" (10 minutes)
 
