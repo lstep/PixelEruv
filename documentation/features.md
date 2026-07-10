@@ -177,6 +177,147 @@ millisecond the worldsim spent on collision."
 
 ---
 
+## Part 0b — Use Cases
+
+Pixel Eruv is a spatial collaboration platform, not just a virtual
+office. The same backend — server-authoritative world, proximity A/V,
+extension system, ECS core — powers any scenario where people (or AI
+agents) need to share a persistent 2D space and communicate by
+proximity. Below are concrete use cases, each with a storyboard.
+
+### 0b.1 Casual Team Hangout
+
+A distributed team drops into a shared pixel-art office instead of a
+Slack channel. People walk to each other's desks to ask a quick
+question. Proximity audio means you only hear the people near you —
+no cross-talk, no mute-all meetings. Walk away, the conversation ends
+naturally. No scheduling, no links, no "can you see my screen."
+
+**Storyboard:** Show a team of 5 in the office. Two walk to a corner
+and talk — their video tiles appear. Three others are at their desks,
+working quietly. Someone walks over to the pair — a three-way
+conversation starts. Walk away — audio fades and drops. Narrate:
+"spontaneous, like a real office. No meeting link, no calendar invite."
+
+### 0b.2 Company All-Hands and Town Halls
+
+A company meeting in a virtual auditorium. The map has a stage zone
+with A/V enabled. The speaker stands on stage — everyone in the zone
+sees and hears them. A moderator extension could control who can
+"take the mic" (gate the stage zone). Questions from the floor: walk
+to a designated Q&A zone to be heard. The chat panel carries the
+parallel text conversation.
+
+**Storyboard:** Show a custom auditorium map with a stage. 30 avatars
+seated in rows. The speaker walks on stage — their video tile is
+prominent. A questioner walks to the Q&A mic zone — their audio
+unmutes. The chat panel scrolls with side conversations. Narrate:
+"one world, one meeting, no Zoom fatigue — and the side conversations
+happen naturally, not in a separate chat window."
+
+### 0b.3 Virtual Conference and Expo
+
+A multi-room conference event. Each room is a zone with its own A/V
+room — walk in, you join the conversation; walk out, you leave. Booths
+are interactive objects (ext-props) — press E to see a product demo or
+collect a virtual flyer. A schedule board extension could display the
+next talks. Sponsors get custom-branded booths as map decorations.
+
+**Storyboard:** Show a conference map with 5 rooms, each labeled. Walk
+into "Room A" — a talk is in progress, video tiles appear. Walk out,
+into the expo hall — booths line the walls. Walk to a booth, press E —
+a popup with product info appears. Walk to another room for the next
+session. Narrate: "a full conference in a pixel-art world. Rooms,
+booths, demos — all by walking around."
+
+### 0b.4 Art Gallery and Exhibition
+
+A curated virtual exhibition. The map is a gallery with artworks as
+interactive objects — walk up to a painting, press E, and a popup
+shows the artist's statement. A guided tour mode (extension) could
+have an NPC guide walk a predetermined path, narrating each piece via
+proximity audio. Visitors wander at their own pace; artists can be
+present for live Q&A in front of their work.
+
+**Storyboard:** Show a gallery map with paintings on the walls. Walk
+to a painting, press E — the artwork details appear. An NPC guide
+walks a path and stops at each piece — visitors follow. An artist
+stands next to their installation, answering questions from visitors
+who walk up. Narrate: "a gallery you can walk through, not scroll
+through. The art is spatial — you approach it, you stand with it."
+
+### 0b.5 Event Space — Workshops and Breakout Sessions
+
+A workshop event with a main room and breakout rooms. The main room
+has a presenter; breakout rooms are smaller zones where subgroups
+collaborate. A facilitator extension could manage room assignments
+(walk into breakout room 3, the extension checks your name against a
+list). Whiteboard objects (roadmap) could let groups sketch together
+in-zone.
+
+**Storyboard:** Show a workshop map with a main room and 4 breakout
+rooms. The presenter speaks in the main room. A facilitator announces
+"breakout time" — participants walk to their assigned rooms. Each
+room has its own A/V conversation. Walk back to the main room to
+regroup. Narrate: "breakouts by walking, not by clicking links and
+waiting for Zoom to load."
+
+### 0b.6 Environment for AI Agents to Inhabit
+
+Pixel Eruv is not just for humans. The extension system means AI
+agents can be first-class inhabitants of the world. An NPC extension
+written in Python connects to an LLM API, spawns an entity, and drives
+its behavior: a receptionist that greets visitors, a tour guide that
+walks new employees around, a bartender that makes small talk, a
+security guard that patrols. The kernel treats the AI entity like any
+other — it has a position, a sprite, a name tag, and it replicates to
+all clients. Human players interact with AI agents through the same
+proximity and input mechanisms they use with each other.
+
+**Storyboard:** Show an office with a receptionist NPC near the
+entrance. A player walks in — the NPC greets them by name (the
+extension received the zone.enter event with the player's entity ID).
+The player types a question in chat — the NPC responds. Show the
+Python extension process in a terminal: LLM API call, response,
+NATS publish. Narrate: "the AI lives in the same world as the humans.
+Same space, same rules, same interactions — the kernel doesn't know
+it's not a person."
+
+### 0b.7 Persistent Virtual HQ for a Remote Company
+
+A company's permanent virtual headquarters. Employees drop in
+throughout the day — the world is always running. Desks are
+personalized (owned workplaces, roadmap). The day/night overlay shifts
+with the real clock — you can tell it's evening because the world is
+tinted dusk. Departments have their own zones. A "water cooler" zone
+for casual chat. An "on-call" zone for the engineering team. Position
+persistence means your avatar is where you left it yesterday.
+
+**Storyboard:** Show the HQ map at 9 AM — morning tint, a few
+avatars at their desks. Fast-forward to noon — several avatars
+gathered in the kitchen zone for lunch chat. Fast-forward to 6 PM —
+dusk tint, most avatars gone, one still at a desk. Narrate: "it's not
+a meeting you join and leave. It's a place that's always there. Your
+desk is yours. The sun sets when it sets."
+
+### 0b.8 Educational Campus and Classrooms
+
+A virtual campus with classrooms, a library, and common areas. Each
+classroom is a zone with A/V — the teacher is heard by everyone in the
+room. The library is a silent zone (no A/V). Students can break into
+study groups in smaller rooms. An assignment-board extension could
+display deadlines. A bell extension could ring at scheduled times.
+Guest mode lets prospective students tour without an account.
+
+**Storyboard:** Show a campus map with 4 classrooms, a library, and a
+lounge. A teacher speaks in classroom A — students seated, video tiles
+visible. Walk to the library — a "silent zone" sign, no A/V. Walk to
+the lounge — students chatting casually. A guest walks in and tours
+without logging in. Narrate: "a campus that's always open. Silent
+zones, classrooms, social spaces — all by design, all by walking."
+
+---
+
 ## Part 1 — The World
 
 ### 1.1 Persistent Pixel-Art Multiplayer World
@@ -789,3 +930,12 @@ seamlessly.
 3. 6.3 Inventory and Equipment
 4. 6.4 Matrix Synapse Chat
 5. 6.5 Horizontal Scaling
+
+### Arc F: "What Can You Do With It?" (5 minutes)
+
+1. 0b.1 Casual Team Hangout (the office use case)
+2. 0b.2 Company All-Hands (the meeting use case)
+3. 0b.3 Virtual Conference and Expo (the event use case)
+4. 0b.4 Art Gallery and Exhibition (the cultural use case)
+5. 0b.6 Environment for AI Agents (the AI use case)
+6. 0b.7 Persistent Virtual HQ (the long-term use case)
