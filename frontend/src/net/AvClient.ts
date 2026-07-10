@@ -279,6 +279,12 @@ export class AvClient {
     this.room = new lk.Room({
       adaptiveStream: true,
       dynacast: true,
+      // Disable RED (Redundant Audio Data) — enabled by default in the
+      // LiveKit SDK, but Safari cannot decode audio/red. Without this,
+      // Chrome-published audio is silent on Safari: the track subscribes
+      // but no audio data is decoded, so isSpeaking stays false and no
+      // sound plays. Forcing audio/opus ensures cross-browser compatibility.
+      publishDefaults: { red: false },
       audioCaptureDefaults: this.selectedMicId
         ? { deviceId: this.selectedMicId }
         : undefined,
@@ -297,6 +303,20 @@ export class AvClient {
       this.notifyChange();
     });
     this.room.on(lk.RoomEvent.TrackSubscribed, (track: Track, pub: any, participant: RemoteParticipant) => {
+      // LiveKit does NOT auto-attach remote audio tracks to audio elements.
+      // Without attach(), no <audio> element is created, so setVolume() and
+      // startAudio() are no-ops (they iterate attachedElements which is empty).
+      // isSpeaking still works (analyzed from RTP packets) but no sound plays.
+      // Fix: call attach() to create a hidden <audio> element with autoplay=true.
+      if (pub.kind === "audio") {
+        (track as any).attach();
+        // startAudio plays all attached audio elements (needed if autoplay
+        // was initially blocked — the attach() above sets autoplay=true but
+        // the browser may have blocked it before the unlock gesture).
+        if (this.room) {
+          this.room.startAudio().catch(() => { /* may reject if still blocked */ });
+        }
+      }
       this.updateParticipant(participant.identity, participant);
     });
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
