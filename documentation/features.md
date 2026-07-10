@@ -34,12 +34,23 @@ Pixel Eruv is open source. That changes three things:
   no platform-engineering team. Your data stays on your infrastructure.
   Audit every line. Modify anything. No vendor lock-in, no per-seat
   cost.
-- **It's expandable.** The extension system means anyone can add NPCs,
-  custom zones, interactive objects, or entirely new gameplay systems
-  as peer processes in any language — without forking the engine. The
-  ECS core and the generic replication protocol mean new components
-  flow through the system without protocol changes. The community can
-  build features the core team never imagined.
+- **It's expandable.** Pixel Eruv is built around an extension system
+  that separates the kernel (spatial authority, replication) from all
+  gameplay behavior. The kernel moves players and replicates state —
+  everything else (walls, doors, NPCs, zone access policies,
+  interactive objects, custom game mechanics) lives in extensions.
+  Extensions are peer processes on the NATS message bus, not plugins
+  loaded into the engine. Anyone can write one, and it can be written
+  in any language that has a NATS client: Go, Python, Rust, Node, Java,
+  C#, and more. An extension runs in its own container, crashes
+  independently without taking down the world, and can be restarted or
+  hot-swapped without touching the kernel. The first-party extensions
+  (walls, props, audio/video bridge) use the exact same API as any
+  third-party extension — there is no privileged layer. Combined with
+  the ECS core and the generic replication protocol, this means new
+  components and new gameplay systems flow through the system without
+  protocol changes or engine forks. The community can build features
+  the core team never imagined.
 - **It evolves fast.** Proprietary platforms ship on a vendor's
   schedule. An open-source project ships on the community's schedule.
   Contributions, fixes, and features land as fast as people write
