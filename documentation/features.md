@@ -463,6 +463,25 @@ the sprite.
 Walk one character around — the tag follows. Point out that guests get
 a generated name and logged-in users get their PocketBase display name.
 
+### 1.6 Mobile Support with Virtual Joystick
+
+Pixel Eruv works on touch devices. On phones and tablets, a floating
+virtual joystick replaces the keyboard for movement. Touch and drag
+anywhere in the left portion of the screen — a joystick base and thumb
+appear at the touch point. The thumb vector is thresholded into the
+same up/down/left/right booleans the keyboard uses, with a deadzone for
+8-directional movement. Release the finger and the avatar stops. The
+joystick is touch-gated, so desktop mouse and keyboard are unaffected.
+The viewport is locked to prevent pinch-zoom and browser scroll from
+interfering with the drag.
+
+**Storyboard:** Open the client on a phone (or Chrome DevTools mobile
+emulation with touch enabled). Touch and hold the lower-left area —
+the joystick circles appear centered on the finger. Drag up — the
+avatar walks up. Drag diagonally — the avatar moves diagonally. Release
+— the avatar stops and the circles disappear. Switch to desktop —
+keyboard arrows and mouse wheel zoom work as before.
+
 ---
 
 ## Part 2 — Communication
@@ -959,9 +978,10 @@ seamlessly.
 
 1. 0.1 Open Source and Self-Hostable (the pitch)
 2. 1.1 Persistent Pixel-Art World (show the world)
-3. 2.1 Proximity Audio/Video (walk two players together)
-4. 2.10 Text Chat (send a message)
-5. 5.1 Self-Hostable (one command, no Kubernetes)
+3. 1.6 Mobile Support with Virtual Joystick (show it on a phone)
+4. 2.1 Proximity Audio/Video (walk two players together)
+5. 2.10 Text Chat (send a message)
+6. 5.1 Self-Hostable (one command, no Kubernetes)
 
 ### Arc A2: "Why It's Better" (5 minutes)
 
