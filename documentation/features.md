@@ -381,6 +381,47 @@ to the browser running Pixel Eruv — the same map renders. Point at the
 tile layers (ground, walls, decorations) and the object layers (zones,
 entities).
 
+### 1.2a Easy Map Design Workflow
+
+Designing a custom world for Pixel Eruv requires no code and no engine
+knowledge. The entire workflow happens in Tiled — a free, visual map
+editor — and the PocketBase admin dashboard. A designer or office
+manager can create a new space in an afternoon:
+
+1. **Draw the map in Tiled.** Place tiles from any 32×32 pixel-art
+   tileset (the project ships with Limezu's Modern Interiors / Modern
+   Office sets). Layer ground, walls, and decorations. The editor is
+   drag-and-drop — no scripting, no JSON editing by hand.
+2. **Mark zones on the "Zones" object layer.** Draw rectangles,
+   ellipses (circles), or polygons where you want rooms, walls, or
+   A/V-enabled spaces. Set custom properties like `zone_type=wall` for
+   collision or `av_enabled=true` for proximity rooms. The worldsim
+   reads these at load time.
+3. **Place interactive objects on the "Entities" object layer.** Add
+   objects with `entity_type=light_switch` (or any type your
+   extensions handle) and `owner_extension=ext-props`. Players press
+   E near them to interact.
+4. **Tag decoration layers.** Add the custom property
+   `layer_type=decoration` to any layer that should Y-sort against
+   avatars. Set `sort_mode=dynamic` for tall objects that should
+   occlude and be occluded by players.
+5. **Export as JSON.** File → Export As → JSON. Upload the JSON and
+   the tileset PNGs to the PocketBase `maps` collection via the admin
+   dashboard. Reload the browser — the new map is live.
+
+No rebuild, no redeploy, no code change. A non-developer can design,
+upload, and play a custom map. The bundled `default-map.json` and the
+`maps/` directory serve as a reference — copy it, modify it in Tiled,
+and upload.
+
+**Storyboard:** Open Tiled with a blank map. Drag tiles from the
+Limezu tileset to draw a floor, walls, and some furniture. Draw a
+rectangle on the Zones layer, set `zone_type=wall`. Draw another, set
+`av_enabled=true`. Export as JSON. Open the PocketBase admin dashboard,
+upload the JSON + tileset PNG. Reload the browser — the custom map is
+live, walls block movement, the A/V room works. Narrate: "no code, no
+deploy. Draw, export, upload, play."
+
 ### 1.3 Decoration Layers and Depth Sorting
 
 Map layers with the custom property `layer_type=decoration` are
