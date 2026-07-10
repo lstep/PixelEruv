@@ -4,6 +4,7 @@ import { AppearanceSchema, DisplayNameSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
 import { VideoBar } from "../ui/VideoBar";
+import { DayNightOverlay } from "../ui/DayNightOverlay";
 import type { MapAssets } from "../mapLoader";
 import type { SpriteBaseAsset } from "../spriteLoader";
 import type { TopMenu } from "../ui/TopMenu";
@@ -370,6 +371,9 @@ export class GameScene extends Phaser.Scene {
   // terminal close). Grays out the screen and freezes the scene until the
   // connection is restored. Fixed to the screen (scrollFactor 0).
   private disconnectOverlay: Phaser.GameObjects.Container | null = null;
+  // Cosmetic day/night tint overlay — a screen-fixed rectangle whose
+  // color/alpha follows the local clock. Toggleable, defaults to on.
+  private dayNightOverlay: DayNightOverlay | null = null;
 
   constructor() {
     super("GameScene");
@@ -767,6 +771,12 @@ export class GameScene extends Phaser.Scene {
       .container(0, 0, [dim, msg])
       .setScrollFactor(0)
       .setDepth(9999);
+    // Day/night tint overlay — cosmetic, client-side, follows the local
+    // clock. Sits below the disconnect overlay (depth 9997 vs 9998).
+    this.dayNightOverlay = new DayNightOverlay(this);
+    this.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
+      this.dayNightOverlay?.resize(gameSize.width, gameSize.height);
+    });
     // Freeze the scene until the first successful auth.
     this.scene.pause("GameScene");
     this.ws.connect({
