@@ -1,5 +1,34 @@
 # Dashboard
 
+## Day/Night Overlay
+
+**Branch:** `feat/day-night-overlay`
+**Status:** Implemented. Overlay active by default. Toggle UI not yet wired into TopMenu — controllable via `DayNightOverlay.setEnabled()` and localStorage key `daynight.enabled` for now.
+
+A purely cosmetic, 100% client-side full-screen rectangle tints the game world based on the browser's local clock. Color and alpha are interpolated between 8 time-of-day keyframes and recalculated once per minute. Alpha is capped at 0.44 so the map stays readable.
+
+**Keyframes:**
+
+| Hour | Phase | Color | Alpha |
+|------|-------|-------|-------|
+| 00:00 | Deep night | `#0a0a2e` | 0.38 |
+| 03:00 | Night | `#0a0a2e` | 0.38 |
+| 06:00 | Dawn | `#ff8c42` | 0.20 |
+| 09:00 | Morning | `#fff4e6` | 0.05 |
+| 12:00 | Noon | `#ffffff` | 0.00 |
+| 15:00 | Afternoon | `#fff4e6` | 0.05 |
+| 18:00 | Dusk | `#ff6b35` | 0.25 |
+| 21:00 | Evening | `#1a1a4e` | 0.35 |
+
+**Files:**
+
+| File | Changes |
+|------|---------|
+| `frontend/src/ui/DayNightOverlay.ts` | New — overlay class with keyframes, linear interpolation, per-minute timer, alpha cap, localStorage persistence |
+| `frontend/src/scenes/GameScene.ts` | Instantiate overlay after disconnect overlay, resize handler |
+
+**TODO:** Add a toggle checkbox to the TopMenu settings dropdown (the `setEnabled()` API is ready for it).
+
 ## Remote Audio: FIXED
 
 **Branch:** `fix/av-audio-autoplay`
