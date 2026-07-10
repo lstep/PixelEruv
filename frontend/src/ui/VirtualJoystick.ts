@@ -45,16 +45,18 @@ export class VirtualJoystick {
     this.base = document.createElement("div");
     this.base.style.cssText =
       `position:fixed;width:${BASE_RADIUS * 2}px;height:${BASE_RADIUS * 2}px;` +
+      `margin-left:-${BASE_RADIUS}px;margin-top:-${BASE_RADIUS}px;` +
       `border-radius:50%;background:rgba(255,255,255,0.15);` +
       `border:2px solid rgba(255,255,255,0.4);pointer-events:none;` +
-      `z-index:100;transform:translate(-50%,-50%);display:none;`;
+      `z-index:100;display:none;`;
 
     this.thumb = document.createElement("div");
     this.thumb.style.cssText =
       `position:fixed;width:${THUMB_RADIUS_VISUAL * 2}px;height:${THUMB_RADIUS_VISUAL * 2}px;` +
+      `margin-left:-${THUMB_RADIUS_VISUAL}px;margin-top:-${THUMB_RADIUS_VISUAL}px;` +
       `border-radius:50%;background:rgba(255,255,255,0.35);` +
       `border:2px solid rgba(255,255,255,0.6);pointer-events:none;` +
-      `z-index:101;transform:translate(-50%,-50%);display:none;`;
+      `z-index:101;display:none;`;
 
     document.body.appendChild(this.base);
     document.body.appendChild(this.thumb);
@@ -63,15 +65,21 @@ export class VirtualJoystick {
     this.boundMove = this.handleMove.bind(this);
     this.boundUp = this.handleUp.bind(this);
 
-    const target = document.getElementById("game") ?? document.body;
-    target.addEventListener("pointerdown", this.boundDown);
+    // Listen on window so Phaser's canvas can't intercept/stopPropagation
+    // before we see the event. The target check skips DOM UI overlays
+    // (TopMenu, ChatPanel, VideoBar) so they keep working normally.
+    window.addEventListener("pointerdown", this.boundDown);
     window.addEventListener("pointermove", this.boundMove);
     window.addEventListener("pointerup", this.boundUp);
     window.addEventListener("pointercancel", this.boundUp);
   }
 
   private inMovementZone(e: PointerEvent): boolean {
-    return e.pointerType === "touch" && e.clientX <= window.innerWidth * MOVEMENT_ZONE_FRACTION;
+    if (e.pointerType !== "touch") return false;
+    // Only activate when touching the game canvas, not DOM UI overlays.
+    const game = document.getElementById("game");
+    if (e.target !== game && !(game?.contains(e.target as Node) ?? false)) return false;
+    return e.clientX <= window.innerWidth * MOVEMENT_ZONE_FRACTION;
   }
 
   private handleDown(e: PointerEvent): void {
@@ -141,8 +149,7 @@ export class VirtualJoystick {
   }
 
   destroy(): void {
-    const target = document.getElementById("game") ?? document.body;
-    target.removeEventListener("pointerdown", this.boundDown);
+    window.removeEventListener("pointerdown", this.boundDown);
     window.removeEventListener("pointermove", this.boundMove);
     window.removeEventListener("pointerup", this.boundUp);
     window.removeEventListener("pointercancel", this.boundUp);
