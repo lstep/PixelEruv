@@ -90,6 +90,7 @@ Currently all three flags are controlled by a single `noiseCancellation` boolean
 - **autoGainControl** — normalizes voice volume automatically
 
 This means splitting `noiseCancellation` into three separate persisted booleans (with their own localStorage keys), three getters/setters, and three checkboxes in the TopMenu dropdown.
+<<<<<<< HEAD
 
 ### TODO: Safari echo cancellation not working (unresolved)
 
