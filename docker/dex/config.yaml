@@ -19,6 +19,7 @@ staticClients:
     redirectURIs:
       - "http://localhost:5173/auth/callback"
       - "http://localhost:4080/auth/callback"
+      - "https://__PUBLIC_HOST__/auth/callback"
       - "https://__PUBLIC_HOST__:4043/auth/callback"
     name: "PixelEruv"
     public: true
