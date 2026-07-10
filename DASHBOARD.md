@@ -61,8 +61,32 @@ For video, `VideoTile.attachTrack()` manually calls `track.attach(videoElement)`
 
 | File | Changes |
 |------|---------|
-| `frontend/src/net/AvClient.ts` | Audio unlock, device selection, RED disable, audio track attach on subscribe, same-room skip, leave debounce, startAudio |
+| `frontend/src/net/AvClient.ts` | Audio unlock, device selection, RED disable, audio track attach on subscribe, same-room skip, leave debounce, startAudio, noise cancellation option |
 | `frontend/src/ui/TopMenu.ts` | Enable Audio button, mic/camera device selectors in dropdown |
 | `docker/livekit.yaml` | `use_external_ip: true` |
 | `docker/docker-compose.yml` | Comments about UDP ports + node IP |
 | `docker/dist/docker-compose.yml` | Same comments |
+
+## Noise Cancellation Option
+
+**Branch:** `fix/remote-audio-attach-and-red-codec`
+**Status:** Implemented, activated by default. Not yet wired to the TopMenu — toggle via `AvClient.setNoiseCancellation()` for now.
+
+WebRTC client-side noise cancellation (`noiseSuppression` + `echoCancellation` + `autoGainControl`) is now an explicit, persisted option in `AvClient` (localStorage key `av.noiseCancellation`, defaults on). Previously these flags were only set implicitly via the LiveKit SDK's built-in `audioDefaults`.
+
+- `isNoiseCancellationEnabled()` / `setNoiseCancellation(enabled)` — getter/setter, persisted across reconnects.
+- `buildAudioCaptureOptions()` — merges the selected mic device ID with the noise-cancellation flags into `AudioCaptureOptions`, applied via `audioCaptureDefaults` at room connect time.
+- Mid-call toggle: `setNoiseCancellation` restarts the mic track (`LocalAudioTrack.restartTrack`) so the change takes effect without reconnecting, when the mic is published and unmuted.
+- When disabled, the three flags are explicitly set to `false` to override the SDK's `true` defaults.
+
+Note: only WebRTC client-side cancellation applies (self-hosted LiveKit). The enhanced Krisp/ai-coustics models in the LiveKit docs require LiveKit Cloud and target voice AI agents, not browser conferencing clients.
+
+### TODO: split into individual toggles in the options menu
+
+Currently all three flags are controlled by a single `noiseCancellation` boolean. In the future options menu, each should be independently changeable:
+
+- **noiseSuppression** — removes background noise (fans, traffic, etc.)
+- **echoCancellation** — removes echo from speakers feeding back into the mic
+- **autoGainControl** — normalizes voice volume automatically
+
+This means splitting `noiseCancellation` into three separate persisted booleans (with their own localStorage keys), three getters/setters, and three checkboxes in the TopMenu dropdown.

@@ -21,6 +21,7 @@ export type AvAudioBlockedHandler = (blocked: boolean) => void;
 
 const MIC_MUTED_KEY = "av.micMuted";
 const CAM_ENABLED_KEY = "av.cameraEnabled";
+const NOISE_CANCELLATION_KEY = "av.noiseCancellation";
 
 export interface AvDeviceInfo {
   deviceId: string;
@@ -33,6 +34,10 @@ export class AvClient {
   private currentRoom: string | null = null;
   private micMuted = localStorage.getItem(MIC_MUTED_KEY) === "false" ? false : true;
   private cameraEnabled = localStorage.getItem(CAM_ENABLED_KEY) === "true";
+  // WebRTC noise cancellation (noiseSuppression + echoCancellation +
+  // autoGainControl). Defaults on — persisted so the user's choice survives
+  // reconnects. Not yet wired to the TopMenu; toggle via setNoiseCancellation.
+  private noiseCancellation = localStorage.getItem(NOISE_CANCELLATION_KEY) !== "false";
   // LiveKit SDK module, loaded on first use.
   private lkModule: typeof import("livekit-client") | null = null;
   // Participants indexed by entity_id (LiveKit participant identity).
@@ -52,7 +57,7 @@ export class AvClient {
   private selectedCamId: string | null = null;
 
   constructor() {
-    console.log(`AvClient: init micMuted=${this.micMuted} cameraEnabled=${this.cameraEnabled}`);
+    console.log(`AvClient: init micMuted=${this.micMuted} cameraEnabled=${this.cameraEnabled} noiseCancellation=${this.noiseCancellation}`);
     // Unlock audio on the very first click anywhere on the page. Safari
     // blocks audio autoplay unless a media element was played during a user
     // gesture. By playing a silent sample on the first click (before any
@@ -169,6 +174,39 @@ export class AvClient {
     return this.cameraEnabled;
   }
 
+  isNoiseCancellationEnabled(): boolean {
+    return this.noiseCancellation;
+  }
+
+  // setNoiseCancellation toggles WebRTC noise suppression, echo cancellation,
+  // and auto gain control on the local microphone. Persists the choice so it
+  // survives reconnects. If a room is connected and the mic is published,
+  // restarts the track with the new constraints so the change takes effect
+  // immediately (no need to reconnect). When the mic is muted/disabled, the
+  // new setting applies on the next connect or unmute.
+  async setNoiseCancellation(enabled: boolean): Promise<void> {
+    console.log(`AvClient.setNoiseCancellation(${enabled}) room=${!!this.room}`);
+    this.noiseCancellation = enabled;
+    try {
+      localStorage.setItem(NOISE_CANCELLATION_KEY, String(enabled));
+    } catch (e) {
+      console.error("AvClient: localStorage.setItem failed:", e);
+    }
+    if (this.room) {
+      const pub = this.room.localParticipant.getTrackPublication(
+        (await this.ensureModule()).Track.Source.Microphone,
+      );
+      const track = pub?.track;
+      if (track && !this.micMuted) {
+        try {
+          await (track as any).restartTrack(this.buildAudioCaptureOptions());
+        } catch (err) {
+          console.warn("AvClient: restartTrack for noise cancellation failed:", err);
+        }
+      }
+    }
+  }
+
   // getDevices enumerates available audio/video input devices. Requires
   // microphone/camera permission to have been granted for labels to be
   // populated (browsers hide labels until permission is given).
@@ -274,6 +312,24 @@ export class AvClient {
     return this.lkModule;
   }
 
+  // buildAudioCaptureOptions returns the AudioCaptureOptions for the local
+  // microphone, merging the selected device ID (if any) with the WebRTC noise
+  // cancellation flags. When noiseCancellation is enabled, noiseSuppression,
+  // echoCancellation, and autoGainControl are set to true. When disabled, they
+  // are explicitly set to false to override the LiveKit SDK's built-in defaults
+  // (which enable all three).
+  private buildAudioCaptureOptions(): import("livekit-client").AudioCaptureOptions {
+    const opts: import("livekit-client").AudioCaptureOptions = {
+      noiseSuppression: this.noiseCancellation,
+      echoCancellation: this.noiseCancellation,
+      autoGainControl: this.noiseCancellation,
+    };
+    if (this.selectedMicId) {
+      opts.deviceId = this.selectedMicId;
+    }
+    return opts;
+  }
+
   private async connect(url: string, token: string, roomName: string): Promise<void> {
     const lk = await this.ensureModule();
     this.room = new lk.Room({
@@ -285,9 +341,7 @@ export class AvClient {
       // but no audio data is decoded, so isSpeaking stays false and no
       // sound plays. Forcing audio/opus ensures cross-browser compatibility.
       publishDefaults: { red: false },
-      audioCaptureDefaults: this.selectedMicId
-        ? { deviceId: this.selectedMicId }
-        : undefined,
+      audioCaptureDefaults: this.buildAudioCaptureOptions(),
       videoCaptureDefaults: this.selectedCamId
         ? { deviceId: this.selectedCamId }
         : undefined,
