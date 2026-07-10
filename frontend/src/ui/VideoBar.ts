@@ -47,6 +47,7 @@ export class VideoBar {
   private joinOrder: string[] = [];
 
   private tileHeight: number;
+  private onResize: () => void = () => {};
 
   constructor(opts: VideoBarOptions) {
     this.avClient = opts.avClient;
@@ -83,6 +84,10 @@ export class VideoBar {
 
     // Apply initial tile size to existing tiles (if any).
     this.applyTileSizes();
+
+    // Re-clamp on window resize.
+    this.onResize = () => this.applyTileSizes();
+    window.addEventListener("resize", this.onResize);
   }
 
   // loadTileHeight reads the persisted tile height, clamped to the minimum.
@@ -141,7 +146,7 @@ export class VideoBar {
     const availWidth = window.innerWidth - 2 * BAR_MARGIN_X;
     const availHeight = window.innerHeight - BAR_TOP - HANDLE_HEIGHT - 4 - 12;
     let lo = MIN_TILE_HEIGHT;
-    let hi = 500;
+    let hi = availHeight;
     while (lo < hi) {
       const mid = Math.ceil((lo + hi + 1) / 2);
       const tileW = mid * TILE_ASPECT;
@@ -245,6 +250,7 @@ export class VideoBar {
   }
 
   destroy(): void {
+    window.removeEventListener("resize", this.onResize);
     for (const tile of this.tiles.values()) {
       tile.destroy();
     }
