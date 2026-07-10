@@ -67,9 +67,10 @@ export class VideoBar {
     this.container.appendChild(this.tilesRow);
 
     // Draggable handle bar below the tiles. Vertical drag resizes all tiles.
+    // Small, centered, semi-transparent white so it's unobtrusive.
     this.handle = document.createElement("div");
     this.handle.style.cssText =
-      `height:${HANDLE_HEIGHT}px;margin-top:4px;background:#2d2d3a;border-radius:4px;cursor:ns-resize;pointer-events:auto;touch-action:none;`;
+      `width:25%;margin:4px auto 0;background:rgba(255,255,255,0.5);height:${HANDLE_HEIGHT}px;border-radius:4px;cursor:ns-resize;pointer-events:auto;touch-action:none;display:none;`;
     this.container.appendChild(this.handle);
 
     document.body.appendChild(this.container);
@@ -180,6 +181,7 @@ export class VideoBar {
     }
     this.applyTileSizes();
     this.orderTiles();
+    this.handle.style.display = this.tiles.size > 0 ? "" : "none";
   }
 
   // tick is called each frame by the GameScene. It polls speaking state to
