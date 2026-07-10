@@ -17,6 +17,7 @@ permissions:
     - Exec(git status)
     - Exec(git diff)
     - Exec(gh pr)
+    - Exec(git)
   deny:
     - write
     - edit
