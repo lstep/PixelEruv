@@ -647,9 +647,18 @@ export class GameScene extends Phaser.Scene {
     // mouse wheel between ZOOM_MIN and ZOOM_MAX.
     this.cameras.main.setBounds(0, 0, this.mapW * TILE_SIZE, this.mapH * TILE_SIZE);
     this.cameras.main.setZoom(ZOOM_DEFAULT);
-    this.input.on("wheel", (_pointer: Phaser.Input.Pointer, _gameObjects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+    this.input.on("wheel", (pointer: Phaser.Input.Pointer, _gameObjects: Phaser.GameObjects.GameObject[], _deltaX: number, deltaY: number) => {
+      // Normalize deltaY to pixels. Firefox reports wheel delta in lines
+      // (deltaMode=1, ~3/notch) while Chrome/Safari use pixels (deltaMode=0,
+      // ~100/notch). Without normalization, zoom is ~33x too slow on Firefox.
+      let dy = deltaY;
+      const e = pointer.event;
+      if (e instanceof WheelEvent) {
+        if (e.deltaMode === 1) dy *= 40;            // DOM_DELTA_LINE → px
+        else if (e.deltaMode === 2) dy *= this.scale.height; // DOM_DELTA_PAGE → px
+      }
       const z = Phaser.Math.Clamp(
-        this.cameras.main.zoom - deltaY * ZOOM_SENSITIVITY,
+        this.cameras.main.zoom - dy * ZOOM_SENSITIVITY,
         ZOOM_MIN,
         ZOOM_MAX,
       );
