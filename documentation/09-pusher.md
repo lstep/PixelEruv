@@ -146,7 +146,8 @@ Pusher process
 ├── WebSocket gateway     (coder/websocket, goroutine-per-connection)
 ├── Session manager       (client_id ↔ WebSocket map, in-memory)
 ├── Token validator       (JWKS cache, refreshed every 10 min)
-└── NATS bridge           (publish input, subscribe replication batches)
+├── NATS bridge           (publish input, subscribe replication batches)
+└── Health aggregator     (subscribes to "healthz" NATS subject, serves HTTP /healthz)
 ```
 
 ---
@@ -160,6 +161,8 @@ Pusher process
 - **One goroutine for JWKS refresh** — ticks every 10 minutes.
 - **One goroutine for graceful shutdown** — listens for SIGTERM, drains
   connections.
+- **One goroutine for health publishing** — publishes the pusher's own health
+  JSON to the `healthz` NATS subject every 10 seconds.
 
 The session manager is a concurrent-safe map protected by a `sync.RWMutex`.
 No other shared state exists.
@@ -216,6 +219,7 @@ the World Sim's perspective.
 | `client.<client_id>.replication` | World Sim | `ReplicationBatch` (protobuf) | Per tick |
 | `client.<client_id>.control` | LiveKit Bridge | `ControlFrame` (LiveKit token) | Event-driven |
 | `admin.revoke.<entity_id>` | World Sim | `{entity_id, reason}` | On admin kick |
+| `healthz` | All services (pusher, worldsim, extensions) | Health JSON (see §9) | Every 10s |
 
 ### Outbound (published by the Pusher)
 
@@ -224,6 +228,7 @@ the World Sim's perspective.
 | `client.<client_id>.input` | World Sim (owning shard) | Protobuf input frame | Per client input |
 | `client.connected` | World Sim | `{client_id, sub, pusher_instance}` | On connect |
 | `client.disconnected` | World Sim | `{client_id, reason}` | On disconnect |
+| `healthz` | Pusher (self) | Health JSON (see §9) | Every 10s |
 
 > The subject naming convention is illustrative. The final convention will be
 > defined in `07-network-protocol.md`.
@@ -249,3 +254,94 @@ previously overloaded (see §1).
 
 The Pusher is a **stateless network proxy** with one job: bridge WebSocket
 connections to NATS Core, validating tokens at the boundary.
+
+---
+
+## 9. Health endpoint (`/healthz`)
+
+The Pusher exposes an HTTP `GET /healthz` endpoint that returns the aggregated
+health of all backend services as JSON. This is the only HTTP endpoint on the
+Pusher (everything else is WebSocket).
+
+### How it works
+
+Every backend service (pusher, worldsim, ext-demo, ext-walls, ext-props,
+ext-av) publishes a health JSON to the `healthz` NATS subject every 10 seconds.
+The Pusher subscribes to this subject and maintains an in-memory map of
+service name → latest health entry. When an HTTP request arrives at `/healthz`,
+the Pusher returns the map as JSON.
+
+### Health JSON format (published by each service)
+
+```json
+{
+  "service": "kernel",
+  "status": "OK",
+  "version": "v1.2.3",
+  "uptime": "4h32m",
+  "extras": { ... }
+}
+```
+
+| Field | Description |
+|---|---|
+| `service` | Service identifier: `"pusher"`, `"kernel"`, or `"ext-<id>"` |
+| `status` | `"OK"` or `"stale"` (set by the pusher if no message received in 30s) |
+| `version` | Git tag if HEAD is on a tag, otherwise short commit hash. Set via Go ldflags at build time. Defaults to `"dev"`. |
+| `uptime` | Human-readable duration since process start |
+| `extras` | Service-specific JSON (see below) |
+
+### Extras by service
+
+| Service | Extras |
+|---|---|
+| `pusher` | `nats_connected` (bool), `active_sessions` (int) |
+| `kernel` | `entity_count` (int), `connected_players` (int), `running_extensions` (int) |
+| `ext-*` | `{}` (empty for now) |
+
+### HTTP response
+
+```json
+{
+  "services": [
+    { "service": "ext-av", "status": "OK", "version": "v1.2.3", "uptime": "4h32m", "extras": {}, "last_seen": "2026-07-10T12:00:00Z" },
+    { "service": "ext-demo", "status": "OK", "version": "v1.2.3", "uptime": "4h32m", "extras": {}, "last_seen": "2026-07-10T12:00:00Z" },
+    { "service": "ext-props", "status": "OK", "version": "v1.2.3", "uptime": "4h32m", "extras": {}, "last_seen": "2026-07-10T12:00:00Z" },
+    { "service": "ext-walls", "status": "OK", "version": "v1.2.3", "uptime": "4h32m", "extras": {}, "last_seen": "2026-07-10T12:00:00Z" },
+    { "service": "kernel", "status": "OK", "version": "v1.2.3", "uptime": "4h32m", "extras": { "entity_count": 42, "connected_players": 7, "running_extensions": 4 }, "last_seen": "2026-07-10T12:00:00Z" },
+    { "service": "pusher", "status": "OK", "version": "v1.2.3", "uptime": "4h32m", "extras": { "nats_connected": true, "active_sessions": 7 }, "last_seen": "2026-07-10T12:00:00Z" }
+  ]
+}
+```
+
+The response is always HTTP 200 (it's informational). Services that haven't
+published in 30 seconds are marked `"stale"` so consumers can detect dead
+processes. The `services` array is sorted alphabetically by service name.
+
+### Version injection
+
+The version is baked into each Go binary at compile time via ldflags:
+
+```
+-ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=<version>"
+```
+
+The Makefile computes the version as `git describe --tags --exact-match` (tag
+if HEAD is exactly on a tag) or `git rev-parse --short HEAD` (short commit
+hash), falling back to `"dev"` if git is unavailable. The Dockerfile accepts
+a `VERSION` build arg with the same ldflags injection.
+
+### Frontend usage
+
+The frontend polls `GET /healthz` every 10 seconds and displays the kernel's
+version in a small, semi-transparent badge fixed to the bottom-left corner of
+the screen (10px monospace, `pointer-events: none`). This gives users and
+developers an at-a-glance indicator of which version is running without
+obstructing the game view.
+
+### Nginx proxy
+
+In production, nginx proxies `/healthz` to the pusher (`proxy_pass
+http://pusher:8081/healthz`) in both the HTTP and HTTPS server blocks, so the
+frontend can fetch it same-origin. In dev, Vite proxies it to
+`http://localhost:8081`.

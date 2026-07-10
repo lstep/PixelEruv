@@ -157,3 +157,56 @@ This means splitting `noiseCancellation` into three separate persisted booleans 
 6. **Check Safari version** — Safari 15.5+ fixed several AEC bugs. If the user is on an older version, that may be the issue.
 7. **File a WebKit bug** if none of the above helps — include a minimal repro (LiveKit room, Safari + Chrome, no headphones).
 8. **Consider server-side AEC** — if LiveKit Cloud is ever adopted, Krisp NC runs server-side and doesn't depend on Safari's client-side AEC.
+
+## Health Endpoint & Version Badge
+
+**Branch:** `feat/mobile-joystick`
+**Status:** Implemented.
+
+A distributed `/healthz` system where every backend service (pusher, worldsim, ext-demo, ext-walls, ext-props, ext-av) publishes a health JSON to the `healthz` NATS subject every 10 seconds. The pusher subscribes, aggregates the responses into an in-memory map, and serves them via an HTTP `/healthz` endpoint. The frontend polls this endpoint every 10 seconds and displays the kernel's version (git tag or commit hash) in a tiny bottom-left badge.
+
+### Health JSON format
+
+Each service publishes:
+```json
+{"service":"kernel","status":"OK","version":"v1.2.3","uptime":"4h32m","extras":{...}}
+```
+
+| Service | Extras |
+|---|---|
+| `pusher` | `nats_connected`, `active_sessions` |
+| `kernel` | `entity_count`, `connected_players`, `running_extensions` |
+| `ext-*` | `{}` (empty for now) |
+
+Services not heard from in 30s are marked `"stale"` in the HTTP response.
+
+### Version injection
+
+Version is baked into Go binaries at compile time via ldflags:
+- `git describe --tags --exact-match` (tag if HEAD is on a tag)
+- `git rev-parse --short HEAD` (short commit hash)
+- `"dev"` fallback (no git available)
+
+Shared via `backend/internal/version/version.go`. The Makefile and Dockerfile both inject it.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/internal/version/version.go` | New — shared `Version` variable, set via ldflags |
+| `backend/internal/worldsim/worldsim.go` | `startTime`, `startHealthPublisher` goroutine, `publishHealth` with kernel extras |
+| `backend/internal/worldsim/extensions.go` | `ActiveCount()` method for non-stale extension count |
+| `backend/internal/pusher/pusher.go` | `startTime`, `healthMap`, `healthz` NATS subscriber, `handleHealthz` HTTP handler, `startHealthPublisher`, `publishHealth` |
+| `backend/cmd/ext-{demo,walls,props,av}/main.go` | `startTime`, `publishHealth` in existing 10s ticker |
+| `Makefile` | `VERSION` + `LDFLAGS` variables, ldflags on all `go build` |
+| `docker/backend.Dockerfile` | `ARG VERSION=dev`, ldflags on all `go build` |
+| `docker/nginx.conf` | `/healthz` proxy in both HTTP and HTTPS server blocks |
+| `frontend/vite.config.ts` | `/healthz` dev proxy to `localhost:8081` |
+| `frontend/index.html` | `#version-badge` div (fixed bottom-left, 10px monospace, semi-transparent, pointer-events:none) |
+| `frontend/src/main.ts` | `pollVersion()` — fetch `/healthz` every 10s, display kernel version |
+
+### Documentation updated
+
+- `documentation/09-pusher.md` — §9: Health endpoint (`/healthz`) section, `healthz` NATS subject in communication contract, health aggregator in internal modules
+- `documentation/10-world-simulator.md` — `healthz` in outbound NATS subjects table
+- `documentation/18-extensions.md` — `healthz` in extension NATS subject contract

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	otelinternal "github.com/lstep/pixeleruv/backend/internal/otel"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
+	"github.com/lstep/pixeleruv/backend/internal/version"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -36,12 +38,27 @@ import (
 var PingInterval = 30 * time.Second
 
 type Server struct {
-	wsAddr   string
-	nc       *nats.Conn
-	logger   *slog.Logger
-	tracer   trace.Tracer
-	auth     *AuthValidator
-	sessions sync.Map // client_id -> *session
+	wsAddr     string
+	nc         *nats.Conn
+	logger     *slog.Logger
+	tracer     trace.Tracer
+	auth       *AuthValidator
+	sessions   sync.Map // client_id -> *session
+	startTime  time.Time
+	healthMu   sync.Mutex
+	healthMap  map[string]*HealthEntry // service name -> latest health
+}
+
+// HealthEntry is the health status of one backend service, collected from the
+// "healthz" NATS subject. The pusher aggregates these and serves them via the
+// HTTP /healthz endpoint.
+type HealthEntry struct {
+	Service  string          `json:"service"`
+	Status   string          `json:"status"`
+	Version  string          `json:"version"`
+	Uptime   string          `json:"uptime"`
+	Extras   json.RawMessage `json:"extras,omitempty"`
+	LastSeen time.Time       `json:"last_seen"`
 }
 
 type session struct {
@@ -70,11 +87,30 @@ func New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID string, logger *slo
 		auth = NewAuthValidator(dexIssuer, dexJwksURL, dexClientID)
 	}
 	srv := &Server{
-		wsAddr: wsAddr,
-		nc:     nc,
-		logger: logger,
-		tracer: otel.Tracer("pusher"),
-		auth:   auth,
+		wsAddr:    wsAddr,
+		nc:        nc,
+		logger:    logger,
+		tracer:    otel.Tracer("pusher"),
+		auth:      auth,
+		startTime: time.Now(),
+		healthMap: make(map[string]*HealthEntry),
+	}
+
+	// healthz — every backend service (pusher, worldsim, extensions)
+	// publishes a health JSON to this subject every 10 seconds. The pusher
+	// aggregates them into healthMap and serves the result via HTTP /healthz.
+	if _, err := nc.Subscribe("healthz", func(m *nats.Msg) {
+		var entry HealthEntry
+		if err := json.Unmarshal(m.Data, &entry); err != nil {
+			srv.logger.Warn("healthz unmarshal", "err", err)
+			return
+		}
+		entry.LastSeen = time.Now()
+		srv.healthMu.Lock()
+		srv.healthMap[entry.Service] = &entry
+		srv.healthMu.Unlock()
+	}); err != nil {
+		return nil, fmt.Errorf("subscribe healthz: %w", err)
 	}
 
 	// chat.broadcast — worldsim publishes a fully-marshaled ServerFrame
@@ -100,6 +136,7 @@ func New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID string, logger *slo
 func (s *Server) Run(ctx context.Context) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWS)
+	mux.HandleFunc("/healthz", s.handleHealthz)
 
 	srv := &http.Server{Addr: s.wsAddr, Handler: mux}
 
@@ -108,6 +145,9 @@ func (s *Server) Run(ctx context.Context) error {
 		go s.auth.startKeyRefresh(ctx)
 	}
 
+	// Publish the pusher's own health to "healthz" every 10 seconds.
+	go s.startHealthPublisher(ctx)
+
 	go func() {
 		<-ctx.Done()
 		srv.Shutdown(context.Background())
@@ -115,6 +155,76 @@ func (s *Server) Run(ctx context.Context) error {
 	}()
 
 	return srv.ListenAndServe()
+}
+
+// handleHealthz serves the aggregated health of all backend services as JSON.
+// Each service publishes to the "healthz" NATS subject every 10 seconds; the
+// pusher collects them into healthMap. Entries older than 30 seconds are
+// marked "stale" so consumers can detect dead services.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	s.healthMu.Lock()
+	entries := make([]*HealthEntry, 0, len(s.healthMap))
+	now := time.Now()
+	for _, e := range s.healthMap {
+		if now.Sub(e.LastSeen) > 30*time.Second {
+			e.Status = "stale"
+		}
+		entries = append(entries, e)
+	}
+	s.healthMu.Unlock()
+
+	// Sort by service name for stable output.
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Service < entries[j].Service
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"services": entries,
+	})
+}
+
+// startHealthPublisher publishes the pusher's own health JSON to the "healthz"
+// NATS subject every 10 seconds so other pusher instances (and itself) can
+// aggregate it.
+func (s *Server) startHealthPublisher(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	s.publishHealth() // publish immediately on startup
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.publishHealth()
+		}
+	}
+}
+
+func (s *Server) publishHealth() {
+	sessionCount := 0
+	s.sessions.Range(func(_, _ any) bool {
+		sessionCount++
+		return true
+	})
+	health := map[string]any{
+		"service": "pusher",
+		"status":  "OK",
+		"version": version.Version,
+		"uptime":  time.Since(s.startTime).Round(time.Second).String(),
+		"extras": map[string]any{
+			"nats_connected":   s.nc.Status() == nats.CONNECTED,
+			"active_sessions":  sessionCount,
+		},
+	}
+	data, err := json.Marshal(health)
+	if err != nil {
+		s.logger.Warn("healthz marshal", "err", err)
+		return
+	}
+	if err := s.nc.Publish("healthz", data); err != nil {
+		s.logger.Warn("healthz publish", "err", err)
+	}
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {

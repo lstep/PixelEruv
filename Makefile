@@ -8,6 +8,11 @@ DIST_BIN := dist/bin
 DIST_DIR := dist
 DIST_COMPOSE := $(DIST_DIR)/docker-compose.yml
 
+# Build version: git tag if HEAD is exactly on a tag, otherwise short commit
+# hash. Falls back to "dev" if git is unavailable (e.g. extracted tarball).
+VERSION := $(shell git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo dev)
+LDFLAGS := -X github.com/lstep/pixeleruv/backend/internal/version.Version=$(VERSION)
+
 # Cross-compile defaults — native platform. Override per-target.
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
@@ -33,13 +38,13 @@ proto:
 # Defaults to native; overridden by dist-x86 / dist-macos.
 build:
 	@mkdir -p $(DIST_BIN)
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/pusher ./cmd/pusher
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/worldsim ./cmd/worldsim
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-demo ./cmd/ext-demo
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pusher ./cmd/pusher
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/worldsim ./cmd/worldsim
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-demo ./cmd/ext-demo
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 
 # Sync root assets into frontend/public/ so Vite serves them in dev and bundles
 # them into dist/web/. The root maps/ and spritesheets/ directories are the

@@ -1,6 +1,8 @@
 # Multi-stage build for both Pusher and World Sim
 FROM golang:1.26-alpine AS builder
 
+ARG VERSION=dev
+
 WORKDIR /build
 
 # Copy go module files
@@ -11,14 +13,14 @@ RUN go mod download
 COPY backend/ ./
 COPY proto/ ../proto/
 
-# Build both binaries
-RUN go build -o /out/pusher ./cmd/pusher
-RUN go build -o /out/worldsim ./cmd/worldsim
-RUN go build -o /out/seed-sprites ./cmd/seed-sprites
-RUN go build -o /out/ext-demo ./cmd/ext-demo
-RUN go build -o /out/ext-walls ./cmd/ext-walls
-RUN go build -o /out/ext-props ./cmd/ext-props
-RUN go build -o /out/ext-av ./cmd/ext-av
+# Build both binaries with version injected via ldflags
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/pusher ./cmd/pusher
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/worldsim ./cmd/worldsim
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/seed-sprites ./cmd/seed-sprites
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-demo ./cmd/ext-demo
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-walls ./cmd/ext-walls
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-props ./cmd/ext-props
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-av ./cmd/ext-av
 
 # --- Pusher image ---
 FROM alpine:3.20 AS pusher

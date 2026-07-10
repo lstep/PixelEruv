@@ -123,6 +123,20 @@ func (m *ExtensionManager) IsRegistered(id string) bool {
 	return time.Since(ext.LastHeartbeat) <= 3*ext.HeartbeatInterval
 }
 
+// ActiveCount returns the number of registered, non-stale extensions.
+func (m *ExtensionManager) ActiveCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	count := 0
+	for _, ext := range m.extensions {
+		if now.Sub(ext.LastHeartbeat) <= 3*ext.HeartbeatInterval {
+			count++
+		}
+	}
+	return count
+}
+
 // triggerMsg is the payload for extension.<id>.register_triggers.
 type triggerMsg struct {
 	ExtensionID string `json:"extension_id"`
