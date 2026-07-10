@@ -58,6 +58,17 @@ export class AvClient {
 
   constructor() {
     console.log(`AvClient: init micMuted=${this.micMuted} cameraEnabled=${this.cameraEnabled} noiseCancellation=${this.noiseCancellation}`);
+    // Set the audio session type to "play-and-record" for video conferencing.
+    // On Safari (macOS/iOS), this tells the system to use the VPIO (Voice
+    // Processing I/O) unit, which enables hardware-level acoustic echo
+    // cancellation. Without this, Safari may not properly set up the AEC
+    // reference signal, causing remote participants to hear echo from the
+    // Safari user's mic. The API is experimental and Safari-only; other
+    // browsers ignore it. Must be set before any getUserMedia call.
+    // See: https://developer.mozilla.org/en-US/docs/Web/API/Navigator/audioSession
+    if ("audioSession" in navigator) {
+      (navigator as any).audioSession.type = "play-and-record";
+    }
     // Unlock audio on the very first click anywhere on the page. Safari
     // blocks audio autoplay unless a media element was played during a user
     // gesture. By playing a silent sample on the first click (before any
