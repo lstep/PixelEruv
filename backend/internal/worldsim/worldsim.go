@@ -24,6 +24,7 @@ import (
 
 	otelinternal "github.com/lstep/pixeleruv/backend/internal/otel"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
+	"github.com/lstep/pixeleruv/backend/internal/version"
 )
 
 // --- Minimal ECS ---
@@ -111,6 +112,7 @@ type Simulator struct {
 	tickHz        int
 	tickDur       time.Duration
 	tickCount     uint64
+	startTime     time.Time
 	logger        *slog.Logger
 	tracer        trace.Tracer
 	rng           *rand.Rand
@@ -179,6 +181,7 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		pocketbaseURL:    pocketbaseURL,
 		tickHz:           tickHz,
 		tickDur:          time.Second / time.Duration(tickHz),
+		startTime:        time.Now(),
 		logger:           logger,
 		tracer:           otel.Tracer("worldsim"),
 		rng:              rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)),
@@ -453,6 +456,10 @@ func (s *Simulator) Run(ctx context.Context) error {
 	// Periodic map reload check (every 30 seconds).
 	go s.startMapReloadChecker(ctx)
 
+	// Publish health to the "healthz" NATS subject every 10 seconds so the
+	// pusher can aggregate and serve it via its HTTP /healthz endpoint.
+	go s.startHealthPublisher(ctx)
+
 	ticker := time.NewTicker(s.tickDur)
 	defer ticker.Stop()
 
@@ -464,6 +471,51 @@ func (s *Simulator) Run(ctx context.Context) error {
 		case <-ticker.C:
 			s.tick()
 		}
+	}
+}
+
+// startHealthPublisher publishes a health JSON to the "healthz" NATS subject
+// every 10 seconds. The pusher subscribes to this subject, aggregates the
+// responses, and serves them via its HTTP /healthz endpoint.
+func (s *Simulator) startHealthPublisher(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	s.publishHealth() // publish immediately on startup
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.publishHealth()
+		}
+	}
+}
+
+func (s *Simulator) publishHealth() {
+	s.mu.Lock()
+	entityCount := len(s.entities)
+	playerCount := len(s.clients)
+	s.mu.Unlock()
+	runningExts := s.extMgr.ActiveCount()
+
+	health := map[string]any{
+		"service": "kernel",
+		"status":  "OK",
+		"version": version.Version,
+		"uptime":  time.Since(s.startTime).Round(time.Second).String(),
+		"extras": map[string]any{
+			"entity_count":       entityCount,
+			"connected_players":  playerCount,
+			"running_extensions": runningExts,
+		},
+	}
+	data, err := json.Marshal(health)
+	if err != nil {
+		s.logger.Warn("healthz marshal", "err", err)
+		return
+	}
+	if err := s.nc.Publish("healthz", data); err != nil {
+		s.logger.Warn("healthz publish", "err", err)
 	}
 }
 

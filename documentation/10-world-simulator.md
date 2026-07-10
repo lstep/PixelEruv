@@ -775,6 +775,7 @@ shared memory.
 | `input.<input_type>` | All extensions registered for that input type | Input trigger dispatch (player clicked or pressed a key; includes equipment snapshot, range, LOS, entities) | On ActionFrame |
 | `extension.<ext_id>.error` | Extension | Validation error | On error |
 | `admin.revoke.<entity_id>` | Pusher (all instances) | Force-disconnect a user | On admin kick |
+| `healthz` | Pusher (health aggregator) | Health JSON: `{service, status, version, uptime, extras}` with `entity_count`, `connected_players`, `running_extensions` | Every 10s |
 
 > The subject naming convention is illustrative. The final convention will be
 > defined in `07-network-protocol.md`.

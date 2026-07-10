@@ -1151,6 +1151,7 @@ The client needs to know how to render custom components. The mechanism:
 | `entity.<entity_id>.move` | Request interpolated movement to a target | On demand |
 | `trigger.<trigger_id>.reply` | Reply to an `ask` gate trigger query | Async (within `ttl_ms`) |
 | `input.<input_type>.reply.<req_id>` | Reply to an input trigger dispatch (updates, consume_items) | Async |
+| `healthz` | Health JSON: `{service, status, version, uptime, extras}` — published by every service; the pusher aggregates and serves via HTTP `/healthz` | Every 10s |
 
 ### World Sim → Extension
 

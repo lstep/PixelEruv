@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
 
@@ -47,6 +48,7 @@ type triggerMsg struct {
 }
 
 func main() {
+	startTime := time.Now()
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	pbURL := envOr("POCKETBASE_URL", "http://localhost:8090")
 	mapID := envOr("MAP_ID", "map1")
@@ -166,6 +168,7 @@ func main() {
 			if ticks%3 == 0 {
 				register()
 			}
+			publishHealth(nc, "ext-"+extID, startTime)
 			ticks++
 		}
 	}
@@ -241,4 +244,16 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func publishHealth(nc *nats.Conn, service string, startTime time.Time) {
+	health := map[string]any{
+		"service": service,
+		"status":  "OK",
+		"version": version.Version,
+		"uptime":  time.Since(startTime).Round(time.Second).String(),
+		"extras":  map[string]any{},
+	}
+	data, _ := json.Marshal(health)
+	nc.Publish("healthz", data)
 }

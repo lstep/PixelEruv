@@ -8,6 +8,10 @@ export default defineConfig({
         target: "ws://localhost:8081",
         ws: true,
       },
+      "/healthz": {
+        target: "http://localhost:8081",
+        changeOrigin: true,
+      },
       // Proxy OTLP trace exports to motel so the browser makes same-origin
       // requests (motel doesn't send CORS headers). Only used in dev.
       "/v1/traces": {

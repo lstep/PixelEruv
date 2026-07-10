@@ -12,6 +12,23 @@ import { ChatPanel } from "./ui/ChatPanel";
 // VITE_OTEL_ENABLED != "true".
 initOtel();
 
+// Poll /healthz every 10 seconds and display the kernel version in a small
+// bottom-left badge. Fire-and-forget — failures leave the badge as-is.
+function pollVersion(): void {
+  const badge = document.getElementById("version-badge");
+  if (!badge) return;
+  fetch("/healthz")
+    .then((res) => res.json())
+    .then((data) => {
+      const kernel = (data.services as { service: string; version: string }[])
+        ?.find((s) => s.service === "kernel");
+      if (kernel?.version) badge.textContent = kernel.version;
+    })
+    .catch(() => {}); // ignore — badge stays as-is on failure
+}
+pollVersion();
+setInterval(pollVersion, 10_000);
+
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: "game",
