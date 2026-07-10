@@ -12,18 +12,19 @@
 import Phaser from "phaser";
 
 const STORAGE_KEY = "daynight.enabled";
+const STORAGE_KEY_KEYFRAMES = "daynight.keyframes";
 const MAX_ALPHA = 0.44;
 const DEPTH = 9997;
 const UPDATE_INTERVAL_MS = 60_000;
 
-interface Keyframe {
+export interface Keyframe {
   minutes: number; // minutes since midnight (0–1439)
   color: number; // 0xRRGGBB
   alpha: number; // 0–1 (before cap)
 }
 
-// 8 keyframes evenly spaced across the day. Hours in 24h local time.
-const KEYFRAMES: Keyframe[] = [
+// 8 default keyframes evenly spaced across the day. Hours in 24h local time.
+export const DEFAULT_KEYFRAMES: Keyframe[] = [
   { minutes: 0, color: 0x0a0a2e, alpha: 0.38 }, // 00:00 deep night
   { minutes: 180, color: 0x0a0a2e, alpha: 0.38 }, // 03:00 night
   { minutes: 360, color: 0xff8c42, alpha: 0.20 }, // 06:00 dawn
@@ -39,10 +40,12 @@ export class DayNightOverlay {
   private rect: Phaser.GameObjects.Rectangle;
   private timer: Phaser.Time.TimerEvent;
   private enabled: boolean;
+  private keyframes: Keyframe[];
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
     this.enabled = loadEnabled();
+    this.keyframes = loadKeyframes();
 
     this.rect = scene.add
       .rectangle(0, 0, scene.scale.width, scene.scale.height, 0x000000, 0)
@@ -62,7 +65,7 @@ export class DayNightOverlay {
   /** Recalculates color/alpha from the current local time and applies it. */
   private apply(): void {
     if (!this.enabled) return;
-    const { color, alpha } = interpolate(new Date());
+    const { color, alpha } = interpolate(new Date(), this.keyframes);
     this.rect.setFillStyle(color, Math.min(alpha, MAX_ALPHA));
   }
 
@@ -78,6 +81,22 @@ export class DayNightOverlay {
     return this.enabled;
   }
 
+  /** Returns the current keyframes (a copy). */
+  getKeyframes(): Keyframe[] {
+    return this.keyframes.map((kf) => ({ ...kf }));
+  }
+
+  /**
+   * Replaces the keyframes. Must be sorted ascending by minutes, with at
+   * least 2 entries covering the day. Persists to localStorage and
+   * re-applies immediately. Pass null/undefined to restore defaults.
+   */
+  setKeyframes(keyframes: Keyframe[] | null): void {
+    this.keyframes = keyframes && keyframes.length >= 2 ? keyframes : DEFAULT_KEYFRAMES;
+    saveKeyframes(this.keyframes);
+    if (this.enabled) this.apply();
+  }
+
   /** Resizes the rectangle to cover the viewport. Call on window resize. */
   resize(width: number, height: number): void {
     this.rect.setSize(width, height);
@@ -91,17 +110,17 @@ export class DayNightOverlay {
 
 // --- Interpolation ---
 
-function interpolate(now: Date): { color: number; alpha: number } {
+function interpolate(now: Date, keyframes: Keyframe[]): { color: number; alpha: number } {
   const minutes = now.getHours() * 60 + now.getMinutes();
 
   // Find the two surrounding keyframes (wrapping past midnight).
-  let prev = KEYFRAMES[KEYFRAMES.length - 1];
-  let next = KEYFRAMES[0];
-  for (let i = 0; i < KEYFRAMES.length; i++) {
-    const kf = KEYFRAMES[i];
+  let prev = keyframes[keyframes.length - 1];
+  let next = keyframes[0];
+  for (let i = 0; i < keyframes.length; i++) {
+    const kf = keyframes[i];
     if (kf.minutes <= minutes) {
       prev = kf;
-      next = KEYFRAMES[(i + 1) % KEYFRAMES.length];
+      next = keyframes[(i + 1) % keyframes.length];
     } else {
       break;
     }
@@ -136,4 +155,20 @@ function loadEnabled(): boolean {
 
 function saveEnabled(enabled: boolean): void {
   localStorage.setItem(STORAGE_KEY, String(enabled));
+}
+
+function loadKeyframes(): Keyframe[] {
+  const raw = localStorage.getItem(STORAGE_KEY_KEYFRAMES);
+  if (!raw) return DEFAULT_KEYFRAMES;
+  try {
+    const parsed = JSON.parse(raw) as Keyframe[];
+    if (!Array.isArray(parsed) || parsed.length < 2) return DEFAULT_KEYFRAMES;
+    return parsed;
+  } catch {
+    return DEFAULT_KEYFRAMES;
+  }
+}
+
+function saveKeyframes(keyframes: Keyframe[]): void {
+  localStorage.setItem(STORAGE_KEY_KEYFRAMES, JSON.stringify(keyframes));
 }

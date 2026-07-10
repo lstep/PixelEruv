@@ -29,6 +29,8 @@ A purely cosmetic, 100% client-side full-screen rectangle tints the game world b
 
 **TODO:** Add a toggle checkbox to the TopMenu settings dropdown (the `setEnabled()` API is ready for it).
 
+**TODO:** Add a keyframe editor to the TopMenu settings dropdown (the `setKeyframes()` / `getKeyframes()` API and `DEFAULT_KEYFRAMES` export are ready for it). Custom keyframes persist in localStorage key `daynight.keyframes`.
+
 ## Remote Audio: FIXED
 
 **Branch:** `fix/av-audio-autoplay`
