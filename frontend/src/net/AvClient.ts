@@ -318,11 +318,21 @@ export class AvClient {
   // echoCancellation, and autoGainControl are set to true. When disabled, they
   // are explicitly set to false to override the LiveKit SDK's built-in defaults
   // (which enable all three).
+  //
+  // voiceIsolation is explicitly set to false to override the SDK default
+  // (true). It is an experimental W3C constraint that may interfere with
+  // Safari's acoustic echo cancellation — on macOS/iOS, voiceIsolation can
+  // change the CoreAudio processing path (VPIO unit) in ways that degrade AEC.
+  // See WebKit bug 213723: Safari's AEC is already weaker than Chrome's, and
+  // voiceIsolation appears to make it worse. Disabling it has no downside on
+  // Chrome since noiseSuppression (which we already set) covers the same use
+  // case.
   private buildAudioCaptureOptions(): import("livekit-client").AudioCaptureOptions {
     const opts: import("livekit-client").AudioCaptureOptions = {
       noiseSuppression: this.noiseCancellation,
       echoCancellation: this.noiseCancellation,
       autoGainControl: this.noiseCancellation,
+      voiceIsolation: false,
     };
     if (this.selectedMicId) {
       opts.deviceId = this.selectedMicId;
