@@ -6,11 +6,9 @@
 // booleans the keyboard path uses, so no backend or prediction changes are
 // needed — the joystick is just another InputState source.
 //
-// Only activates on touch pointers (pointer.wasTouch), so desktop mouse input
-// is unaffected. Both the base and thumb are screen-fixed (scrollFactor 0) and
-// hidden until touched.
-
-import Phaser from "phaser";
+// Uses DOM elements (not Phaser GameObjects) so positioning is always in CSS
+// pixels and unaffected by camera zoom or scroll. Only activates on touch
+// pointers (pointerType === "touch"), so desktop mouse input is unaffected.
 
 // Fraction of the screen width (from the left edge) that activates the
 // joystick. The right side is reserved for UI and future buttons.
@@ -21,7 +19,7 @@ const THUMB_RADIUS = 60;
 // accidental drift when the thumb rests near the center.
 const DEADZONE = 0.35;
 const BASE_RADIUS = 70;
-const DEPTH = 9990;
+const THUMB_RADIUS_VISUAL = 28;
 
 export interface JoystickInput {
   up: boolean;
@@ -31,67 +29,74 @@ export interface JoystickInput {
 }
 
 export class VirtualJoystick {
-  private scene: Phaser.Scene;
-  private base: Phaser.GameObjects.Arc;
-  private thumb: Phaser.GameObjects.Arc;
+  private onInput: (input: JoystickInput) => void;
+  private base: HTMLDivElement;
+  private thumb: HTMLDivElement;
   private activePointerId: number | null = null;
   private originX = 0;
   private originY = 0;
-  private onInput: (input: JoystickInput) => void;
+  private boundDown: (e: PointerEvent) => void;
+  private boundMove: (e: PointerEvent) => void;
+  private boundUp: (e: PointerEvent) => void;
 
-  constructor(scene: Phaser.Scene, onInput: (input: JoystickInput) => void) {
-    this.scene = scene;
+  constructor(onInput: (input: JoystickInput) => void) {
     this.onInput = onInput;
 
-    this.base = scene.add
-      .circle(0, 0, BASE_RADIUS, 0xffffff, 0.15)
-      .setStrokeStyle(2, 0xffffff, 0.4)
-      .setScrollFactor(0)
-      .setDepth(DEPTH)
-      .setVisible(false);
+    this.base = document.createElement("div");
+    this.base.style.cssText =
+      `position:fixed;width:${BASE_RADIUS * 2}px;height:${BASE_RADIUS * 2}px;` +
+      `border-radius:50%;background:rgba(255,255,255,0.15);` +
+      `border:2px solid rgba(255,255,255,0.4);pointer-events:none;` +
+      `z-index:100;transform:translate(-50%,-50%);display:none;`;
 
-    this.thumb = scene.add
-      .circle(0, 0, 28, 0xffffff, 0.35)
-      .setStrokeStyle(2, 0xffffff, 0.6)
-      .setScrollFactor(0)
-      .setDepth(DEPTH + 1)
-      .setVisible(false);
+    this.thumb = document.createElement("div");
+    this.thumb.style.cssText =
+      `position:fixed;width:${THUMB_RADIUS_VISUAL * 2}px;height:${THUMB_RADIUS_VISUAL * 2}px;` +
+      `border-radius:50%;background:rgba(255,255,255,0.35);` +
+      `border:2px solid rgba(255,255,255,0.6);pointer-events:none;` +
+      `z-index:101;transform:translate(-50%,-50%);display:none;`;
 
-    scene.input.on("pointerdown", this.handleDown, this);
-    scene.input.on("pointermove", this.handleMove, this);
-    scene.input.on("pointerup", this.handleUp, this);
-    scene.input.on("pointercancel", this.handleUp, this);
+    document.body.appendChild(this.base);
+    document.body.appendChild(this.thumb);
+
+    this.boundDown = this.handleDown.bind(this);
+    this.boundMove = this.handleMove.bind(this);
+    this.boundUp = this.handleUp.bind(this);
+
+    const target = document.getElementById("game") ?? document.body;
+    target.addEventListener("pointerdown", this.boundDown);
+    window.addEventListener("pointermove", this.boundMove);
+    window.addEventListener("pointerup", this.boundUp);
+    window.addEventListener("pointercancel", this.boundUp);
   }
 
-  private inMovementZone(pointer: Phaser.Input.Pointer): boolean {
-    return pointer.wasTouch && pointer.x <= this.scene.scale.width * MOVEMENT_ZONE_FRACTION;
+  private inMovementZone(e: PointerEvent): boolean {
+    return e.pointerType === "touch" && e.clientX <= window.innerWidth * MOVEMENT_ZONE_FRACTION;
   }
 
-  private handleDown(pointer: Phaser.Input.Pointer): void {
-    if (!this.inMovementZone(pointer)) return;
+  private handleDown(e: PointerEvent): void {
+    if (!this.inMovementZone(e)) return;
     if (this.activePointerId !== null) return; // already tracking a finger
-    this.activePointerId = pointer.id;
-    this.originX = pointer.x;
-    this.originY = pointer.y;
-    this.base.setPosition(pointer.x, pointer.y).setVisible(true);
-    this.thumb.setPosition(pointer.x, pointer.y).setVisible(true);
+    this.activePointerId = e.pointerId;
+    this.originX = e.clientX;
+    this.originY = e.clientY;
+    this.showAt(e.clientX, e.clientY);
   }
 
-  private handleMove(pointer: Phaser.Input.Pointer): void {
-    if (pointer.id !== this.activePointerId) return;
-    const dx = pointer.x - this.originX;
-    const dy = pointer.y - this.originY;
+  private handleMove(e: PointerEvent): void {
+    if (e.pointerId !== this.activePointerId) return;
+    const dx = e.clientX - this.originX;
+    const dy = e.clientY - this.originY;
     const dist = Math.hypot(dx, dy);
     const clamped = Math.min(dist, THUMB_RADIUS);
     const angle = Math.atan2(dy, dx);
     const tx = this.originX + Math.cos(angle) * clamped;
     const ty = this.originY + Math.sin(angle) * clamped;
-    this.thumb.setPosition(tx, ty);
+    this.showThumbAt(tx, ty);
 
     // Normalized vector in [-1, 1].
     const nx = dist > 0 ? dx / dist : 0;
     const ny = dist > 0 ? dy / dist : 0;
-    const mag = Math.min(dist / THUMB_RADIUS, 1);
 
     // Threshold axes independently for 8-directional support, matching the
     // diagonal normalization in GameScene.applyMovement.
@@ -101,23 +106,47 @@ export class VirtualJoystick {
       up: ny < -DEADZONE,
       down: ny > DEADZONE,
     });
-    void mag;
   }
 
-  private handleUp(pointer: Phaser.Input.Pointer): void {
-    if (pointer.id !== this.activePointerId) return;
+  private handleUp(e: PointerEvent): void {
+    if (e.pointerId !== this.activePointerId) return;
     this.activePointerId = null;
-    this.base.setVisible(false);
-    this.thumb.setVisible(false);
+    this.hide();
     this.onInput({ up: false, down: false, left: false, right: false });
   }
 
+  private showAt(x: number, y: number): void {
+    this.base.style.left = `${x}px`;
+    this.base.style.top = `${y}px`;
+    this.base.style.display = "block";
+    this.thumb.style.left = `${x}px`;
+    this.thumb.style.top = `${y}px`;
+    this.thumb.style.display = "block";
+  }
+
+  private showThumbAt(x: number, y: number): void {
+    this.thumb.style.left = `${x}px`;
+    this.thumb.style.top = `${y}px`;
+  }
+
+  private hide(): void {
+    this.base.style.display = "none";
+    this.thumb.style.display = "none";
+  }
+
+  /** Hides visuals and resets active state. Call on blur/visibilitychange. */
+  reset(): void {
+    this.activePointerId = null;
+    this.hide();
+  }
+
   destroy(): void {
-    this.scene.input.off("pointerdown", this.handleDown, this);
-    this.scene.input.off("pointermove", this.handleMove, this);
-    this.scene.input.off("pointerup", this.handleUp, this);
-    this.scene.input.off("pointercancel", this.handleUp, this);
-    this.base.destroy();
-    this.thumb.destroy();
+    const target = document.getElementById("game") ?? document.body;
+    target.removeEventListener("pointerdown", this.boundDown);
+    window.removeEventListener("pointermove", this.boundMove);
+    window.removeEventListener("pointerup", this.boundUp);
+    window.removeEventListener("pointercancel", this.boundUp);
+    this.base.remove();
+    this.thumb.remove();
   }
 }
