@@ -20,18 +20,39 @@ Workadventu/re — top-down pixel-art virtual offices with proximity
 audio. But it is built from a different set of principles. The sections
 below are the differentiators that matter when choosing a platform.
 
-### 0.1 Open Source and Self-Hostable
+### 0.1 Open Source — Expandable and Fast-Evolving
 
 Gather, ZEP, and Workadventu/re are proprietary and hosted. You pay a
 per-seat subscription, your data lives on someone else's servers, and
-you cannot audit or modify the code. Pixel Eruv is open source and
-self-hosted with Docker Compose — no Kubernetes, no platform-engineering
-team. Your data stays on your infrastructure.
+you cannot audit or modify the code. Your feature requests go into a
+backlog you can't see, and you wait for a vendor roadmap you can't
+influence.
+
+Pixel Eruv is open source. That changes three things:
+
+- **You own the code.** Self-host with Docker Compose — no Kubernetes,
+  no platform-engineering team. Your data stays on your infrastructure.
+  Audit every line. Modify anything. No vendor lock-in, no per-seat
+  cost.
+- **It's expandable.** The extension system means anyone can add NPCs,
+  custom zones, interactive objects, or entirely new gameplay systems
+  as peer processes in any language — without forking the engine. The
+  ECS core and the generic replication protocol mean new components
+  flow through the system without protocol changes. The community can
+  build features the core team never imagined.
+- **It evolves fast.** Proprietary platforms ship on a vendor's
+  schedule. An open-source project ships on the community's schedule.
+  Contributions, fixes, and features land as fast as people write
+  them. Every deployment can run the latest code — or fork it. The
+  roadmap is public, the decisions are documented, and the architecture
+  is designed to absorb new ideas without rewrites.
 
 **Storyboard:** Show a side-by-side table: Gather (proprietary, hosted,
-per-seat) vs Pixel Eruv (open source, self-hosted, flat cost). Show
-`make up` in a terminal — the full stack starts. Narrate: "your office,
-your servers, your data. No subscription, no vendor lock-in."
+per-seat, vendor roadmap) vs Pixel Eruv (open source, self-hosted, flat
+cost, community-driven). Show `make up` in a terminal — the full stack
+starts. Show the GitHub repo with the open issue list and pull requests.
+Narrate: "your office, your servers, your code. No subscription, no
+vendor lock-in, no waiting for someone else's roadmap."
 
 ### 0.2 Server-Authoritative, Not Client-Trusted
 
