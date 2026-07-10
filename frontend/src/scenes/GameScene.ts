@@ -5,6 +5,7 @@ import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from 
 import { AvClient } from "../net/AvClient";
 import { VideoBar } from "../ui/VideoBar";
 import { DayNightOverlay } from "../ui/DayNightOverlay";
+import { VirtualJoystick } from "../ui/VirtualJoystick";
 import type { MapAssets } from "../mapLoader";
 import type { SpriteBaseAsset } from "../spriteLoader";
 import type { TopMenu } from "../ui/TopMenu";
@@ -374,6 +375,8 @@ export class GameScene extends Phaser.Scene {
   // Cosmetic day/night tint overlay — a screen-fixed rectangle whose
   // color/alpha follows the local clock. Toggleable, defaults to on.
   private dayNightOverlay: DayNightOverlay | null = null;
+  // Floating on-screen joystick for touch devices. Null on desktop.
+  private joystick: VirtualJoystick | null = null;
 
   constructor() {
     super("GameScene");
@@ -727,12 +730,26 @@ export class GameScene extends Phaser.Scene {
       this.inputState.right = false;
       this.inputDirty = true;
       eHeld = false;
+      this.joystick?.reset();
     };
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") clearMovementInput();
     };
     window.addEventListener("blur", clearMovementInput);
     document.addEventListener("visibilitychange", onVisibilityChange);
+
+    // Touch input — floating virtual joystick. Only created on touch-capable
+    // devices so desktop mouse/keyboard is unaffected. Feeds the same
+    // inputState booleans as the keyboard handlers above.
+    if (navigator.maxTouchPoints > 0) {
+      this.joystick = new VirtualJoystick((j) => {
+        this.inputState.up = j.up;
+        this.inputState.down = j.down;
+        this.inputState.left = j.left;
+        this.inputState.right = j.right;
+        this.inputDirty = true;
+      });
+    }
 
     // Connect to Pusher via WebSocket.
     // In Docker (nginx on 8080): wss://host/ws over HTTPS, ws://host/ws over HTTP
