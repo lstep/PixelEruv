@@ -3,11 +3,12 @@ import { fromBinary } from "@bufbuild/protobuf";
 import { AppearanceSchema, DisplayNameSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
-import { AvOverlay } from "../net/AvOverlay";
+import { VideoBar } from "../ui/VideoBar";
 import type { MapAssets } from "../mapLoader";
 import type { SpriteBaseAsset } from "../spriteLoader";
 import type { TopMenu } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
+import { getUsername } from "../username";
 
 const TILE_SIZE = 32;
 
@@ -344,7 +345,10 @@ export class GameScene extends Phaser.Scene {
   private avatars: Map<string, Avatar> = new Map();
   private myEntityId: string | null = null;
   private avClient: AvClient | null = null;
-  private avOverlay: AvOverlay | null = null;
+  private videoBar: VideoBar | null = null;
+  // Display names by entity ID, populated from DisplayName component updates.
+  // Used by the VideoBar to label tiles (including the local player's self-view).
+  private displayNameByEntity = new Map<string, string>();
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
@@ -726,10 +730,15 @@ export class GameScene extends Phaser.Scene {
       : `${wsScheme}://${window.location.host}/ws`;
     console.log("connecting to", wsUrl);
     this.ws = new WsClient(wsUrl);
-    // A/V client + DOM overlay for video tiles. Mic/camera HUD controls
-    // live in the TopMenu (created once in main.ts, stored in the registry).
+    // A/V client + VideoBar for participant video tiles. Mic/camera HUD
+    // controls live in the TopMenu (created once in main.ts, stored in the
+    // registry). The VideoBar is a fixed DOM bar below the TopMenu.
     this.avClient = new AvClient();
-    this.avOverlay = new AvOverlay(this, this.avClient);
+    this.videoBar = new VideoBar({
+      avClient: this.avClient,
+      getName: (entityId) => this.resolveDisplayName(entityId),
+      getLocalEntityId: () => this.myEntityId,
+    });
     const topMenu = this.game.registry.get("topMenu") as TopMenu | undefined;
     topMenu?.attachAvControls(this.avClient);
     const chatPanel = this.game.registry.get("chatPanel") as ChatPanel | undefined;
@@ -815,11 +824,11 @@ export class GameScene extends Phaser.Scene {
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
     topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
 
-    // Clean up A/V overlay + LiveKit room on scene shutdown.
+    // Clean up A/V video bar + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
-      this.avOverlay?.destroy();
+      this.videoBar?.destroy();
       this.avClient?.close();
-      this.avOverlay = null;
+      this.videoBar = null;
       this.avClient = null;
       topMenu?.detachAvControls();
       window.removeEventListener("blur", clearMovementInput);
@@ -900,8 +909,8 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // --- A/V: spatial volume + video tile positioning ---
-    if (this.avClient && this.avOverlay) {
+    // --- A/V: spatial volume + video bar tick ---
+    if (this.avClient && this.videoBar) {
       const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
       if (local) {
         const localX = local.sprite.x / TILE_SIZE;
@@ -916,20 +925,8 @@ export class GameScene extends Phaser.Scene {
           this.avClient.setParticipantVolume(avatar.entityId, vol);
         }
       }
-      // Position video tiles above avatars in screen space.
-      this.avOverlay.updatePositions((entityId) => {
-        const av = this.avatars.get(entityId);
-        if (!av) return null;
-        const cam = this.cameras.main;
-        let screenX = (av.sprite.x - cam.scrollX) * cam.zoom;
-        let screenY = (av.sprite.y - cam.scrollY) * cam.zoom;
-        // Clamp to screen edges so video tiles remain visible for A/V zone
-        // participants even when their avatar is outside the viewport.
-        const margin = 60;
-        screenX = Phaser.Math.Clamp(screenX, margin, this.scale.width - margin);
-        screenY = Phaser.Math.Clamp(screenY, margin, this.scale.height - margin);
-        return { x: screenX, y: screenY, scale: cam.zoom };
-      });
+      // Drive spectrograms, speaking state, and speaking-first reordering.
+      this.videoBar.tick();
     }
   }
 
@@ -1032,6 +1029,7 @@ export class GameScene extends Phaser.Scene {
       // for the local player's own avatar (you don't need a tag over your
       // own head).
       if (displayName) {
+        this.displayNameByEntity.set(spawn.entityId, displayName);
         this.createNameTag(spawn.entityId, displayName);
       }
       // Start idle animation immediately.
@@ -1089,6 +1087,7 @@ export class GameScene extends Phaser.Scene {
         // DisplayName component — update or create the name tag.
         const dn = fromBinary(DisplayNameSchema, upd.data);
         if (dn.name) {
+          this.displayNameByEntity.set(upd.entityId, dn.name);
           if (avatar.nameTag) {
             avatar.nameTag.setText(dn.name);
           } else {
@@ -1141,5 +1140,20 @@ export class GameScene extends Phaser.Scene {
     // Hide for the local player's own avatar.
     tag.setVisible(entityId !== this.myEntityId);
     avatar.nameTag = tag;
+  }
+
+  // resolveDisplayName returns the display name for an entity, used by the
+  // VideoBar to label tiles. For the local player, getUsername() (localStorage)
+  // is checked first since it updates immediately when the user changes their
+  // name, before the server echoes back a DisplayName component update.
+  private resolveDisplayName(entityId: string): string {
+    if (entityId === this.myEntityId) {
+      const local = getUsername();
+      if (local) return local;
+    }
+    const name = this.displayNameByEntity.get(entityId);
+    if (name) return name;
+    if (entityId === this.myEntityId) return "You";
+    return entityId;
   }
 }
