@@ -175,6 +175,42 @@ for a single player movement. Point at each span and its duration.
 Narrate: "no guessing. Every hop is traced. You see the exact
 millisecond the worldsim spent on collision."
 
+### 0.9 Easy Branding and Customization
+
+Gather and ZEP let you upload a logo and pick a color theme. That's
+where customization ends — you're decorating someone else's product.
+Pixel Eruv is yours, so customization goes as deep as you want:
+
+- **Maps are Tiled files.** Design your office, campus, conference
+  hall, or expo in Tiled — upload the JSON and tileset PNGs to
+  PocketBase. No code, no rebuild. The worldsim auto-seeds a default
+  map on first boot, and replacing it is a record edit.
+- **Sprites are PocketBase records.** Upload your own character
+  spritesheets to the `sprite_bases` collection and they appear in the
+  character select screen immediately — no rebuild, no redeploy.
+- **Zones and objects are map data.** Brand a zone with your company
+  name, mark it `av_enabled` for a meeting room, or `zone_type=wall`
+  for collision — all authored in Tiled, all read at load time.
+- **Extensions define behavior.** A company could write an extension
+  that displays their internal status board, a receptionist NPC that
+  greets visitors with the company name, or a custom zone policy that
+  matches their org chart. The extension API is the same one the
+  first-party extensions use.
+- **Identity is Dex.** Point Dex at your corporate LDAP or Active
+  Directory and employees log in with their existing credentials. No
+  separate account system, no password sync.
+
+An enterprise or association can have a fully branded virtual space —
+custom map, custom sprites, custom interactions, corporate SSO —
+without writing engine code or forking the repo.
+
+**Storyboard:** Show a default Pixel Eruv office. Then show the same
+deployment with a custom Tiled map (a branded lobby with the company
+logo as a decoration), custom character sprites (employees in company
+colors), and a Dex config pointing at LDAP. Narrate: "logo, map,
+characters, behavior, login — all yours. No fork, no vendor, no
+per-seat branding fee."
+
 ---
 
 ## Part 0b — Use Cases
@@ -893,7 +929,8 @@ seamlessly.
 3. 0.4 Extensions in Any Language (vs sandboxed scripting)
 4. 0.5 Enterprise Identity from Day One (vs custom auth bridges)
 5. 0.6 The Kernel Has No Gameplay Logic (vs hardcoded features)
-6. 0.8 Observable by Default (vs black box)
+6. 0.9 Easy Branding and Customization (vs logo + color theme)
+7. 0.8 Observable by Default (vs black box)
 
 ### Arc B: "How It Works Under the Hood" (10 minutes)
 
