@@ -13,6 +13,138 @@ feature.
 
 ---
 
+## Part 0 — Why Pixel Eruv Is Different
+
+Pixel Eruv sits in the same category as Gather.town, ZEP, and
+Workadventu/re — top-down pixel-art virtual offices with proximity
+audio. But it is built from a different set of principles. The sections
+below are the differentiators that matter when choosing a platform.
+
+### 0.1 Open Source and Self-Hostable
+
+Gather, ZEP, and Workadventu/re are proprietary and hosted. You pay a
+per-seat subscription, your data lives on someone else's servers, and
+you cannot audit or modify the code. Pixel Eruv is open source and
+self-hosted with Docker Compose — no Kubernetes, no platform-engineering
+team. Your data stays on your infrastructure.
+
+**Storyboard:** Show a side-by-side table: Gather (proprietary, hosted,
+per-seat) vs Pixel Eruv (open source, self-hosted, flat cost). Show
+`make up` in a terminal — the full stack starts. Narrate: "your office,
+your servers, your data. No subscription, no vendor lock-in."
+
+### 0.2 Server-Authoritative, Not Client-Trusted
+
+Gather and Workadventu/re run game logic in the browser — the client
+decides where your avatar is and tells the server. This is fast to build
+but insecure: a modified client can teleport, walk through walls, or
+spoof position. Pixel Eruv is server-authoritative. The World Simulator
+owns the tile grid, the spatial index, collision, and zone access. The
+client predicts movement locally for responsiveness, but the server
+rejects anything that violates the rules.
+
+**Storyboard:** Show the architecture diagram with the WorldSim as the
+authority. Show a browser dev console attempting to send a bogus
+position — the server corrects it. Narrate: "the client renders; the
+server decides. You can't cheat position, collision, or zone access."
+
+### 0.3 ECS Core — Modular by Design
+
+Other platforms use object-oriented class hierarchies. Adding a new
+object type (a chair you can sit on, a door that locks, an NPC that
+talks) means modifying the engine or working around it. Pixel Eruv is
+built on an Entity-Component-System: entities are empty containers,
+components are pure data, systems query by component set. New object
+types are new components — no engine fork, no class hierarchy changes.
+
+**Storyboard:** Show a code snippet adding a new component type (e.g.
+`LightState`) to the registry. Show that the replication protocol, the
+network layer, and the renderer don't change. Narrate: "add a
+component, register it, and it replicates. The engine doesn't need to
+know your object exists."
+
+### 0.4 Extensions in Any Language
+
+Gather has a scripting API, but it runs inside Gather's hosted
+environment — JavaScript, sandboxed, limited. Pixel Eruv extensions are
+peer processes on the NATS bus. Any language with a NATS client works:
+Go, Python, Rust, Node, Java, C#. An LLM-driven NPC can call a Python
+inference API. A patrol system can use Rust for performance. A custom
+zone policy can be a 50-line Node script. Extensions run in their own
+containers, crash independently, and hot-reload without touching the
+kernel.
+
+**Storyboard:** Show four terminal windows: ext-walls (Go), ext-props
+(Go), ext-av (Go), and a hypothetical Python NPC extension. Kill the
+Python extension — the world keeps running. Restart it — the NPC
+resumes. Narrate: "the kernel doesn't care what language your extension
+is written in. It only sees NATS messages."
+
+### 0.5 Enterprise Identity from Day One
+
+Gather and ZEP use their own auth systems. Connecting them to corporate
+LDAP, Active Directory, or SSO requires third-party bridges or custom
+work. Pixel Eruv ships with Dex as the OIDC provider from the first
+release. Dex federates to LDAP, Active Directory, Google, GitHub,
+SAML, and any OIDC-compliant IdP. Switching from local passwords to
+corporate LDAP is a config file change — no application code, no
+rebuild.
+
+**Storyboard:** Show the Dex config file with the local-password
+connector. Swap one block to the LDAP connector. Restart Dex. Log in
+with corporate credentials. Narrate: "same app, same code — just a
+config change and you're on LDAP."
+
+### 0.6 The Kernel Has No Gameplay Logic
+
+In Gather, walls, doors, and zone behaviors are built into the engine.
+If you want a door that opens on a schedule, you work within Gather's
+feature set or you can't. In Pixel Eruv, the kernel handles only
+spatial authority and replication. Walls, doors, zone access, light
+switches, NPCs — all are extensions. Even the first-party walls and
+props ship as sibling processes, not compiled into the kernel. This
+means the extension API is the same for first-party and third-party
+code: there is no "privileged" gameplay layer.
+
+**Storyboard:** Show the kernel source tree — point out the absence of
+door, wall, or NPC code. Show ext-walls and ext-props as separate
+binaries. Narrate: "the kernel moves players and replicates state.
+Everything else — including walls — is an extension. You have the same
+API we do."
+
+### 0.7 Component-Based Replication Protocol
+
+Most multiplayer platforms define a message type per action: `PlayerMoved`,
+`DoorOpened`, `NPCStateChanged`. Every new feature needs a new message
+type, new serialization, new client and server handlers. Pixel Eruv
+uses four generic messages — `SpawnEntity`, `UpdateComponent`,
+`DestroyEntity`, `PlayAnimation` — that operate on any entity and any
+component. New entity types and new components are registered, not
+wired into the protocol. The wire format hasn't changed since the first
+commit, and it won't need to for new features.
+
+**Storyboard:** Show the four message types. Add a new component
+(`PlantGrowth`) to the registry. Show that no protobuf changes, no
+protocol changes, no client handler changes are needed — the component
+data flows through `UpdateComponent` automatically. Narrate: "the
+protocol is generic. New features don't touch the wire."
+
+### 0.8 Observable by Default
+
+Gather and ZEP are black boxes — you get their logs, not your traces.
+Pixel Eruv is instrumented with OpenTelemetry from the browser to the
+worldsim. `make debug` starts a local collector (motel) with a TUI that
+shows full trace trees: WebSocket receive, NATS publish, worldsim tick,
+collision check, replication encode, NATS forward, WebSocket send. When
+something is slow, you see exactly which hop is slow.
+
+**Storyboard:** Run `make debug`. Show the motel TUI with a trace tree
+for a single player movement. Point at each span and its duration.
+Narrate: "no guessing. Every hop is traced. You see the exact
+millisecond the worldsim spent on collision."
+
+---
+
 ## Part 1 — The World
 
 ### 1.1 Persistent Pixel-Art Multiplayer World
@@ -575,11 +707,20 @@ seamlessly.
 
 ### Arc A: "What is Pixel Eruv?" (5 minutes)
 
-1. 1.1 Persistent Pixel-Art World (show the world)
-2. 2.1 Proximity Audio/Video (walk two players together)
-3. 2.10 Text Chat (send a message)
-4. 3.1 Server-Authoritative Simulation (show the architecture diagram)
+1. 0.1 Open Source and Self-Hostable (the pitch)
+2. 1.1 Persistent Pixel-Art World (show the world)
+3. 2.1 Proximity Audio/Video (walk two players together)
+4. 2.10 Text Chat (send a message)
 5. 5.1 Self-Hostable (one command, no Kubernetes)
+
+### Arc A2: "Why It's Better" (5 minutes)
+
+1. 0.1 Open Source and Self-Hostable (vs proprietary hosted)
+2. 0.2 Server-Authoritative (vs client-trusted)
+3. 0.4 Extensions in Any Language (vs sandboxed scripting)
+4. 0.5 Enterprise Identity from Day One (vs custom auth bridges)
+5. 0.6 The Kernel Has No Gameplay Logic (vs hardcoded features)
+6. 0.8 Observable by Default (vs black box)
 
 ### Arc B: "How It Works Under the Hood" (10 minutes)
 
