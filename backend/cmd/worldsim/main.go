@@ -53,9 +53,16 @@ func main() {
 		Automigrate: osutils.IsProbablyGoRun(),
 	})
 
-	// Bootstrap: run migrations, init DB (no HTTP server yet).
+	// Bootstrap: init DB + run system migrations (no HTTP server yet).
 	if err := app.Bootstrap(); err != nil {
 		log.Fatalf("pocketbase bootstrap: %v", err)
+	}
+
+	// Run app migrations (our Go migrations in backend/migrations/).
+	// Bootstrap() only runs system migrations; app migrations run on
+	// serve, but we need collections to exist before worldsim starts.
+	if err := app.RunAllMigrations(); err != nil {
+		log.Fatalf("pocketbase migrations: %v", err)
 	}
 
 	// Start PB's HTTP server in a goroutine (admin GUI + file serving for
