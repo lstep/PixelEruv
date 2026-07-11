@@ -1259,25 +1259,25 @@ export class GameScene extends Phaser.Scene {
   // createNameTag builds a speech-bubble name tag above the avatar's sprite.
   // A semi-transparent grey pillbox contains a green status pill, the
   // avatar's name in a scalable web font (Nunito), and optionally a "GUEST"
-  // badge for anonymous users. For admin viewers, a second pillbox below the
-  // name pillbox shows admin-only data (IP, etc.) — expandable via adminLines.
-  // A small inverted triangle at the bottom points down at the avatar. The
-  // container is counter-scaled by 1/zoom each frame (see update) so it stays
-  // a constant screen size. Hidden for the local player's own avatar.
+  // badge for anonymous users. For admin viewers, up to two pillboxes below
+  // the name pillbox show admin-only data: the IP pillbox and the device ID
+  // pillbox. A small inverted triangle at the bottom points down at the
+  // avatar. The container is counter-scaled by 1/zoom each frame (see update)
+  // so it stays a constant screen size. Hidden for the local player's own
+  // avatar.
   private createNameTag(entityId: string, name: string, isGuest: boolean): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
 
-    // Collect admin info lines (admin viewers only). Each line becomes a
-    // row in the admin pillbox below the name. Expandable — add more lines
-    // here as admin features grow.
-    const adminLines: string[] = [];
+    // Collect admin-only data (admin viewers only). Each entry becomes its
+    // own pillbox below the name.
+    const adminPills: string[] = [];
     if (this.ws?.isAdmin()) {
       const info = this.adminInfoByEntity.get(entityId);
-      if (info?.ip) adminLines.push(info.ip);
-      if (info?.deviceId) adminLines.push("dev:" + info.deviceId.slice(0, 8));
+      if (info?.ip) adminPills.push(info.ip);
+      if (info?.deviceId) adminPills.push("dev:" + info.deviceId.slice(0, 8));
     }
-    const hasAdminPill = adminLines.length > 0;
+    const adminPillCount = adminPills.length;
 
     const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
 
@@ -1315,18 +1315,20 @@ export class GameScene extends Phaser.Scene {
     const pillBoxHeight = 22;
     const tailW = 8;
     const tailH = 5;
-    const adminLineHeight = 14;
-    const adminPillBoxHeight = hasAdminPill ? adminLines.length * adminLineHeight + 6 : 0;
-    const adminGap = 2; // gap between name pillbox and admin pillbox
+    const adminPillHeight = 18; // single-line pillbox
+    const adminGap = 2; // gap between name pillbox and admin pillboxes
+    const adminInterGap = 1; // gap between stacked admin pillboxes
+    const adminStackHeight = adminPillCount > 0
+      ? adminPillCount * adminPillHeight + (adminPillCount - 1) * adminInterGap
+      : 0;
     const badgeGap = guestBadge ? 6 : 0;
     const contentWidth =
       pillRadius * 2 + gap + text.width + badgeGap + (guestBadge ? guestBadge.width : 0);
     const pillBoxWidth = contentWidth + padding * 2;
 
     // (0, 0) in container space = tip of the speech-bubble tail, pointing
-    // down at the avatar. Stack grows upward: tail → admin pillbox → name pillbox.
-    const adminBgCenterY = -tailH - adminPillBoxHeight / 2;
-    const bgCenterY = -tailH - adminPillBoxHeight - adminGap - pillBoxHeight / 2;
+    // down at the avatar. Stack grows upward: tail → admin pillboxes → name.
+    const bgCenterY = -tailH - adminStackHeight - adminGap - pillBoxHeight / 2;
 
     // --- Pillbox background (semi-transparent grey, rounded) ---
     const bg = this.add.graphics();
@@ -1358,14 +1360,15 @@ export class GameScene extends Phaser.Scene {
     const children: Phaser.GameObjects.GameObject[] = [bg, tail, statusPill, text];
     if (guestBadge) children.push(guestBadge);
 
-    // --- Admin pillbox (admin viewers only) ---
-    // Sits between the name pillbox and the tail. Each line is a centered
-    // text row. The pillbox height grows with the number of lines.
-    if (hasAdminPill) {
+    // --- Admin pillboxes (admin viewers only) ---
+    // Each admin data point gets its own pillbox, stacked between the name
+    // pillbox and the tail. The first (IP) is closest to the name; the last
+    // is closest to the tail.
+    if (adminPillCount > 0) {
       const adminTexts: Phaser.GameObjects.Text[] = [];
       let maxAdminWidth = 0;
-      for (const line of adminLines) {
-        const at = this.add.text(0, 0, line, {
+      for (const label of adminPills) {
+        const at = this.add.text(0, 0, label, {
           fontFamily: "Nunito, sans-serif",
           fontSize: "10px",
           color: "#cbd5e1",
@@ -1377,21 +1380,25 @@ export class GameScene extends Phaser.Scene {
       }
       const adminPillBoxWidth = maxAdminWidth + padding * 2;
 
-      const adminBg = this.add.graphics();
-      adminBg.fillStyle(0x333340, 0.78);
-      adminBg.fillRoundedRect(
-        -adminPillBoxWidth / 2,
-        adminBgCenterY - adminPillBoxHeight / 2,
-        adminPillBoxWidth,
-        adminPillBoxHeight,
-        8,
-      );
-      adminBg.setDepth(0);
+      for (let i = 0; i < adminPillCount; i++) {
+        // i=0 is the first admin pill (IP), closest to the name pillbox.
+        // Stack grows downward toward the tail.
+        const pillTop = -tailH - adminStackHeight + i * (adminPillHeight + adminInterGap);
+        const pillCenterY = pillTop + adminPillHeight / 2;
 
-      children.push(adminBg);
-      for (let i = 0; i < adminTexts.length; i++) {
-        const lineY = adminBgCenterY + (i - (adminTexts.length - 1) / 2) * adminLineHeight;
-        adminTexts[i].setPosition(0, lineY);
+        const adminBg = this.add.graphics();
+        adminBg.fillStyle(0x333340, 0.78);
+        adminBg.fillRoundedRect(
+          -adminPillBoxWidth / 2,
+          pillCenterY - adminPillHeight / 2,
+          adminPillBoxWidth,
+          adminPillHeight,
+          8,
+        );
+        adminBg.setDepth(0);
+
+        children.push(adminBg);
+        adminTexts[i].setPosition(0, pillCenterY);
         children.push(adminTexts[i]);
       }
       avatar.ipText = adminTexts[0] ?? null;
