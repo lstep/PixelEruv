@@ -8,6 +8,7 @@ import { ScreenShareOverlay } from "../ui/ScreenShareOverlay";
 import { DayNightOverlay } from "../ui/DayNightOverlay";
 import { VirtualJoystick } from "../ui/VirtualJoystick";
 import type { MapAssets } from "../mapLoader";
+import { loadMapAssets } from "../mapLoader";
 import type { SpriteBaseAsset } from "../spriteLoader";
 import type { TopMenu } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
@@ -820,6 +821,22 @@ export class GameScene extends Phaser.Scene {
         // PocketBase-stored identity exists (persistent entity_id).
         this.myEntityId = this.ws?.getEntityId() ?? null;
         console.log("ready, myEntityId=", this.myEntityId);
+        // If the server says we're on a different map than the one currently
+        // loaded (e.g. player logged out on map2 and reconnected), trigger a
+        // map transition to load the correct map.
+        const serverMapId = this.ws?.getMapId();
+        const currentAssets = this.registry.get("mapAssets") as MapAssets | undefined;
+        if (serverMapId && currentAssets) {
+          // Check if the current map matches by fetching the record name.
+          // The mapAssets don't carry the PB record name, so we compare
+          // against the default. If the server's map_id differs from what
+          // we loaded, transition.
+          const loadedMapName = this.registry.get("loadedMapName") as string | undefined;
+          if (loadedMapName && loadedMapName !== serverMapId) {
+            console.log(`server map_id=${serverMapId} differs from loaded=${loadedMapName}, transitioning`);
+            this.handleMapTransition(serverMapId, 10, 10);
+          }
+        }
         // If the pre-join chooser stashed a pending sprite_base, send it now.
         const pending = this.registry.get("pendingSpriteBase") as string | undefined;
         if (pending) {
@@ -862,6 +879,9 @@ export class GameScene extends Phaser.Scene {
       },
       onChatMessage: (msg) => {
         chatPanel?.addMessage(msg);
+      },
+      onMapTransition: (msg) => {
+        this.handleMapTransition(msg.mapId, msg.spawnX, msg.spawnY);
       },
     });
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
@@ -989,6 +1009,31 @@ export class GameScene extends Phaser.Scene {
     avatar.dir = dir;
     avatar.moving = moving;
     avatar.sprite.play(targetKey, true);
+  }
+
+  // handleMapTransition loads the new map's assets from PocketBase, then
+  // restarts the scene with the new map. All avatars are cleared during the
+  // restart and re-spawned by the server's replication loop.
+  private handleMapTransition(mapId: string, spawnX: number, spawnY: number): void {
+    console.log(`map transition: ${mapId} (${spawnX}, ${spawnY})`);
+    // Load the new map assets from PocketBase, then restart the scene.
+    loadMapAssets(mapId)
+      .then((mapAssets) => {
+        // Stash the new map assets for the restarted scene.
+        this.registry.set("mapAssets", mapAssets);
+        this.registry.set("loadedMapName", mapId);
+        // Destroy all avatars — the server will re-spawn them on the new map.
+        for (const av of this.avatars.values()) {
+          av.sprite.destroy();
+          av.nameTag?.destroy();
+        }
+        this.avatars.clear();
+        // Restart the scene to reload the map.
+        this.scene.restart();
+      })
+      .catch((err) => {
+        console.error("map transition failed: failed to load map assets:", err);
+      });
   }
 
   private handleReplication(batch: ReplicationBatchView): void {

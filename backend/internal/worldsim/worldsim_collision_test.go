@@ -19,8 +19,12 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 	// playerCollisionRadius (0.1) → effective X[4.9,6.1], Y[4.9,6.1].
 	zones := []*Zone{{ID: "w1", Shape: ShapeRect, X: 5, Y: 5, W: 1, H: 1}}
 	s := &Simulator{
-		zoneReg: NewZoneRegistry(zones, 20, 20),
-		extMgr:  NewExtensionManager(slog.Default()),
+		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		extMgr: NewExtensionManager(slog.Default()),
+	}
+	for y := range s.maps["map1"].Collision {
+		s.maps["map1"].Collision[y] = make([]bool, 20)
 	}
 	if err := s.extMgr.Register([]byte(`{"extension_id":"ext-walls","heartbeat_interval_s":10}`)); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -44,7 +48,7 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 		{"feet below expanded wall (py=5.4 -> feet=6.4)", 5.5, 5.4, false},
 	}
 	for _, c := range cases {
-		got := s.isMoveBlocked(c.px, c.py, c.px, c.py)
+		got := s.isMoveBlocked(s.zones["map1"], s.maps["map1"], c.px, c.py, c.px, c.py)
 		if got != c.wantBlock {
 			t.Errorf("%s: isMoveBlocked(%v, %v) = %v, want %v (feet at Y=%v, wall Y[5,6] expanded to [4.9,6.1])",
 				c.name, c.px, c.py, got, c.wantBlock, c.py+1.0)

@@ -78,7 +78,7 @@ func main() {
 	startTime := time.Now()
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	pbURL := envOr("POCKETBASE_URL", "http://localhost:8090")
-	mapID := envOr("MAP_ID", "map1")
+	mapID := envOr("MAP_ID", "main")
 	extID := envOr("EXTENSION_ID", "av")
 	livekitURL := envOr("LIVEKIT_URL", "ws://localhost:7880")
 	// LIVEKIT_PUBLIC_URL is the URL the browser uses to reach LiveKit.

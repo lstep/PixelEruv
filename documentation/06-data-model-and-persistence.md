@@ -26,7 +26,7 @@ with application data.
 ### Role
 
 PocketBase is the single source of truth for data that must survive indefinitely
-and has a relational shape: user profiles, world configuration, audit logs.
+and has a relational shape: user profiles, map configuration, audit logs.
 
 It runs as an **embedded Go library inside the World Simulator** (via
 `pocketbase.NewWithConfig()`, `app.Bootstrap()`, `app.RunAllMigrations()`,
@@ -45,8 +45,9 @@ it coordinates with the kernel or uses its own JetStream KV namespace.
 
 ### Collections
 
-#### `users`
-Keyed by the Dex `sub` claim (stable OIDC subject identifier).
+#### `players`
+Keyed by the Dex `sub` claim (stable OIDC subject identifier). Called
+`players` in PocketBase (the collection name in the Go migrations).
 
 | Field | Type | Notes |
 |---|---|---|
@@ -54,6 +55,10 @@ Keyed by the Dex `sub` claim (stable OIDC subject identifier).
 | `oidc_sub` | string (unique) | Dex `sub` — the join key from the token |
 | `display_name` | string | Shown above the avatar |
 | `entity_id` | string (unique) | The in-world ECS entity ID (string-encoded) assigned on first login |
+| `pos_x` | float | Last saved X position (tiles) |
+| `pos_y` | float | Last saved Y position (tiles) |
+| `map_id` | string | Current map name. Defaults to the `DEFAULT_MAP` env var on first login. Updated on map transitions. |
+| `sprite_base` | string | PocketBase record ID in `sprite_bases` selecting the character sheet |
 | `created_at` | datetime | Auto |
 | `updated_at` | datetime | Auto |
 
@@ -84,36 +89,18 @@ UI and input settings. Written on explicit user save, read at login.
 | `preferred_language` | string | BCP 47, e.g. `en`, `fr` |
 | `push_notifications` | bool | Future use |
 
-#### `worlds`
-One row per virtual office instance (the MVP ships with one world).
-
-| Field | Type | Notes |
-|---|---|---|
-| `id` | string (PB auto) | |
-| `name` | string | Shown in the browser title |
-| `default_map_id` | relation → `maps` | Spawn map |
-| `spawn_x` | int | Default spawn tile X |
-| `spawn_y` | int | Default spawn tile Y |
-
 #### `maps`
-Each Tiled map file registered in the world.
-
-> **MVP:** SeaweedFS/RustFS is deferred. The `maps` collection uses
-> PocketBase's built-in file fields (`tiled_json`, `tilesets`) instead of
-> S3 URL strings. See `15-maps-and-tiled.md` for the MVP upload workflow.
-> Post-MVP, these become `tiled_json_url` / `tileset_urls` string fields
-> pointing at object storage.
+Each Tiled map file registered in the system.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string (PB auto) | |
-| `world_id` | relation → `worlds` | |
-| `name` | string | Human-readable |
-| `tiled_json_url` | string | S3 URL of the Tiled JSON on SeaweedFS/RustFS |
-| `tileset_urls` | json | Array of S3 URLs for tileset images |
+| `name` | string | Map name (used by portal `target_map`, `VITE_MAP_NAME`, etc.) |
+| `tiled_json` | file | Tiled JSON export |
+| `tilesets` | file (multiple) | Tileset PNG images |
 
-> Zone polygon definitions are stored in NATS JetStream KV (reactive, see § 2),
-> not here. Only the static map asset references live in PocketBase.
+> Zone polygon definitions are stored in the Tiled JSON (parsed by worldsim
+> into the in-memory zone registry on map load), not as separate records.
 
 #### `audit_log`
 Append-only. Written by the World Simulator on any security-relevant event.
@@ -218,8 +205,8 @@ communicate via NATS Core.
    - **Returning user**: reads existing profile and appearance.
 5. **World Simulator** reads **NATS JetStream KV** `users.<entity_id>.position`:
    - If present: spawns the entity at the stored position.
-   - If absent (first login or expired): spawns at the world default spawn
-     point from PocketBase `worlds`.
+   - If absent (first login or expired): spawns at a random `spawn` zone
+     on the default map (configured by the `DEFAULT_MAP` env var).
 6. **World Simulator** reads `users.<entity_id>.status` to restore the user's
    status label.
 7. **World Simulator** registers the entity in the ECS, computes the initial
@@ -243,7 +230,7 @@ communicate via NATS Core.
   does not access PocketBase.
 - **[DECISION] JetStream KV TTL for `users.<entity_id>.position`**: **90 days**.
   Keys for inactive users expire automatically, preventing unbounded accumulation.
-  Users returning after 90 days spawn at the world default spawn point.
+  Users returning after 90 days spawn at a random `spawn` zone on the default map.
 - **[OPEN] Chat backend**: Matrix Synapse vs. PocketBase `messages` collection.
   To be resolved in `17-chat.md`.
 - **[DECISION] Schema migrations**: PocketBase collection schema changes are

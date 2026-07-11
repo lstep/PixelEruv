@@ -1,5 +1,5 @@
 {
-    "activeFile": "map1.tmx",
+    "activeFile": "map2.tmx",
     "expandedProjectPaths": [
         "."
     ],
@@ -8,7 +8,7 @@
         "": {
             "scaleInEditor": 1
         },
-        "map1.tmx": {
+        "main.tmx": {
             "scale": 0.8312499999999999,
             "selectedLayer": 0,
             "viewCenter": {
@@ -16,10 +16,24 @@
                 "y": 326.61654135338347
             }
         },
-        "map1.tmx#modern-office": {
+        "main.tmx#modern-office": {
             "scaleInDock": 1
         },
-        "map1.tmx#room-builder-office": {
+        "main.tmx#room-builder-office": {
+            "scaleInDock": 1
+        },
+        "map2.tmx": {
+            "scale": 0.8658854166666666,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.433082706767,
+                "y": 320.4812030075188
+            }
+        },
+        "map2.tmx#modern-office": {
+            "scaleInDock": 1
+        },
+        "map2.tmx#room-builder-office": {
             "scaleInDock": 1
         }
     },
@@ -28,12 +42,14 @@
     "map.lastUsedExportFilter": "JSON map files (*.tmj *.json)",
     "map.lastUsedFormat": "tmx",
     "openFiles": [
-        "map1.tmx"
+        "main.tmx",
+        "map2.tmx"
     ],
-    "project": "map1.tiled-project",
+    "project": "main.tiled-project",
     "property.type": "string",
     "recentFiles": [
-        "map1.tmx"
+        "main.tmx",
+        "map2.tmx"
     ],
     "tileset.embedInMap": true
 }

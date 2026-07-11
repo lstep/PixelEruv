@@ -15,8 +15,12 @@ func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 	// Wall 0.2 tiles thick at feet-Y [5.0, 5.2], spanning X.
 	zones := []*Zone{{ID: "thin", Shape: ShapeRect, X: 0, Y: 5, W: 20, H: 0.2}}
 	s := &Simulator{
-		zoneReg: NewZoneRegistry(zones, 20, 20),
-		extMgr:  NewExtensionManager(slog.Default()),
+		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		extMgr: NewExtensionManager(slog.Default()),
+	}
+	for y := range s.maps["map1"].Collision {
+		s.maps["map1"].Collision[y] = make([]bool, 20)
 	}
 	if err := s.extMgr.Register([]byte(`{"extension_id":"ext-walls","heartbeat_interval_s":10}`)); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -43,7 +47,7 @@ func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 		{"segment above expanded wall (feet 5.4->5.6)", 4.4, 4.6, false},
 	}
 	for _, c := range cases {
-		got := s.isMoveBlocked(5.0, c.oldY, 5.0, c.newY)
+		got := s.isMoveBlocked(s.zones["map1"], s.maps["map1"], 5.0, c.oldY, 5.0, c.newY)
 		if got != c.wantBlock {
 			t.Errorf("%s: isMoveBlocked(5.0, %v, 5.0, %v) = %v, want %v (feet %v->%v, wall [5.0,5.2] expanded to [4.9,5.3])",
 				c.name, c.oldY, c.newY, got, c.wantBlock, c.oldY+1.0, c.newY+1.0)
@@ -59,12 +63,12 @@ func TestTick_ThinWallBlocksMovement(t *testing.T) {
 	// Wall 0.1 tiles thick at feet-Y [5.05, 5.15], spanning X.
 	zones := []*Zone{{ID: "razor", Shape: ShapeRect, X: 0, Y: 5.05, W: 20, H: 0.1}}
 	s := &Simulator{
-		zoneReg: NewZoneRegistry(zones, 20, 20),
-		extMgr:  NewExtensionManager(slog.Default()),
-		mapData: &MapData{Width: 20, Height: 20, Collision: make([][]bool, 20)},
+		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		extMgr: NewExtensionManager(slog.Default()),
 	}
-	for y := range s.mapData.Collision {
-		s.mapData.Collision[y] = make([]bool, 20)
+	for y := range s.maps["map1"].Collision {
+		s.maps["map1"].Collision[y] = make([]bool, 20)
 	}
 	if err := s.extMgr.Register([]byte(`{"extension_id":"ext-walls","heartbeat_interval_s":10}`)); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -85,7 +89,7 @@ func TestTick_ThinWallBlocksMovement(t *testing.T) {
 	const startY = 4.2
 	e := &Entity{
 		ID:       "e_test",
-		Position: &pb.Position{X: startX, Y: startY},
+		Position: &pb.Position{X: startX, Y: startY, MapId: "map1"},
 		NetworkSession: &NetworkSession{
 			ClientID: "c_test",
 			Input:    &pb.InputState{Up: true},

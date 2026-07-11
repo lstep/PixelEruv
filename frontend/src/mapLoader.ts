@@ -7,7 +7,7 @@
 //
 // Env vars:
 //   VITE_POCKETBASE_URL — PocketBase base URL (dev only; default http://localhost:8090)
-//   VITE_MAP_NAME       — map record name to load (default "map1")
+//   VITE_MAP_NAME       — map record name to load (default "main")
 //
 // In production (served by nginx), PB_URL derives from window.location.origin so
 // the browser reaches PocketBase via the nginx /api/ proxy (same-origin), which
@@ -16,7 +16,7 @@
 const PB_URL = window.location.port === "5173"
   ? (import.meta.env.VITE_POCKETBASE_URL ?? "http://localhost:8090")
   : window.location.origin;
-const MAP_NAME = import.meta.env.VITE_MAP_NAME || "map1";
+const DEFAULT_MAP_NAME = import.meta.env.VITE_MAP_NAME || "main";
 
 export interface TilesetAsset {
   // The tileset name as defined in the Tiled JSON (used by addTilesetImage).
@@ -39,15 +39,17 @@ interface TiledMap {
 
 // Fetch the configured map from PocketBase. Throws if PB is unreachable or the
 // map record doesn't exist — the caller should fall back to static files.
-export async function loadMapAssets(): Promise<MapAssets> {
+// If mapName is omitted, uses the default from VITE_MAP_NAME (or "main").
+export async function loadMapAssets(mapName?: string): Promise<MapAssets> {
+  const name = mapName || DEFAULT_MAP_NAME;
   const resp = await fetch(
-    `${PB_URL}/api/collections/maps/records?filter=(name="${MAP_NAME}")&perPage=1`,
+    `${PB_URL}/api/collections/maps/records?filter=(name="${name}")&perPage=1`,
   );
   if (!resp.ok) throw new Error(`PocketBase responded ${resp.status}`);
 
   const data = await resp.json();
   if (!data.items || data.items.length === 0) {
-    throw new Error(`No map named "${MAP_NAME}" in PocketBase`);
+    throw new Error(`No map named "${name}" in PocketBase`);
   }
 
   const record = data.items[0];

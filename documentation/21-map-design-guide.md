@@ -179,10 +179,12 @@ Each object on this layer is a zone. The object's **name** becomes the
 
 | Property | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `zone_type` | string | no | (none) | Hint for the owning extension. Values: `wall`, `meeting`, `water`, `work`, `silent`, or any custom string. The kernel does not interpret this — it passes it to extensions. |
+| `zone_type` | string | no | (none) | Hint for the owning extension. Values: `wall`, `meeting`, `water`, `work`, `silent`, `spawn`, `portal`, or any custom string. The kernel interprets `spawn` and `portal` directly; other values are passed to extensions. |
 | `is_exclusive` | bool | no | `false` | If true, AOI filter excludes entities inside from non-members' replication. Static zones only. |
 | `mobility` | string | no | `"static"` | `"static"` or `"mobile"`. Mobile zones must be circles and follow an entity via `follows_entity_id`. |
 | `follows_entity_id` | string | only if mobile | — | Entity ID the zone follows (for mobile zones). |
+| `target_map` | string | only if `zone_type=portal` | — | Name of the destination map. Must exist as a `maps` record. |
+| `target_entity` | string | no | — | Name of a base entity on the destination map to teleport to (a "beacon"). If omitted, the player spawns at a random `spawn` zone on the target map. Only used with `zone_type=portal`. |
 
 #### Recognized `zone_type` values
 
@@ -193,6 +195,8 @@ Each object on this layer is a zone. The object's **name** becomes the
 | `water` | Water area (visual + audio effect) | future: ext-environment |
 | `work` | Work area (focus mode, ambient audio) | future: ext-environment |
 | `silent` | Silent zone (audio suppression) | future: ext-audio-zones |
+| `spawn` | Player spawn point. New players and players transitioning to this map without a target entity are placed at a random `spawn` zone. | kernel (worldsim) |
+| `portal` | Map transition. When a player enters a portal zone, worldsim moves them to the target map. Requires `target_map`. Optional `target_entity` for beacon-based teleport. | kernel (worldsim) |
 | *(custom)* | Any string — your extension decides | your extension |
 
 #### Example: wall zone
@@ -298,23 +302,29 @@ Player walks near entity, presses E
 
 > **First run is automatic.** worldsim seeds `default-map.json` + its tileset
 > PNGs from `MAP_DIR` (bundled at `/maps` in Docker) into a `maps` record
-> named `MAP_ID` on first startup, if no such record exists. The seed is
-> idempotent — once the record exists, worldsim never overwrites it. The
-> steps below are for **replacing** the default map or **adding** new ones.
+> named after the `DEFAULT_MAP` env var (default `main`) on first startup, if
+> no such record exists. The seed is idempotent — once the record exists,
+> worldsim never overwrites it. The steps below are for **replacing** the
+> default map or **adding** new ones.
 
 1. In Tiled: File → Export As… → choose `*.json` format
 2. Open the PocketBase admin UI at `http://localhost:8090/_/` (served by
    worldsim — PocketBase is embedded in worldsim as a Go library)
-3. Go to the `maps` collection → edit the existing `map1` record (or New
+3. Go to the `maps` collection → edit the existing map record (or New
    record to add a new map)
 4. Fill in:
-   - `name`: the map name (must match `VITE_MAP_NAME`, default `map1`)
+   - `name`: the map name (e.g. `main`, `map2`)
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload all tileset PNG images
 5. Save
 
+To add a second map, create a new `maps` record with a different `name`.
+Worldsim loads all maps from PocketBase on startup. Players can transition
+between maps via portal zones (see [How to: create a portal](#how-to-create-a-portal-map-transition)).
+
 The frontend fetches the map by name, loads the JSON and tileset images via
-PocketBase file URLs, and renders it with Phaser.
+PocketBase file URLs, and renders it with Phaser. On map transitions, the
+frontend fetches the new map's assets dynamically and reloads the scene.
 
 ## How the map is loaded
 
@@ -343,11 +353,14 @@ Tiled JSON ──┐
      depth assigned per `sort_mode` (static band or dynamic Y-sort).
    - The "Walls" tile layer at a fixed fallback depth.
    - Avatar sprites, Y-sorted against `dynamic` decorations every frame.
-2. **WorldSim** fetches the same JSON, builds:
+2. **WorldSim** loads all maps from PocketBase on startup. For each map, it builds:
    - A collision grid from the "Walls" tile layer (fallback)
    - A zone registry from the "Zones" object layer (continuous-space
      point-in-zone checks — no tile rasterization)
    - Base entities from the "Entities" object layer (inert until claimed)
+   Each map has its own `MapData` and `ZoneRegistry`. Entities are tagged
+   with their current map via `Position.MapId`; movement, collision, zone
+   detection, and replication all use the entity's current map's data.
 3. **Extensions** register with the worldsim via NATS:
    - ext-walls reads the map, finds `zone_type=wall` zones, registers block
      gate triggers.
@@ -467,6 +480,90 @@ extension can handle it.)
 | `zone_type` | `meeting` | yes | Identifies this as a meeting room |
 | `is_exclusive` | `true` | yes | AOI filter excludes non-members; audio isolation |
 | Shape | Rectangle | yes | Cover the entire room area |
+
+### How to: create a portal (map transition)
+
+Portals teleport a player to a different map when they enter the zone. They
+are handled directly by the kernel (worldsim) — no extension needed.
+
+1. **Select the "Zones" object layer**.
+
+2. **Draw a rectangle** over the portal area (e.g. a doorway, a cave
+   entrance). Press `R` for the Insert Rectangle tool.
+
+3. **Name the zone**: e.g. `portal-to-map2`.
+
+4. **Add custom properties**:
+   - `zone_type` = `portal` (String)
+   - `target_map` = `map2` (String) — the name of the destination map.
+     This must match a `maps` record that belongs to the same world.
+
+5. **(Optional) Set a beacon target**: if you want the player to appear at a
+   specific spot on the destination map (e.g. next to a door), add:
+   - `target_entity` = `door-entrance-north` (String) — the name of a base
+     entity on the destination map (an object on the "Entities" layer with
+     that name). The player will teleport to that entity's position.
+
+   If `target_entity` is omitted, the player spawns at a random `spawn`
+   zone on the destination map (same as initial login).
+
+6. **Create the destination map**: upload a second map to PocketBase with
+   `name` = `map2`. Add a `spawn` zone
+   on the destination map (or a beacon entity matching `target_entity`).
+
+7. **Save, export, upload** as usual.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `portal-to-map2` (unique) | yes | Becomes the `zone_id` |
+| `zone_type` | `portal` | yes | Triggers kernel-handled map transition |
+| `target_map` | `map2` | yes | Destination map name (must exist in same world) |
+| `target_entity` | `door-entrance-north` | no | Beacon entity name on destination map. If omitted, random spawn point. |
+| Shape | Any (rect/circle/polygon) | yes | Typically a rectangle over a doorway |
+
+> **How it works:** when the player walks into the portal zone, worldsim
+> detects the `zone.enter` event, sees `zone_type=portal`, and calls
+> `transitionEntity`. This changes `Position.MapId` to the target map,
+> resolves the spawn position (beacon or random spawn zone), sends a
+> `MapTransitionFrame` to the client so the frontend loads the new tilemap,
+> and persists the new `map_id` to PocketBase. The player's avatar is
+> despawned from the old map's clients and spawned on the new map via the
+> normal replication loop.
+
+> **Extensions can also trigger transitions.** An extension can publish to
+> the `worldsim.entity.teleport` NATS subject with `{"entity_id", "map_id",
+> "target_entity"}` to teleport a player programmatically (e.g. clicking a
+> door object, admin teleport command). Same resolution: `target_entity`
+> or random spawn point.
+
+### How to: create a spawn zone
+
+Spawn zones determine where new players appear on the map. When a player
+logs in for the first time (or transitions to a map without a
+`target_entity`), worldsim picks a random `spawn` zone from the map.
+
+1. **Select the "Zones" object layer**.
+
+2. **Draw a rectangle** over the spawn area (e.g. an entrance hall).
+
+3. **Name the zone**: e.g. `spawn-main`.
+
+4. **Add the `zone_type` property**: `zone_type` = `spawn` (String).
+
+5. **Save, export, upload** as usual.
+
+You can have multiple spawn zones on a map — worldsim picks one at random.
+If no spawn zone exists, the player spawns at (10, 10) as a fallback.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `spawn-main` (unique) | yes | Becomes the `zone_id` |
+| `zone_type` | `spawn` | yes | Marks this as a spawn point |
+| Shape | Any (rect/circle/polygon) | yes | Typically a rectangle over an entrance area |
 
 ### How to: create a water area
 
@@ -694,3 +791,6 @@ minutes. Issues are logged at three levels:
 | Tileset not embedded in JSON | Phaser can't load tiles | Export as JSON (not TMX); tilesets embed automatically |
 | Wrong tile size | Sprites misaligned | Map must use 32×32 tiles |
 | Forgot to upload tileset PNGs | Phaser shows blank tiles | Upload all tileset images to the PocketBase record |
+| Portal `target_map` doesn't exist | Player stays on current map, worldsim logs "portal target map not found" | Create the destination map record in PocketBase |
+| Portal `target_entity` not found on destination | Player stays on current map, worldsim logs "target entity not found" | Create a base entity with that name on the destination map's "Entities" layer |
+| No `spawn` zone on map | Players spawn at (10, 10) fallback | Add at least one `zone_type=spawn` zone |

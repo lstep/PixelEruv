@@ -33,6 +33,18 @@ type PropEntity struct {
 	Gid            uint32 // Tiled global tile ID (for sprite rendering)
 }
 
+// FindEntityByName returns the base entity with the given name on this map,
+// or nil if not found. Used by portal transitions to teleport to a named
+// beacon entity on the target map.
+func (md *MapData) FindEntityByName(name string) *PropEntity {
+	for _, pe := range md.Entities {
+		if pe.ID == name {
+			return pe
+		}
+	}
+	return nil
+}
+
 // tiledMapJSON is the minimal subset of the Tiled JSON format we read.
 type tiledMapJSON struct {
 	Width      int  `json:"width"`
@@ -68,6 +80,7 @@ type tiledMapJSON struct {
 // MapRecordInfo is the lightweight metadata for a map record in PocketBase,
 // used to detect when the map has been re-uploaded (filename changes).
 type MapRecordInfo struct {
+	Name              string
 	TiledJSONFilename string
 }
 
@@ -165,6 +178,14 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 				case "av_enabled":
 					if b, ok := prop.Value.(bool); ok {
 						z.AvEnabled = b
+					}
+				case "target_map":
+					if s, ok := prop.Value.(string); ok {
+						z.PortalTargetMap = s
+					}
+				case "target_entity":
+					if s, ok := prop.Value.(string); ok {
+						z.PortalTargetEntity = s
 					}
 				}
 			}

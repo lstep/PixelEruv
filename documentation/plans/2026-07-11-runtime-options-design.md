@@ -15,11 +15,12 @@ Currently none of these exist as a system. Guest access is always-on (hardcoded)
 
 ## Decisions Made
 
-### World options: stored in `worlds` PocketBase collection
+### World options: stored as env vars or a singleton config record
 
-- One row per world. Typed columns: `allow_anonymous bool`, `day_night_enabled bool`, etc. (not a generic key-value blob — typed fields are clearer and PB admin GUI gives a free editor).
-- Worldsim loads world options on startup, enforces them (e.g. rejects guest `AuthFrame` with `AuthResultFrame{ok: false}` when `allow_anonymous=false`).
-- **Multi-map:** one world groups multiple maps with shared policy. This requires the `worlds` collection and `world_id` foreign key on `maps` — both documented in `06-data-model-and-persistence.md` but not yet implemented.
+- The `worlds` collection was removed — the project has one world with multiple maps.
+- World-level options (`allow_anonymous`, `day_night_enabled`) will be stored as typed columns on a singleton config record or env vars (to be decided when options are implemented).
+- Worldsim loads options on startup, enforces them (e.g. rejects guest `AuthFrame` with `AuthResultFrame{ok: false}` when `allow_anonymous=false`).
+- **Multi-map:** worldsim loads all maps from PocketBase. The default map is configured via the `DEFAULT_MAP` env var.
 
 ### Replication to clients: dedicated `WorldOptionsFrame` (Option B)
 
@@ -112,9 +113,9 @@ Documentation (`06-data-model-and-persistence.md` line 38) says "Extensions do n
 
 1. **Design multi-map support + PB embedding** — how `worlds` relates to `maps`, how worldsim boots with a world (not a map), how players move between maps, how PB is embedded, how extensions get data via NATS.
 2. **Implement PB embedding** — embed PB in worldsim, convert stores to Go SDK, remove standalone PB container, expose admin GUI.
-3. **Implement multi-map support** — `worlds` collection, `world_id` on maps, worldsim booting with `WORLD_ID`, loading multiple maps, player map transitions.
+3. **Implement multi-map support** — `DEFAULT_MAP` env var, worldsim loading all maps from PocketBase, player map transitions via portal zones.
 4. **Refactor extensions to use NATS for map data** — remove direct PB access, get zone metadata from worldsim via NATS.
-5. **Layer options on top** — world options as columns on `worlds`, player preferences as columns on `players`, extension options declared at registration and created by worldsim.
+5. **Layer options on top** — world options as env vars or singleton config, player preferences as columns on `players`, extension options declared at registration and created by worldsim.
 6. **Realtime hot-reload** — via PB in-process Go hooks (world options, extension options).
 
 ## Files to Modify (when implementation proceeds)
@@ -122,12 +123,12 @@ Documentation (`06-data-model-and-persistence.md` line 38) says "Extensions do n
 - `proto/frames.proto` — `WorldOptionsFrame`, `SetPreferenceFrame`, new ServerFrame/ClientFrame variants
 - `backend/internal/worldsim/worldsim.go` — world options loading, enforcement, publish, preference handling
 - `backend/internal/worldsim/worldstore.go` — new file, WorldStore (PB Go SDK reads + in-process hooks)
-- `backend/cmd/worldsim/main.go` — `WORLD_ID` env var, PB initialization
+- `backend/cmd/worldsim/main.go` — `DEFAULT_MAP` env var, PB initialization
 - `backend/cmd/ext-*/main.go` — remove PB access, get zone data via NATS, declare options schema in registration
 - `frontend/src/net/WsClient.ts` — `onWorldOptions` handler, `SetPreferenceFrame` send
 - `frontend/src/scenes/GameScene.ts` — apply world options + player preferences
 - `frontend/src/ui/TopMenu.ts` — preference toggle UI
-- `pb_migrations/` — `worlds` collection, `world_id` on maps, preference columns on players (now embedded, run by worldsim)
+- `pb_migrations/` — preference columns on players (now embedded Go migrations, run by worldsim)
 - `docker/pocketbase.Dockerfile` — REMOVED (PB embedded in worldsim)
 - `docker/pocketbase-entrypoint.sh` — REMOVED
 - `docker/docker-compose.yml` — remove pocketbase service, mount PB data volume on worldsim

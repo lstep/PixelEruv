@@ -22,6 +22,26 @@ func NewMapStore(app core.App) *MapStore {
 	return &MapStore{app: app}
 }
 
+// ListAllMaps returns all map records from PocketBase.
+func (s *MapStore) ListAllMaps() ([]*MapRecordInfo, error) {
+	collection, err := s.app.FindCollectionByNameOrId("maps")
+	if err != nil {
+		return nil, err
+	}
+	records, err := s.app.FindAllRecords(collection)
+	if err != nil {
+		return nil, err
+	}
+	var result []*MapRecordInfo
+	for _, r := range records {
+		result = append(result, &MapRecordInfo{
+			Name:              r.GetString("name"),
+			TiledJSONFilename: r.GetString("tiled_json"),
+		})
+	}
+	return result, nil
+}
+
 // mapRecordExists returns true if a maps record with the given name exists.
 func (s *MapStore) mapRecordExists(mapName string) (bool, error) {
 	record, _ := s.app.FindFirstRecordByData("maps", "name", mapName)
@@ -108,6 +128,7 @@ func (s *MapStore) FetchMapRecordInfo(mapName string) (*MapRecordInfo, error) {
 		return nil, fmt.Errorf("no map named %q", mapName)
 	}
 	return &MapRecordInfo{
+		Name:              record.GetString("name"),
 		TiledJSONFilename: record.GetString("tiled_json"),
 	}, nil
 }

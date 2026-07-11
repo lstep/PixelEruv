@@ -60,7 +60,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"
-      MAP_ID: "map1"
+      DEFAULT_MAP: "main"
       PB_DATA_DIR: "/pb_data"
       PB_HTTP_ADDR: "0.0.0.0:8090"
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
@@ -109,7 +109,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       POCKETBASE_URL: "http://worldsim:8090"
-      MAP_ID: "map1"
+      MAP_ID: "main"
     restart: unless-stopped
 
   ext-props:
@@ -151,7 +151,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       POCKETBASE_URL: "http://worldsim:8090"
-      MAP_ID: "map1"
+      MAP_ID: "main"
       LIVEKIT_URL: "ws://livekit:7880"
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://${PUBLIC_HOST:-localhost}:7880}"
       LIVEKIT_API_KEY: "devkey"

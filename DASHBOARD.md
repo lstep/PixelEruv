@@ -1,5 +1,54 @@
 # Dashboard
 
+## Multi-Map Support (Phase 2 complete)
+
+**Branch:** `feat/multi-map`
+**Status:** Phase 2 complete — worldsim manages multiple maps, portal zones trigger map transitions, frontend handles dynamic map loading. Build and tests pass.
+
+The `Simulator` loads all maps from PocketBase on startup and manages per-map `MapData`/`ZoneRegistry` instances. The default map is configured via the `DEFAULT_MAP` env var (default `main`). Entities carry a `Position.MapId` field; movement, collision, zone detection, and replication are all per-map. Portal zones (Tiled `zone_type=portal` with `target_map`/`target_entity` properties) trigger automatic map transitions. Extensions can teleport entities via the `worldsim.entity.teleport` NATS subject.
+
+### What changed
+
+- **Migrations:** 1 new Go migration — `map_id` on `players`. The `worlds` collection and `world_id` on maps were removed (one world, multiple maps — no grouping needed).
+- **Proto:** `MapTransitionFrame` message added; `map_id` field added to `AuthResultFrame`.
+- **Simulator struct:** `mapID`/`mapData`/`zoneReg`/`mapFilename` replaced with `defaultMap`/`maps map[string]*MapData`/`zones map[string]*ZoneRegistry`/`mapFilenames map[string]string`.
+- **MapStore:** `ListAllMaps` added. `SeedMapIfMissing` simplified (no `worldID` param). `WorldConfig`/`LoadWorld`/`ListMapsForWorld`/`SetWorldDefaultMap` removed.
+- **UserStore:** `SaveMapID` added. `UserRecord.MapID` field added.
+- **Movement/collision:** `isMoveBlocked` takes `zr`/`md` params. `runMovementSystem` looks up per-map data via `e.Position.MapId`.
+- **Zone detection:** Per-map `ZoneRegistry` lookup. Portal zones trigger `transitionEntity`.
+- **Replication:** Entities filtered by map — clients only see entities on their map.
+- **Map reload:** Per-map reload checker; PB hook checks all loaded maps.
+- **Portal zones:** `Zone` struct extended with `PortalTargetMap`/`PortalTargetEntity`. Parsed from Tiled `target_map`/`target_entity` properties. No-position transitions use `FindSpawnPoint`; beacon transitions use `FindEntityByName`.
+- **Extension teleport:** `worldsim.entity.teleport` NATS subject — extensions can teleport players across maps with `target_entity` or random spawn.
+- **main.go:** `DEFAULT_MAP` env var (default `main`).
+- **Docker:** `DEFAULT_MAP: "main"` for worldsim; `MAP_ID: "main"` for extensions.
+- **Frontend:** `onMapTransition` handler in WsClient; `handleMapTransition` in GameScene loads new map assets and restarts scene. `mapLoader.ts` accepts optional `mapName` param. `AuthResultFrame.map_id` checked on ready to detect saved player map.
+- **Map files:** `map1.json`/`.tmx`/etc renamed to `main.*`. Seed file is `default-map.json` (uploaded to PB as record named `main`).
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/migrations/1752400000_add_map_id_to_players.go` | New — map_id on players |
+| `proto/frames.proto` | `MapTransitionFrame` message, `map_id` on `AuthResultFrame` |
+| `backend/internal/worldsim/mapstore.go` | `ListAllMaps`, simplified `SeedMapIfMissing`, removed world methods |
+| `backend/internal/worldsim/userstore.go` | `SaveMapID`, `UserRecord.MapID` |
+| `backend/internal/worldsim/zones.go` | `Zone` portal fields (`PortalTargetMap`/`PortalTargetEntity`) |
+| `backend/internal/worldsim/mapdata.go` | Portal property parsing, `FindEntityByName`, `MapRecordInfo` |
+| `backend/internal/worldsim/worldsim.go` | Multi-map struct, per-map systems, portal transitions, extension teleport |
+| `backend/internal/worldsim/*_test.go` | Updated for new struct (5 files) |
+| `backend/cmd/worldsim/main.go` | `DEFAULT_MAP` env var |
+| `docker/docker-compose.yml` | `DEFAULT_MAP` for worldsim, `MAP_ID: "main"` for extensions |
+| `docker/dist/docker-compose.yml` | Same |
+| `frontend/src/net/WsClient.ts` | `onMapTransition` handler, `mapId` field, `getMapId()` |
+| `frontend/src/scenes/GameScene.ts` | `handleMapTransition`, map_id check on ready |
+| `frontend/src/mapLoader.ts` | Accepts optional `mapName` param |
+| `frontend/src/main.ts` | Sets `loadedMapName` in registry |
+
+### Next phases
+
+- **Phase 3 (`feat/extension-nats`):** Extensions stop hitting PB directly; worldsim broadcasts zone metadata via NATS. Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
+
 ## PocketBase Embedding (Phase 1 complete)
 
 **Branch:** `feat/pb-embedding`
@@ -14,29 +63,6 @@ PocketBase now runs as a Go library inside worldsim instead of as a separate con
 - **Docker:** `pocketbase` service removed from both `docker-compose.yml` and `dist/docker-compose.yml`. The `worldsim` container now mounts `pb_data` and exposes port 8090. Nginx proxies `/api/` to `worldsim:8090`. Extensions (ext-walls, ext-av) temporarily point `POCKETBASE_URL` at `http://worldsim:8090` (will be removed in Phase 3).
 - **Map reload:** PB `OnRecordAfterUpdateSuccess("maps")` hook triggers instant map reload instead of the 30-second polling checker.
 - **Makefile:** `debug-pocketbase` target removed; `debug` target now passes `PB_DATA_DIR`/`PB_HTTP_ADDR` env vars to worldsim.
-
-### Files
-
-| File | Changes |
-|---|---|
-| `backend/migrations/*.go` | New — 5 Go migrations (maps, players, sprite_bases, add_sprite_base_to_players, initial_superuser) |
-| `backend/internal/worldsim/{mapstore,userstore,spritestore}.go` | Rewritten — Go SDK DAO calls instead of HTTP |
-| `backend/internal/worldsim/mapdata.go` | Removed `LoadMap`/`FetchMapRecordInfo`/`loadMapOnce` (moved to mapstore.go), kept `parseTiledMapJSON` |
-| `backend/internal/worldsim/worldsim.go` | `Simulator.app` replaces `pocketbaseURL`; PB hook for map reload |
-| `backend/cmd/worldsim/main.go` | Creates PB app, bootstraps, runs migrations, starts HTTP server in goroutine |
-| `backend/cmd/seed-sprites/main.go` | Embeds PB instead of HTTP auth |
-| `docker/docker-compose.yml` | Removed pocketbase service; worldsim mounts pb_data + exposes 8090 |
-| `docker/dist/docker-compose.yml` | Same |
-| `docker/nginx.conf` | `/api/` proxies to `worldsim:8090` |
-| `docker/pocketbase.Dockerfile` | Deleted |
-| `docker/pocketbase-entrypoint.sh` | Deleted |
-| `pb_migrations/*.js` | Deleted |
-| `Makefile` | Removed `debug-pocketbase`, updated `dist-stage` and `debug` targets |
-
-### Next phases
-
-- **Phase 2 (`feat/multi-map`):** Multi-map support — `WORLD_ID` env var, `Simulator` manages multiple `MapData`/`ZoneRegistry` instances, portal zones, `MapTransitionFrame` protobuf.
-- **Phase 3 (`feat/extension-nats`):** Extensions stop hitting PB directly; worldsim broadcasts zone metadata via NATS. Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
 
 ## Day/Night Overlay
 

@@ -188,7 +188,7 @@ docker compose up --build -d
 | `LIVEKIT_NODE_IP` | `127.0.0.1` | compose (LiveKit `--node-ip`) | IP LiveKit advertises in WebRTC ICE candidates. Must be routable from the browser — set to the host's public/LAN IP for remote A/V. |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `devkey` / `devsecret…` | `ext-av` in compose **and** `docker/livekit.yaml` | Shared secret for signing LiveKit join tokens. **Must match** in both places. Rotate for production (§3a). |
 | `TLS_HOSTS` | `localhost,127.0.0.1` | `frontend` in compose | Comma-separated DNS/IP entries for the self-signed cert's SAN. `PUBLIC_HOST` is auto-appended at startup, so you usually don't set this directly. |
-| `MAP_ID` | `map1` | `worldsim` + `ext-av` + `ext-walls` in compose | Name of the PocketBase `maps` record to load. |
+| `DEFAULT_MAP` | `main` | `worldsim` + `ext-av` + `ext-walls` in compose | Name of the default map record; worldsim seeds this on first run and new players spawn here. |
 | `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `worldsim` in compose | PocketBase superuser credentials (used by worldsim's initial-superuser migration, since PB is embedded). **Change before exposing to the internet.** |
 | `PB_DATA_DIR` | `/pb_data` | `worldsim` in compose | Directory worldsim mounts for PocketBase's SQLite data + uploaded files. Backed by the `pb_data` Docker volume. |
 | `PB_HTTP_ADDR` | `0.0.0.0:8090` | `worldsim` in compose | Address worldsim's embedded PocketBase listens on (admin UI + file API). |
@@ -512,17 +512,17 @@ players are near each other or inside an `av_enabled` zone.
 ## 7. Design and upload a map
 
 Maps are authored in [Tiled](https://www.mapeditor.org/) and stored in
-PocketBase's `maps` collection. The worldsim loads the map named by
-`MAP_ID` (default `map1`) and hot-reloads within ~30s when the
-PocketBase record changes.
+PocketBase's `maps` collection. The worldsim loads all maps from
+PocketBase and hot-reloads within ~30s
+when a PocketBase record changes.
 
 > **First run is automatic.** On worldsim's first startup, if no `maps`
-> record named `MAP_ID` exists, worldsim uploads `default-map.json` and the
-> tileset PNGs referenced inside it from `MAP_DIR` (bundled at `/maps` in the
-> Docker image). A fresh deploy boots straight into the office map with no
-> manual upload step. The seed is idempotent — once a record exists,
-> worldsim never overwrites it. The steps below are for **replacing** the
-> default map or **adding** new ones.
+> record named after the configured `DEFAULT_MAP` (default `main`) exists, worldsim uploads
+> `default-map.json` and the tileset PNGs referenced inside it from
+> `MAP_DIR` (bundled at `/maps` in the Docker image). A fresh deploy boots
+> straight into the office map with no manual upload step. The seed is
+> idempotent — once a record exists, worldsim never overwrites it. The
+> steps below are for **replacing** the default map or **adding** new ones.
 
 ### 7a. Author in Tiled
 
@@ -541,24 +541,24 @@ PocketBase record changes.
      `entity_type` or `owner_extension`).
 3. Export as **JSON** (`File → Export As… → *.json`).
 
-A starter map and tilesets ship in `maps/` (`default-map.json`, `map1.json`,
-`map1.tmx`, `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). The
+A starter map and tilesets ship in `maps/` (`default-map.json`, `main.tmx`,
+`Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`). The
 committed `default-map.json` is the seed worldsim uploads on first run; the
 frontend loads the map from PocketBase, not from static files.
 
 ### 7b. Upload to PocketBase
 
 The `maps` collection holds one record per map. Upload the JSON file as the
-record's file field, with the record's `name` matching `MAP_ID`. To replace
-the seeded `map1` record, edit it in place (do not delete and recreate —
-worldsim would re-seed the default on the next restart).
+record's file field, with the record's `name` set to your map name. To replace the seeded `main`
+record, edit it in place (do not delete and recreate — worldsim would
+re-seed the default on the next restart).
 
 **Via the PocketBase admin UI** (easiest):
 
 1. Open `http://<host-ip>:8090/_/` (or your tunnel/proxy).
 2. Log in with `admin@pixeleruv.local` / `password123`.
 3. Go to **Collections → maps**.
-4. Edit the record whose `name` = `map1` (or create one), attach your
+4. Edit the record whose `name` = `main` (or create one), attach your
    `*.json` file, and save.
 
 **Via the API** (scriptable):
@@ -570,7 +570,7 @@ TOKEN=$(curl -s http://127.0.0.1:8090/api/admins/auth-with-password \
   -d '{"identity":"admin@pixeleruv.local","password":"password123"}' \
   | jq -r .token)
 
-# 2. Update the map1 record's file (replace <record-id>)
+# 2. Update the main record's file (replace <record-id>)
 curl -s -X PATCH http://127.0.0.1:8090/api/collections/maps/records/<record-id> \
   -H "Authorization: $TOKEN" \
   -F "tiled_json=@/path/to/your-map.json"

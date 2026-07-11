@@ -28,22 +28,26 @@ how object layering and traversal work.
 ## MVP: uploading a map via PocketBase
 
 The `maps` collection is created automatically by the migration in
-`backend/migrations/`. Each record has three fields:
+`backend/migrations/`. Each record has these fields:
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | text | Human-readable; the frontend loads by this name (`VITE_MAP_NAME`, default `map1`) |
+| `name` | text | Human-readable; the frontend loads by this name (`VITE_MAP_NAME`, default `main`) |
 | `tiled_json` | file (single) | The Tiled **JSON export** (not `.tmx`) |
 | `tilesets` | file (multiple) | Tileset PNG images referenced by the JSON |
 
+Worldsim loads all maps from PocketBase on startup. Players can transition
+between maps via **portal zones** — see [Portal zones](#portal-zones) below.
+
 ### First run (automatic)
 
-On worldsim's first startup, if no `maps` record named `MAP_ID` (default
-`map1`) exists, worldsim uploads `default-map.json` and the tileset PNGs
-referenced inside it from `MAP_DIR` as a new `maps` record. No manual upload
-step is needed for a fresh deploy — the world boots with the bundled office
-map. This mirrors the `SpriteStore.SeedIfEmpty` pattern used for
-`sprite_bases`.
+On worldsim's first startup, if no `maps` record named after the
+configured `DEFAULT_MAP` (default `main`) exists, worldsim uploads
+`default-map.json` and the tileset PNGs referenced inside it from
+`MAP_DIR` as a new `maps` record (with `name` set to the configured
+default map). No manual upload step is needed for a fresh deploy — the
+world boots with the bundled office map. This mirrors the
+`SpriteStore.SeedIfEmpty` pattern used for `sprite_bases`.
 
 > **Note:** PocketBase is embedded in worldsim as a Go library. The seed and
 > all map fetches use PB Go SDK DAO calls in-process, not the HTTP API.
@@ -53,7 +57,7 @@ map. This mirrors the `SpriteStore.SeedIfEmpty` pattern used for
 | Var | Default | Notes |
 |---|---|---|
 | `MAP_DIR` | `./maps` (native) / `/maps` (Docker) | Directory containing `default-map.json` + tileset PNGs for first-run seeding |
-| `MAP_ID` | `map1` | Name of the map record to seed and load |
+| `DEFAULT_MAP` | `main` | Name of the default map record; worldsim seeds this on first run and new players spawn here |
 
 The seed is **idempotent**: once a record with the configured name exists,
 worldsim never overwrites it. To replace the map, edit the PocketBase record
@@ -74,8 +78,8 @@ wait for).
    external `source` field) — Phaser 4 does not support external tileset
    references.
 
-4. **Create or edit a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record" (or edit the existing `map1`):
-   - `name`: `map1` (or whatever `VITE_MAP_NAME` is set to)
+4. **Create or edit a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record" (or edit the existing `main`):
+   - `name`: `main` (or whatever `VITE_MAP_NAME` is set to)
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`)
 
@@ -86,7 +90,26 @@ wait for).
 | Var | Default | Notes |
 |---|---|---|
 | `VITE_POCKETBASE_URL` | `http://localhost:8090` | PocketBase base URL, served by worldsim (browser-reachable) |
-| `VITE_MAP_NAME` | `map1` | Name of the map record to load |
+| `VITE_MAP_NAME` | `main` | Name of the initial map record to load |
+
+## Portal zones
+
+A zone with `zone_type=portal` triggers a **map transition** when a player
+enters it. Portal zones are authored in Tiled (see
+`21-map-design-guide.md` for the full how-to) and handled directly by the
+kernel — no extension is needed.
+
+| Property | Required | Notes |
+|---|---|---|
+| `zone_type` | yes | Must be `portal` |
+| `target_map` | yes | Name of the destination `maps` record (must exist as a `maps` record) |
+| `target_entity` | no | Name of a base entity on the destination map to teleport to (a "beacon"). If omitted, the player spawns at a random `spawn` zone on the target map. |
+
+When a player enters a portal zone, worldsim resolves the spawn position
+and sends a `MapTransitionFrame` (`map_id`, `spawn_x`, `spawn_y`) to the
+client so the frontend loads the new tilemap. Extensions can also trigger
+transitions programmatically via the `worldsim.entity.teleport` NATS
+subject (`{"entity_id", "map_id", "target_entity"}`).
 
 ## To be specified (the hard parts)
 

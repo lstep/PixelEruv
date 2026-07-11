@@ -41,8 +41,8 @@ func TestDespawnClient_NotifiesOthersViaDestroyEntity(t *testing.T) {
 
 	sim := &Simulator{
 		nc:      pubNc,
-		mapID:   "test-map",
-		zoneReg: NewZoneRegistry(nil, 20, 20),
+		defaultMap: "test-map",
+		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
 		extMgr:  NewExtensionManager(logger),
 		logger:  logger,
 		tracer:  otel.Tracer("test"),
