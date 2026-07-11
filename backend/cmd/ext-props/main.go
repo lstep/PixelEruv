@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -34,8 +35,21 @@ const (
 )
 
 type registerMsg struct {
-	ExtensionID        string `json:"extension_id"`
-	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
+	ExtensionID        string           `json:"extension_id"`
+	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
+	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
+}
+
+// optionFieldDef declares a single configurable option.
+type optionFieldDef struct {
+	Name    string          `json:"name"`
+	Type    string          `json:"type"`
+	Default json.RawMessage `json:"default"`
+}
+
+// propsOptions holds the current option values for ext-props.
+type propsOptions struct {
+	InteractionRadius float64 `json:"interaction_radius"`
 }
 
 type triggerMsg struct {
@@ -94,6 +108,20 @@ func main() {
 	// extension might persist this in JetStream KV).
 	var mu sync.Mutex
 	states := make(map[string]bool) // entity_id -> is_on
+	opts := propsOptions{InteractionRadius: 1.5}
+
+	// Subscribe to extension.props.options for hot-reloadable config.
+	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
+		mu.Lock()
+		before := opts
+		if err := json.Unmarshal(m.Data, &opts); err != nil {
+			logger.Warn("parse options", "err", err)
+			opts = before
+		} else {
+			logger.Info("options updated", "interaction_radius", opts.InteractionRadius)
+		}
+		mu.Unlock()
+	})
 
 	// extension.props.action — dispatched for every "key:E" ActionFrame.
 	if _, err := nc.Subscribe("extension."+extID+".action", func(m *nats.Msg) {
@@ -144,7 +172,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	regData, _ := json.Marshal(registerMsg{ExtensionID: extID, HeartbeatIntervalS: heartbeatS})
+	regData, _ := json.Marshal(registerMsg{
+		ExtensionID:        extID,
+		HeartbeatIntervalS: heartbeatS,
+		OptionsSchema: []optionFieldDef{
+			{Name: "interaction_radius", Type: "number", Default: json.RawMessage("1.5")},
+		},
+	})
 	trigData, _ := json.Marshal(triggerMsg{
 		ExtensionID: extID,
 		InputTriggers: []struct {

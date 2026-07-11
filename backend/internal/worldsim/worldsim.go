@@ -239,6 +239,10 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 		logger.Warn("sprite seed failed", "err", err, "dir", spritesDir)
 	}
 
+	// Wire up the extension options manager (PB + NATS).
+	optsMgr := NewExtensionOptionsManager(app, nc, logger)
+	s.extMgr.SetOptionsManager(optsMgr, nc)
+
 	if err := s.subscribe(); err != nil {
 		return nil, fmt.Errorf("subscribe: %w", err)
 	}
@@ -251,6 +255,26 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 		if _, ok := s.maps[mapName]; ok {
 			s.logger.Info("map record updated via PB hook, reloading", "map", mapName)
 			s.checkMapReload(mapName)
+		}
+		return e.Next()
+	})
+
+	// PB hook: when an extension_options record is updated (admin edits
+	// options in the PB GUI), publish the updated options to the extension
+	// via NATS so it can hot-reload its configuration.
+	app.OnRecordAfterUpdateSuccess("extension_options").BindFunc(func(e *core.RecordEvent) error {
+		extID := e.Record.GetString("extension_id")
+		if extID != "" {
+			s.logger.Info("extension options updated via PB hook", "extension", extID)
+			optsMgr.PublishOptions(extID)
+		}
+		return e.Next()
+	})
+	app.OnRecordAfterCreateSuccess("extension_options").BindFunc(func(e *core.RecordEvent) error {
+		extID := e.Record.GetString("extension_id")
+		if extID != "" {
+			s.logger.Info("extension options created via PB hook", "extension", extID)
+			optsMgr.PublishOptions(extID)
 		}
 		return e.Next()
 	})

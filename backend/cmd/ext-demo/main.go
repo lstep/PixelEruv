@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,8 +23,21 @@ import (
 )
 
 type registerMsg struct {
-	ExtensionID        string `json:"extension_id"`
-	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
+	ExtensionID        string           `json:"extension_id"`
+	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
+	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
+}
+
+// optionFieldDef declares a single configurable option.
+type optionFieldDef struct {
+	Name    string          `json:"name"`
+	Type    string          `json:"type"`
+	Default json.RawMessage `json:"default"`
+}
+
+// demoOptions holds the current option values for ext-demo.
+type demoOptions struct {
+	LogZoneEvents bool `json:"log_zone_events"`
 }
 
 type zoneEvent struct {
@@ -56,20 +70,46 @@ func main() {
 	}
 	defer nc.Close()
 
+	var mu sync.Mutex
+	opts := demoOptions{LogZoneEvents: true}
+
 	// Subscribe to zone events.
 	nc.Subscribe("zone.enter", func(msg *nats.Msg) {
 		var ev zoneEvent
 		if err := json.Unmarshal(msg.Data, &ev); err != nil {
 			return
 		}
-		logger.Info("zone enter", "entity", ev.EntityID, "zone", ev.ZoneID, "map", ev.MapID)
+		mu.Lock()
+		logIt := opts.LogZoneEvents
+		mu.Unlock()
+		if logIt {
+			logger.Info("zone enter", "entity", ev.EntityID, "zone", ev.ZoneID, "map", ev.MapID)
+		}
 	})
 	nc.Subscribe("zone.exit", func(msg *nats.Msg) {
 		var ev zoneEvent
 		if err := json.Unmarshal(msg.Data, &ev); err != nil {
 			return
 		}
-		logger.Info("zone exit", "entity", ev.EntityID, "zone", ev.ZoneID, "map", ev.MapID)
+		mu.Lock()
+		logIt := opts.LogZoneEvents
+		mu.Unlock()
+		if logIt {
+			logger.Info("zone exit", "entity", ev.EntityID, "zone", ev.ZoneID, "map", ev.MapID)
+		}
+	})
+
+	// Subscribe to extension.demo.options for hot-reloadable config.
+	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
+		mu.Lock()
+		before := opts
+		if err := json.Unmarshal(m.Data, &opts); err != nil {
+			logger.Warn("parse options", "err", err)
+			opts = before
+		} else {
+			logger.Info("options updated", "log_zone_events", opts.LogZoneEvents)
+		}
+		mu.Unlock()
 	})
 
 	// Register with the worldsim and re-register periodically (NATS Core
@@ -78,6 +118,9 @@ func main() {
 	regData, _ := json.Marshal(registerMsg{
 		ExtensionID:        extID,
 		HeartbeatIntervalS: heartbeatS,
+		OptionsSchema: []optionFieldDef{
+			{Name: "log_zone_events", Type: "bool", Default: json.RawMessage("true")},
+		},
 	})
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)

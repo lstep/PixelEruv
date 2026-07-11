@@ -44,6 +44,11 @@ type ExtensionManager struct {
 	// extension IDs registered for it. See 14-zones-and-interactions.md §3a.
 	inputTriggers map[string]map[string]bool
 	logger     *slog.Logger
+	// optsMgr handles extension options (PB collection + NATS delivery).
+	// nil in tests that don't use PB.
+	optsMgr *ExtensionOptionsManager
+	// nc is the NATS connection for publishing options to extensions.
+	nc *nats.Conn
 }
 
 func NewExtensionManager(logger *slog.Logger) *ExtensionManager {
@@ -55,10 +60,19 @@ func NewExtensionManager(logger *slog.Logger) *ExtensionManager {
 	}
 }
 
+// SetOptionsManager wires the ExtensionOptionsManager and NATS connection
+// after construction (the Simulator creates the manager before NATS/PB are
+// fully initialized).
+func (m *ExtensionManager) SetOptionsManager(optsMgr *ExtensionOptionsManager, nc *nats.Conn) {
+	m.optsMgr = optsMgr
+	m.nc = nc
+}
+
 // Register handles an extension registration message.
 type registerMsg struct {
-	ExtensionID        string `json:"extension_id"`
-	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
+	ExtensionID        string            `json:"extension_id"`
+	HeartbeatIntervalS int               `json:"heartbeat_interval_s"`
+	OptionsSchema      []optionFieldDef  `json:"options_schema,omitempty"`
 }
 
 func (m *ExtensionManager) Register(data []byte) error {
@@ -75,13 +89,25 @@ func (m *ExtensionManager) Register(data []byte) error {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.extensions[msg.ExtensionID] = &Extension{
 		ID:               msg.ExtensionID,
 		HeartbeatInterval: interval,
 		LastHeartbeat:    time.Now(),
 	}
+	m.mu.Unlock()
 	m.logger.Info("extension registered", "id", msg.ExtensionID, "heartbeat", interval)
+
+	// If the extension declared an options schema, ensure a PB row exists
+	// with default values, then publish the current options back via NATS.
+	if m.optsMgr != nil && len(msg.OptionsSchema) > 0 {
+		if _, err := m.optsMgr.EnsureOptions(msg.ExtensionID, msg.OptionsSchema); err != nil {
+			m.logger.Warn("ensure extension options", "err", err, "extension", msg.ExtensionID)
+		}
+	}
+	if m.optsMgr != nil {
+		m.optsMgr.PublishOptions(msg.ExtensionID)
+	}
+
 	return nil
 }
 

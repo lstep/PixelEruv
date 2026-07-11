@@ -30,8 +30,23 @@ import (
 )
 
 type registerMsg struct {
-	ExtensionID        string `json:"extension_id"`
-	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
+	ExtensionID        string           `json:"extension_id"`
+	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
+	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
+}
+
+// optionFieldDef declares a single configurable option. Type is "bool",
+// "number", or "text". Default is the JSON-encoded default value.
+type optionFieldDef struct {
+	Name    string          `json:"name"`
+	Type    string          `json:"type"`
+	Default json.RawMessage `json:"default"`
+}
+
+// avOptions holds the current option values for ext-av.
+type avOptions struct {
+	ProximityAudioEnabled bool `json:"proximity_audio_enabled"`
+	ZoneAudioEnabled      bool `json:"zone_audio_enabled"`
 }
 
 // zoneMeta is the zone metadata entry from worldsim.zones.
@@ -108,6 +123,7 @@ func main() {
 
 	var mu sync.Mutex
 	avZones := make(map[string]bool) // zone_id -> true
+	opts := avOptions{ProximityAudioEnabled: true, ZoneAudioEnabled: true}
 
 	// updateAVZones parses a zoneMetadataMsg and updates the local A/V zone set.
 	updateAVZones := func(data []byte) {
@@ -177,7 +193,10 @@ func main() {
 		if err := json.Unmarshal(m.Data, &ev); err != nil {
 			return
 		}
-		if ev.ClientID == "" || !isAVZone(ev.ZoneID) {
+		mu.Lock()
+		zoneEnabled := opts.ZoneAudioEnabled
+		mu.Unlock()
+		if ev.ClientID == "" || !isAVZone(ev.ZoneID) || !zoneEnabled {
 			return
 		}
 		room := "zone-" + slugify(ev.ZoneID)
@@ -200,7 +219,10 @@ func main() {
 		if err := json.Unmarshal(m.Data, &ev); err != nil {
 			return
 		}
-		if ev.ClientID == "" || !isAVZone(ev.ZoneID) {
+		mu.Lock()
+		zoneEnabled := opts.ZoneAudioEnabled
+		mu.Unlock()
+		if ev.ClientID == "" || !isAVZone(ev.ZoneID) || !zoneEnabled {
 			return
 		}
 		room := "zone-" + slugify(ev.ZoneID)
@@ -217,7 +239,10 @@ func main() {
 		if err := json.Unmarshal(m.Data, &ev); err != nil {
 			return
 		}
-		if ev.ClientID == "" {
+		mu.Lock()
+		proxEnabled := opts.ProximityAudioEnabled
+		mu.Unlock()
+		if ev.ClientID == "" || !proxEnabled {
 			return
 		}
 		room := ev.GroupID // already "proxgroup-<hash>"
@@ -257,6 +282,19 @@ func main() {
 		updateAVZones(m.Data)
 	})
 
+	// --- Subscribe to extension.av.options for hot-reloadable config ---
+	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
+		mu.Lock()
+		before := opts
+		if err := json.Unmarshal(m.Data, &opts); err != nil {
+			logger.Warn("parse options", "err", err)
+			opts = before
+		} else {
+			logger.Info("options updated", "proximity_audio", opts.ProximityAudioEnabled, "zone_audio", opts.ZoneAudioEnabled)
+		}
+		mu.Unlock()
+	})
+
 	// --- Extension registration protocol ---
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
@@ -265,6 +303,10 @@ func main() {
 		regData, _ := json.Marshal(registerMsg{
 			ExtensionID:        extID,
 			HeartbeatIntervalS: heartbeatS,
+			OptionsSchema: []optionFieldDef{
+				{Name: "proximity_audio_enabled", Type: "bool", Default: json.RawMessage("true")},
+				{Name: "zone_audio_enabled", Type: "bool", Default: json.RawMessage("true")},
+			},
 		})
 		nc.Publish(regSubject, regData)
 		nc.Publish(hbSubject, []byte(extID))
