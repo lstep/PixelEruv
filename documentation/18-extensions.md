@@ -10,10 +10,13 @@ interactive objects, LLM-driven characters, trigger logic, zone access
 policies, and entirely new gameplay systems can be developed, deployed, and
 updated independently of the World Simulator core.
 
-> **Status:** design document. The extension protocol is new and has not been
-> implemented yet. The architecture (NATS as the bus, World Sim as the
-> spatial authority and replication gateway) is compatible with the existing
-> design and requires no changes to the Pusher or the replication pipeline.
+> **Status:** partially implemented. Registration (§3.1), heartbeats (§3.3),
+> gate/input triggers (§3a), zone metadata via NATS, and extension options
+> (§3.6) are implemented. Custom component registration (§3.2), entity
+> spawn/despawn (§3.4), and deregistration (§3.5) are not yet implemented.
+> The architecture (NATS as the bus, World Sim as the spatial authority and
+> replication gateway) is compatible with the existing design and requires
+> no changes to the Pusher or the replication pipeline.
 
 ---
 
@@ -183,23 +186,30 @@ single point that:
 ### 3.1 Registration
 
 When an extension starts, it connects to NATS and publishes a registration
-request. Registration declares the extension's identity and liveness policy,
-but **does not restrict what it can do** — there is no entity type whitelist
-or capability list.
+request. Registration declares the extension's identity, liveness policy,
+and (optionally) its configurable options schema — but **does not restrict
+what it can do** — there is no entity type whitelist or capability list.
 
 ```
-Subject: extension.register
+Subject: extension.<extension_id>.register
 Payload (JSON):
 {
   "extension_id": "waitress-npc-v1",
-  "heartbeat_interval_ms": 5000,
-  "on_death": "freeze",
-  "metadata": {
-    "description": "Welcome waitress NPC with LLM dialogue",
-    "version": "1.0.0"
-  }
+  "heartbeat_interval_s": 10,
+  "options_schema": [
+    {"name": "enabled", "type": "bool", "default": true},
+    {"name": "greeting", "type": "text", "default": "Hello!"},
+    {"name": "patrol_radius", "type": "number", "default": 5.0}
+  ]
 }
 ```
+
+The `options_schema` field declares configurable options that the admin can
+edit in the PocketBase admin GUI. Each entry has a `name`, a `type` (`bool`,
+`number`, or `text`), and a `default` value (JSON-encoded). Worldsim creates
+a row in the `extension_options` PocketBase collection for this extension
+with the default values, then publishes the current options back to the
+extension via NATS on `extension.<extension_id>.options`. See §3.6.
 
 The World Simulator responds on a reply subject:
 
@@ -336,6 +346,47 @@ The World Sim removes the extension from its registry and despawns or freezes
 its entities accordingly. The extension's triggers are also unregistered from
 the spatial index (or retained if the `freeze` policy is used, so cached
 `block`/`allow` triggers continue to function during the freeze).
+
+### 3.6 Extension options
+
+Extensions declare configurable options in their registration message via the
+`options_schema` field. Worldsim manages these options in PocketBase and
+delivers them to extensions via NATS. Extensions never touch PocketBase
+directly — worldsim is the sole PB accessor.
+
+**Flow:**
+
+1. Extension publishes `extension.<id>.register` with `options_schema` (array
+   of `{name, type, default}` entries).
+2. Worldsim ensures a row exists in the `extension_options` PB collection for
+   this extension, creating one with default values if missing and backfilling
+   any new fields added to the schema since last registration.
+3. Worldsim publishes the current options JSON on `extension.<id>.options`:
+   ```
+   Subject: extension.<extension_id>.options
+   Payload (JSON):
+   {"enabled": true, "greeting": "Hello!", "patrol_radius": 5.0}
+   ```
+4. The extension subscribes to `extension.<id>.options` and applies the values
+   at runtime.
+5. When the admin edits options in the PB admin GUI, an in-process PB hook
+   (`OnRecordAfterUpdateSuccess("extension_options")`) fires in worldsim,
+   which republishes the updated options on `extension.<id>.options`. The
+   extension receives the update and adjusts behavior without restarting.
+
+**Options are only published when something changes** (PB row created,
+backfilled, or admin-edited). Periodic re-registrations do not trigger
+spurious options broadcasts, avoiding feedback loops.
+
+**Current first-party extension options:**
+
+| Extension | Option | Type | Default | Effect |
+|---|---|---|---|---|
+| ext-walls | `enabled` | bool | true | When false, wall gate triggers are not registered — players can walk through walls |
+| ext-av | `proximity_audio_enabled` | bool | true | Gates proximity-based A/V room creation |
+| ext-av | `zone_audio_enabled` | bool | true | Gates zone-based A/V room creation |
+| ext-demo | `log_zone_events` | bool | true | Gates zone enter/exit log output |
+| ext-props | `interaction_radius` | number | 1.5 | Prop interaction radius (tiles) |
 
 ---
 
