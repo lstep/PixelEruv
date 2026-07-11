@@ -43,15 +43,16 @@ func NewExtensionOptionsManager(app core.App, nc *nats.Conn, logger *slog.Logger
 // EnsureOptions ensures a row exists in the extension_options collection for
 // the given extension, creating one with default values if missing. It also
 // backfills any fields declared in the schema that are absent from the stored
-// options JSON. It returns the current options JSON.
-func (m *ExtensionOptionsManager) EnsureOptions(extensionID string, schema []optionFieldDef) (json.RawMessage, error) {
+// options JSON. It returns the current options JSON and whether a PB write
+// occurred (created or backfilled).
+func (m *ExtensionOptionsManager) EnsureOptions(extensionID string, schema []optionFieldDef) (json.RawMessage, bool, error) {
 	if m.app == nil {
-		return nil, fmt.Errorf("no app")
+		return nil, false, fmt.Errorf("no app")
 	}
 
 	collection, err := m.app.FindCollectionByNameOrId("extension_options")
 	if err != nil {
-		return nil, fmt.Errorf("find extension_options collection: %w", err)
+		return nil, false, fmt.Errorf("find extension_options collection: %w", err)
 	}
 
 	// Look for an existing row for this extension.
@@ -63,10 +64,10 @@ func (m *ExtensionOptionsManager) EnsureOptions(extensionID string, schema []opt
 		record.Set("extension_id", extensionID)
 		record.Set("options", string(defaults))
 		if err := m.app.Save(record); err != nil {
-			return nil, fmt.Errorf("create extension_options row: %w", err)
+			return nil, false, fmt.Errorf("create extension_options row: %w", err)
 		}
 		m.logger.Info("created extension options row", "extension", extensionID, "defaults", string(defaults))
-		return defaults, nil
+		return defaults, true, nil
 	}
 
 	// Backfill any missing fields from the schema.
@@ -91,13 +92,13 @@ func (m *ExtensionOptionsManager) EnsureOptions(extensionID string, schema []opt
 		updated, _ := json.Marshal(current)
 		record.Set("options", string(updated))
 		if err := m.app.Save(record); err != nil {
-			return nil, fmt.Errorf("backfill extension_options: %w", err)
+			return nil, false, fmt.Errorf("backfill extension_options: %w", err)
 		}
 		m.logger.Info("backfilled extension options", "extension", extensionID)
 		raw = string(updated)
 	}
 
-	return json.RawMessage(raw), nil
+	return json.RawMessage(raw), changed, nil
 }
 
 // PublishOptions sends the current options for an extension via NATS on

@@ -111,7 +111,7 @@ func TestExtensionOptionsManager_NilApp(t *testing.T) {
 	mgr := NewExtensionOptionsManager(nil, nil, slog.Default())
 
 	// EnsureOptions should return an error, not panic.
-	_, err := mgr.EnsureOptions("test", nil)
+	_, _, err := mgr.EnsureOptions("test", nil)
 	if err == nil {
 		t.Error("expected error with nil app")
 	}
