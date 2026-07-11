@@ -280,10 +280,6 @@ const ZOOM_SENSITIVITY = 0.001;
 const FRAME_W = 32;
 const FRAME_H = 64;
 const COLS_PER_ROW = 24;
-// char_5 is excluded: its sheet is malformed (walk cycle only has right/up
-// directions; down/left frames are empty), so it renders as an empty sprite.
-// char_4 is excluded: its direction order differs from the other sheets
-// (see documentation/22-limezu-sprites.md); pending regeneration.
 const CHAR_SPRITES = ["char_0", "char_1", "char_2", "char_3"];
 const WALK_ROW = 2;        // frame-row used for the movement animation (run)
 

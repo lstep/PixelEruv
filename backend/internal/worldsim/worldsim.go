@@ -237,7 +237,7 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 
 	// Auto-seed the sprite_bases catalog from the bundled sprites directory on
 	// first run. Non-fatal: if PB is down or seeding fails, worldsim still
-	// starts and the frontend falls back to static char_0..char_4 sheets.
+	// starts and the frontend falls back to static char_0..char_3 sheets.
 	// SPRITES_DIR defaults to ./sprites (bundled in dist/) for production; for
 	// local dev, run `make sync-assets` and set SPRITES_DIR=frontend/public/sprites
 	// (or point directly at spritesheets/ when running the binary outside Vite).

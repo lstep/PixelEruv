@@ -24,7 +24,7 @@ export interface SpriteBaseAsset {
 }
 
 // Fetch all sprite_bases records from PocketBase. Returns empty array on
-// failure (caller falls back to static char_0..char_4 files).
+// failure (caller falls back to static char_0..char_3 files).
 export async function loadSpriteBases(): Promise<SpriteBaseAsset[]> {
   try {
     const resp = await fetch(
