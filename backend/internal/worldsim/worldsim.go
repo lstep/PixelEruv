@@ -50,6 +50,16 @@ type Entity struct {
 	// part of the DisplayName component so clients can visually distinguish
 	// guests (e.g. a "GUEST" badge on the name tag).
 	IsGuest bool
+	// IP is the client's IP address, captured at the pusher and threaded
+	// via NATS. For logged-in users it's also persisted in PocketBase
+	// (players.ip). For guests it's in-memory only. Sent to admin clients
+	// via the admin-only NATS channel for all players — never to non-admins.
+	IP string
+	// IsAdmin is true for players with the is_admin flag in PocketBase.
+	// Admins receive AdminInfoFrame data (guest IPs, etc.) via the
+	// client.<id>.admin NATS subject. Always false for guests (no PB
+	// record).
+	IsAdmin bool
 	// EntityType/OwnerExtension/TriggerRadius: set for base entities loaded
 	// from the map's "Entities" object layer (see mapdata.go PropEntity).
 	// Included in input-trigger dispatch payloads so extensions can
@@ -368,14 +378,16 @@ func (s *Simulator) subscribe() error {
 			return
 		}
 		span.SetAttributes(attribute.String("client.id", ar.ClientId), attribute.String("user.sub", ar.GetSub()))
-		entityID, mapID := s.provisionClient(ctx, ar.ClientId, ar.GetSub())
-		// Respond with the entity ID and map_id so the pusher can include
-		// them in the AuthResultFrame sent to the client. The client needs
-		// the actual entity ID (which may differ from "e_"+clientID[2:]
-		// when a PocketBase-stored identity exists) to identify its own
-		// avatar, and the map_id to know which tilemap to load initially.
+		entityID, mapID, isAdmin := s.provisionClient(ctx, ar.ClientId, ar.GetSub(), ar.GetIp())
+		// Respond with the entity ID, map_id, and admin flag so the pusher
+		// can include them in the AuthResultFrame sent to the client. The
+		// client needs the actual entity ID (which may differ from
+		// "e_"+clientID[2:] when a PocketBase-stored identity exists) to
+		// identify its own avatar, the map_id to know which tilemap to load
+		// initially, and the admin flag to decide whether to subscribe to
+		// the admin-only NATS channel.
 		if m.Reply != "" {
-			resp, _ := proto.Marshal(&pb.AuthResultFrame{EntityId: entityID, MapId: mapID})
+			resp, _ := proto.Marshal(&pb.AuthResultFrame{EntityId: entityID, MapId: mapID, IsAdmin: isAdmin})
 			if err := s.nc.Publish(m.Reply, resp); err != nil {
 				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
 			}
@@ -624,12 +636,12 @@ func (s *Simulator) publishHealth() {
 // If the user has a record in PocketBase (by oidc_sub), their persistent
 // entity_id and last position are restored. Otherwise a new user record
 // is created.
-func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) (string, string) {
+func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip string) (string, string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if existing, exists := s.clients[clientID]; exists {
-		return existing.ID, existing.Position.MapId
+		return existing.ID, existing.Position.MapId, existing.IsAdmin
 	}
 
 	defaultEntityID := "e_" + clientID[2:]
@@ -649,10 +661,11 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) (
 	entityID := defaultEntityID
 	displayName := ""
 	spriteBase := ""
+	isAdmin := false
 
 	// Look up or create the user in PocketBase for persistent identity.
 	if s.userStore != nil && sub != "" && sub != "dev" {
-		user, err := s.userStore.FindOrCreateUser(sub, defaultEntityID, mapName)
+		user, err := s.userStore.FindOrCreateUser(sub, defaultEntityID, mapName, ip)
 		if err != nil {
 			s.logger.WarnContext(ctx, "user store lookup failed, using defaults",
 				"err", err, "sub", sub)
@@ -660,6 +673,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) (
 			entityID = user.EntityID
 			displayName = user.DisplayName
 			spriteBase = user.SpriteBase
+			isAdmin = user.IsAdmin
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
@@ -702,6 +716,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) (
 		},
 		DisplayName:  displayName,
 		IsGuest:      sub == "" || sub == "dev",
+		IP:           ip,
+		IsAdmin:      isAdmin,
 		SpriteBase:   spriteBase,
 		spawnedTo:    make(map[string]bool),
 		currentZones: make(map[string]bool),
@@ -732,7 +748,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) (
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
 		"map", mapName, "x", e.Position.X, "y", e.Position.Y)
-	return entityID, mapName
+	return entityID, mapName, isAdmin
 }
 
 func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
@@ -1443,6 +1459,9 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 	batch := &pb.ReplicationBatch{
 		LastInputSeq: clientEntity.NetworkSession.Seq,
 	}
+	// Track entities spawned in this batch so we can send admin info for
+	// them if the client is an admin.
+	var spawnedEntities []*Entity
 
 	for _, e := range s.entities {
 		// Multi-map filtering: only replicate entities on the same map as the
@@ -1498,6 +1517,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				Components:  components,
 			})
 			e.spawnedTo[clientID] = true
+			spawnedEntities = append(spawnedEntities, e)
 		} else {
 			if e.dirtyPosition {
 				posBytes, _ := proto.Marshal(e.Position)
@@ -1581,7 +1601,42 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		s.logger.WarnContext(rctx, "replication publish", "client", clientID, "err", err)
 		return false
 	}
+
+	// If the client is an admin and we spawned new entities in this batch,
+	// send admin-only info (IP, guest status, OIDC sub) for those entities
+	// via the admin-only NATS channel. Non-admin clients never receive this.
+	if clientEntity.IsAdmin && len(spawnedEntities) > 0 {
+		s.publishAdminInfo(rctx, clientID, spawnedEntities)
+	}
 	return true
+}
+
+// publishAdminInfo sends an AdminInfoFrame for the given entities to the
+// admin client's admin-only NATS subject (client.<id>.admin). Only called
+// for admin clients — the pusher subscribes to this subject only for admin
+// sessions, so the data never reaches non-admin browsers.
+func (s *Simulator) publishAdminInfo(ctx context.Context, adminClientID string, entities []*Entity) {
+	infos := make([]*pb.AdminInfoFrame_EntityAdminInfo, 0, len(entities))
+	for _, e := range entities {
+		infos = append(infos, &pb.AdminInfoFrame_EntityAdminInfo{
+			EntityId: e.ID,
+			Ip:       e.IP,
+			IsGuest:  e.IsGuest,
+			OidcSub:  "", // OIDC sub is not stored on the Entity; available in PB
+		})
+	}
+	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_AdminInfo{AdminInfo: &pb.AdminInfoFrame{Entities: infos}}}
+	frameBytes, err := proto.Marshal(frame)
+	if err != nil {
+		s.logger.WarnContext(ctx, "admin info marshal", "client", adminClientID, "err", err)
+		return
+	}
+	subject := fmt.Sprintf("client.%s.admin", adminClientID)
+	msg := &nats.Msg{Subject: subject, Data: frameBytes}
+	otelinternal.Inject(ctx, msg)
+	if err := s.nc.PublishMsg(msg); err != nil {
+		s.logger.WarnContext(ctx, "admin info publish", "client", adminClientID, "err", err)
+	}
 }
 
 // runIntegrityCheck validates all loaded maps and logs any issues.

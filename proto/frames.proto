@@ -96,6 +96,7 @@ message ServerFrame {
     AvTokenFrame av_token = 6;
     ChatMessageFrame chat_message = 7;
     MapTransitionFrame map_transition = 8;
+    AdminInfoFrame admin_info = 9;
   }
 }
 
@@ -113,6 +114,8 @@ message AuthResultFrame {
   string entity_id = 3;
   string sub = 4;             // OIDC subject (user identity)
   string map_id = 5;          // player's current map (initial map to load)
+  string ip = 6;              // client IP (pusher→worldsim only; not sent to browser)
+  bool is_admin = 7;          // admin status (worldsim→pusher→browser)
 }
 
 message ErrorFrame {
@@ -154,4 +157,18 @@ message MapTransitionFrame {
   string map_id = 1;        // new map name
   float spawn_x = 2;        // spawn X on new map
   float spawn_y = 3;        // spawn Y on new map
+}
+
+// AdminInfoFrame carries admin-only data about entities, sent only to admin
+// clients via the client.<id>.admin NATS subject. Never sent to non-admin
+// clients. Covers all players (guests and logged-in). Extensible — add fields
+// as admin features grow. See documentation/plans/2026-07-11-admin-mode-design.md.
+message AdminInfoFrame {
+  message EntityAdminInfo {
+    string entity_id = 1;
+    string ip = 2;           // client IP (all players; in-memory on Entity)
+    bool is_guest = 3;       // anonymous session?
+    string oidc_sub = 4;     // OIDC subject (empty for guests)
+  }
+  repeated EntityAdminInfo entities = 1;
 }

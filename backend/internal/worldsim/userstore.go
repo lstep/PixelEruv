@@ -2,6 +2,7 @@ package worldsim
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/pocketbase/pocketbase/core"
 )
@@ -16,6 +17,9 @@ type UserRecord struct {
 	PosY        float32
 	SpriteBase  string
 	MapID       string
+	IP          string
+	LastSeenAt  int64
+	IsAdmin     bool
 }
 
 // UserStore handles PocketBase player lookups and persistence via the
@@ -29,22 +33,30 @@ func NewUserStore(app core.App) *UserStore {
 }
 
 // FindOrCreateUser looks up a player by oidc_sub. If not found, creates a new
-// record with a generated entity_id and default spawn position.
-func (s *UserStore) FindOrCreateUser(sub, entityID, defaultMapID string) (*UserRecord, error) {
+// record with a generated entity_id and default spawn position. On both create
+// and reconnect, the client IP and last_seen_at timestamp are persisted.
+func (s *UserStore) FindOrCreateUser(sub, entityID, defaultMapID, ip string) (*UserRecord, error) {
 	user, err := s.findBySub(sub)
 	if err != nil {
 		return nil, fmt.Errorf("find user: %w", err)
 	}
 	if user != nil {
+		if err := s.UpdateConnectInfo(user.EntityID, ip); err != nil {
+			return nil, fmt.Errorf("update connect info: %w", err)
+		}
+		user.IP = ip
+		user.LastSeenAt = time.Now().Unix()
 		return user, nil
 	}
 
 	user = &UserRecord{
-		OidcSub:  sub,
-		EntityID: entityID,
-		PosX:     10,
-		PosY:     10,
-		MapID:    defaultMapID,
+		OidcSub:    sub,
+		EntityID:   entityID,
+		PosX:       10,
+		PosY:       10,
+		MapID:      defaultMapID,
+		IP:         ip,
+		LastSeenAt: time.Now().Unix(),
 	}
 	if err := s.create(user); err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
@@ -111,6 +123,23 @@ func (s *UserStore) UpdateSpriteBase(entityID, spriteBase string) error {
 	return s.app.Save(record)
 }
 
+// UpdateConnectInfo persists the client IP and last_seen_at timestamp for a
+// player. Called on every connect. No-op if the entity has no PocketBase
+// record (guests).
+func (s *UserStore) UpdateConnectInfo(entityID, ip string) error {
+	record, err := s.findByEntityIDRecord(entityID)
+	if err != nil {
+		return fmt.Errorf("find user for connect info update: %w", err)
+	}
+	if record == nil {
+		return nil
+	}
+
+	record.Set("ip", ip)
+	record.Set("last_seen_at", time.Now().Unix())
+	return s.app.Save(record)
+}
+
 func (s *UserStore) findBySub(sub string) (*UserRecord, error) {
 	record, err := s.app.FindFirstRecordByData("players", "oidc_sub", sub)
 	if err != nil {
@@ -145,6 +174,12 @@ func (s *UserStore) create(user *UserRecord) error {
 	if user.MapID != "" {
 		record.Set("map_id", user.MapID)
 	}
+	if user.IP != "" {
+		record.Set("ip", user.IP)
+	}
+	if user.LastSeenAt != 0 {
+		record.Set("last_seen_at", user.LastSeenAt)
+	}
 	if err := s.app.Save(record); err != nil {
 		return err
 	}
@@ -163,5 +198,8 @@ func recordToUser(r *core.Record) *UserRecord {
 		PosY:        float32(r.GetFloat("pos_y")),
 		SpriteBase:  r.GetString("sprite_base"),
 		MapID:       r.GetString("map_id"),
+		IP:          r.GetString("ip"),
+		LastSeenAt:  int64(r.GetInt("last_seen_at")),
+		IsAdmin:     r.GetBool("is_admin"),
 	}
 }

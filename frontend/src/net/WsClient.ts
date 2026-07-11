@@ -32,6 +32,11 @@ export interface ConnectHandlers {
   // player to a different map. The frontend should load the new tilemap
   // and clear entities from the old map.
   onMapTransition?: (msg: { mapId: string; spawnX: number; spawnY: number }) => void;
+  // Fired when an AdminInfoFrame is received (admin clients only). Carries
+  // admin-only data (IP, guest status) about entities spawned near the
+  // admin. Non-admin clients never receive this. See
+  // documentation/plans/2026-07-11-admin-mode-design.md.
+  onAdminInfo?: (msg: { entities: { entityId: string; ip: string; isGuest: boolean; oidcSub: string }[] }) => void;
 }
 
 export interface SpawnEntityView {
@@ -62,6 +67,7 @@ export class WsClient {
   private clientId: string | null = null;
   private entityId: string | null = null;
   private mapId: string | null = null;
+  private admin = false;
   private seq = 0;
   private handlers!: ConnectHandlers;
   // True after the first successful auth; used to dispatch onReady vs
@@ -126,6 +132,7 @@ export class WsClient {
             this.clientId = ar.clientId;
             this.entityId = ar.entityId || null;
             this.mapId = ar.mapId || null;
+            this.admin = ar.isAdmin;
             this.reconnectAttempt = 0;
             connectSpan.setAttribute("client.id", ar.clientId);
             connectSpan.end();
@@ -224,6 +231,18 @@ export class WsClient {
             mapId: mt.mapId,
             spawnX: Number(mt.spawnX),
             spawnY: Number(mt.spawnY),
+          });
+          break;
+        }
+        case "adminInfo": {
+          const ai = serverFrame.payload.value;
+          this.handlers.onAdminInfo?.({
+            entities: ai.entities.map((e: any) => ({
+              entityId: e.entityId,
+              ip: e.ip,
+              isGuest: e.isGuest,
+              oidcSub: e.oidcSub,
+            })),
           });
           break;
         }
@@ -402,6 +421,10 @@ export class WsClient {
 
   getMapId(): string | null {
     return this.mapId;
+  }
+
+  isAdmin(): boolean {
+    return this.admin;
   }
 
   close(): void {
