@@ -309,6 +309,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	clientID := generateClientID()
+	deviceID := auth.GetDeviceId()
 	span.SetAttributes(attribute.String("client.id", clientID), attribute.String("user.sub", sub))
 	authSpan.SetAttributes(attribute.String("client.id", clientID), attribute.String("user.sub", sub))
 	sess := &session{clientID: clientID, conn: c}
@@ -413,17 +414,37 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// Publish client.connected so World Sim provisions the entity. Use
 	// request-reply to get the actual entity ID, which may differ from
 	// "e_"+clientID[2:] when a PocketBase-stored identity exists. The
-	// client needs the real entity ID to identify its own avatar.
+	// client needs the real entity ID to identify its own avatar. The
+	// device_id is threaded so worldsim can check the ban list.
 	ip := clientIP(r)
 	entityID := ""
 	isAdmin := false
-	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip); err != nil {
+	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip, deviceID); err != nil {
 		s.logger.Warn("client.connected request-reply, using default entity ID", "client", clientID, "err", err)
 	} else {
 		var ar pb.AuthResultFrame
 		if err := proto.Unmarshal(reply, &ar); err != nil {
 			s.logger.Warn("client.connected reply unmarshal", "client", clientID, "err", err)
 		} else {
+			// If worldsim detected an active ban, reject the connection.
+			// Send the ban info to the browser so it can display the
+			// reason and expiry, then close the WebSocket.
+			if ar.Banned {
+				banResult := &pb.ServerFrame{
+					Payload: &pb.ServerFrame_AuthResult{
+						AuthResult: &pb.AuthResultFrame{
+							Ok:        false,
+							BanReason: ar.BanReason,
+							BanUntil:  ar.BanUntil,
+						},
+					},
+				}
+				banBytes, _ := proto.Marshal(banResult)
+				c.Write(authCtx, websocket.MessageBinary, banBytes)
+				c.Close(websocket.StatusPolicyViolation, "banned")
+				s.logger.Info("rejected banned client", "client", clientID, "sub", sub, "ip", ip, "device", deviceID)
+				return
+			}
 			entityID = ar.EntityId
 			isAdmin = ar.IsAdmin
 		}
@@ -621,10 +642,10 @@ func (s *Server) publishLifecycle(ctx context.Context, subject, clientID, sub st
 
 // publishLifecycleRequest is like publishLifecycle but uses NATS request-reply
 // and returns the reply data. Used for client.connected so worldsim can return
-// the provisioned entity ID. The client IP is carried so worldsim can persist
-// it in the players collection.
-func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub, ip string) ([]byte, error) {
-	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub, Ip: ip})
+// the provisioned entity ID. The client IP and device_id are carried so
+// worldsim can persist the IP and check the ban list.
+func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub, ip, deviceID string) ([]byte, error) {
+	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub, Ip: ip, DeviceId: deviceID})
 	m := &nats.Msg{Subject: subject, Data: msg}
 	otelinternal.Inject(ctx, m)
 	reply, err := s.nc.RequestMsg(m, 5*time.Second)

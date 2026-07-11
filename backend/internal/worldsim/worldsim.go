@@ -55,6 +55,12 @@ type Entity struct {
 	// (players.ip). For guests it's in-memory only. Sent to admin clients
 	// via the admin-only NATS channel for all players — never to non-admins.
 	IP string
+	// DeviceID is the client-generated UUID stored in the browser's
+	// localStorage, sent in the AuthFrame. Stable across sessions for the
+	// same browser. Used as a ban target for guests (alongside IP and
+	// oidc_sub for logged-in users). Sent to admin clients via the
+	// admin-only NATS channel.
+	DeviceID string
 	// IsAdmin is true for players with the is_admin flag in PocketBase.
 	// Admins receive AdminInfoFrame data (guest IPs, etc.) via the
 	// client.<id>.admin NATS subject. Always false for guests (no PB
@@ -123,6 +129,7 @@ type Simulator struct {
 	mapFilenames  map[string]string         // mapName → last known tiled_json filename
 	mapStore      *MapStore
 	userStore     *UserStore
+	banStore      *BanStore
 	spriteStore   *SpriteStore
 	extMgr        *ExtensionManager
 	tickHz        int
@@ -160,6 +167,7 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 
 	mapStore := NewMapStore(app)
 	userStore := NewUserStore(app)
+	banStore := NewBanStore(app)
 	spriteStore := NewSpriteStore(app)
 
 	// Auto-seed the default map into PocketBase on first run, so a fresh
@@ -217,6 +225,7 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 		mapFilenames:     mapFilenames,
 		mapStore:         mapStore,
 		userStore:        userStore,
+		banStore:         banStore,
 		spriteStore:      spriteStore,
 		extMgr:           NewExtensionManager(logger),
 		tickHz:           tickHz,
@@ -378,16 +387,25 @@ func (s *Simulator) subscribe() error {
 			return
 		}
 		span.SetAttributes(attribute.String("client.id", ar.ClientId), attribute.String("user.sub", ar.GetSub()))
-		entityID, mapID, isAdmin := s.provisionClient(ctx, ar.ClientId, ar.GetSub(), ar.GetIp())
+		result := s.provisionClient(ctx, ar.ClientId, ar.GetSub(), ar.GetIp(), ar.GetDeviceId())
 		// Respond with the entity ID, map_id, and admin flag so the pusher
 		// can include them in the AuthResultFrame sent to the client. The
 		// client needs the actual entity ID (which may differ from
 		// "e_"+clientID[2:] when a PocketBase-stored identity exists) to
 		// identify its own avatar, the map_id to know which tilemap to load
 		// initially, and the admin flag to decide whether to subscribe to
-		// the admin-only NATS channel.
+		// the admin-only NATS channel. If the client is banned, the reply
+		// carries the ban reason + expiry so the pusher can reject the
+		// connection and the browser can display the ban message.
 		if m.Reply != "" {
-			resp, _ := proto.Marshal(&pb.AuthResultFrame{EntityId: entityID, MapId: mapID, IsAdmin: isAdmin})
+			resp, _ := proto.Marshal(&pb.AuthResultFrame{
+				EntityId:  result.entityID,
+				MapId:     result.mapID,
+				IsAdmin:   result.isAdmin,
+				Banned:    result.banned,
+				BanReason: result.banReason,
+				BanUntil:  uint64(result.banUntil),
+			})
 			if err := s.nc.Publish(m.Reply, resp); err != nil {
 				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
 			}
@@ -632,16 +650,43 @@ func (s *Simulator) publishHealth() {
 	}
 }
 
+// provisionResult is the return value of provisionClient. When banned is
+// true, the other fields are zero — no entity is created.
+type provisionResult struct {
+	entityID  string
+	mapID     string
+	isAdmin   bool
+	banned    bool
+	banReason string
+	banUntil  int64
+}
+
 // provisionClient creates a player avatar entity for the given client.
 // If the user has a record in PocketBase (by oidc_sub), their persistent
 // entity_id and last position are restored. Otherwise a new user record
-// is created.
-func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip string) (string, string, bool) {
+// is created. If the client matches an active ban (by oidc_sub, IP, or
+// device_id), no entity is created and the ban info is returned.
+func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, deviceID string) provisionResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if existing, exists := s.clients[clientID]; exists {
-		return existing.ID, existing.Position.MapId, existing.IsAdmin
+		return provisionResult{entityID: existing.ID, mapID: existing.Position.MapId, isAdmin: existing.IsAdmin}
+	}
+
+	// Check ban list before provisioning. Bans by any of the three
+	// identifiers (oidc_sub, IP, device_id) block the connection.
+	if s.banStore != nil {
+		if ban, found := s.banStore.CheckBan(sub, ip, deviceID); found {
+			s.logger.InfoContext(ctx, "rejected banned client",
+				"client", clientID, "sub", sub, "ip", ip, "device", deviceID,
+				"reason", ban.Reason, "until", ban.BannedUntil)
+			return provisionResult{
+				banned:    true,
+				banReason: ban.Reason,
+				banUntil:  ban.BannedUntil,
+			}
+		}
 	}
 
 	defaultEntityID := "e_" + clientID[2:]
@@ -717,6 +762,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip strin
 		DisplayName:  displayName,
 		IsGuest:      sub == "" || sub == "dev",
 		IP:           ip,
+		DeviceID:     deviceID,
 		IsAdmin:      isAdmin,
 		SpriteBase:   spriteBase,
 		spawnedTo:    make(map[string]bool),
@@ -748,7 +794,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip strin
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
 		"map", mapName, "x", e.Position.X, "y", e.Position.Y)
-	return entityID, mapName, isAdmin
+	return provisionResult{entityID: entityID, mapID: mapName, isAdmin: isAdmin}
 }
 
 func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
@@ -1623,6 +1669,7 @@ func (s *Simulator) publishAdminInfo(ctx context.Context, adminClientID string, 
 			Ip:       e.IP,
 			IsGuest:  e.IsGuest,
 			OidcSub:  "", // OIDC sub is not stored on the Entity; available in PB
+			DeviceId: e.DeviceID,
 		})
 	}
 	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_AdminInfo{AdminInfo: &pb.AdminInfoFrame{Entities: infos}}}

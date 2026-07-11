@@ -123,3 +123,68 @@ func TestAdminInfo_NotSentToNonAdmin(t *testing.T) {
 		t.Fatal("non-admin client received admin info frame — should never happen")
 	}
 }
+
+// TestProvisionClient_SetsDeviceID verifies that the device_id from the
+// auth frame is stored on the Entity and included in AdminInfoFrame.
+func TestProvisionClient_SetsDeviceID(t *testing.T) {
+	sim, subNc := newChatTestSim(t)
+	sim.userStore = nil // no PocketBase in tests
+
+	result := sim.provisionClient(t.Context(), "c_abc12345", "", "1.2.3.4", "dev-uuid-123")
+	if result.banned {
+		t.Fatal("expected not banned with nil banStore")
+	}
+	e := sim.clients["c_abc12345"]
+	if e == nil {
+		t.Fatal("entity not created")
+	}
+	if e.DeviceID != "dev-uuid-123" {
+		t.Errorf("entity DeviceID = %q, want %q", e.DeviceID, "dev-uuid-123")
+	}
+	if e.IP != "1.2.3.4" {
+		t.Errorf("entity IP = %q, want %q", e.IP, "1.2.3.4")
+	}
+
+	// Verify device_id appears in AdminInfoFrame when an admin views it.
+	// Put the admin on the same map as the provisioned guest.
+	admin := addPlayer(sim, "e_admin", "c_admin", "Admin", "")
+	admin.IsAdmin = true
+	admin.Position.MapId = result.mapID
+
+	adminCh := make(chan *pb.AdminInfoFrame, 10)
+	if _, err := subNc.Subscribe("client.c_admin.admin", func(m *nats.Msg) {
+		var sf pb.ServerFrame
+		if err := proto.Unmarshal(m.Data, &sf); err != nil {
+			t.Errorf("unmarshal ServerFrame: %v", err)
+			return
+		}
+		ai := sf.GetAdminInfo()
+		if ai == nil {
+			t.Errorf("expected AdminInfoFrame, got %T", sf.Payload)
+			return
+		}
+		adminCh <- ai
+	}); err != nil {
+		t.Fatalf("subscribe admin channel: %v", err)
+	}
+
+	sim.replicateToClient(context.Background(), admin)
+
+	select {
+	case ai := <-adminCh:
+		var found *pb.AdminInfoFrame_EntityAdminInfo
+		for _, e := range ai.Entities {
+			if e.EntityId == result.entityID {
+				found = e
+			}
+		}
+		if found == nil {
+			t.Fatalf("expected entity %s in admin info, got: %v", result.entityID, ai.Entities)
+		}
+		if found.DeviceId != "dev-uuid-123" {
+			t.Errorf("admin info DeviceId = %q, want %q", found.DeviceId, "dev-uuid-123")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for admin info frame")
+	}
+}

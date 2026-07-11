@@ -3,7 +3,7 @@ import { context, trace } from "@opentelemetry/api";
 import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
-import { getIdToken, clearIdToken } from "../auth";
+import { getIdToken, clearIdToken, getDeviceId } from "../auth";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
@@ -36,7 +36,11 @@ export interface ConnectHandlers {
   // admin-only data (IP, guest status) about entities spawned near the
   // admin. Non-admin clients never receive this. See
   // documentation/plans/2026-07-11-admin-mode-design.md.
-  onAdminInfo?: (msg: { entities: { entityId: string; ip: string; isGuest: boolean; oidcSub: string }[] }) => void;
+  onAdminInfo?: (msg: { entities: { entityId: string; ip: string; isGuest: boolean; oidcSub: string; deviceId: string }[] }) => void;
+  // Fired when the server rejects the connection due to an active ban.
+  // The client will not attempt to reconnect. reason is human-readable;
+  // banUntil is a unix timestamp (0 = permanent).
+  onBanned?: (reason: string, banUntil: number) => void;
 }
 
 export interface SpawnEntityView {
@@ -110,7 +114,7 @@ export class WsClient {
         // Build the auth frame inside the span's active context so
         // traceparentFor() serializes this span's context for the backend.
         const auth = context.with(trace.setSpan(context.active(), authSpan), () =>
-          create(AuthFrameSchema, { idToken: getIdToken() ?? "", traceparent: traceparentFor() }),
+          create(AuthFrameSchema, { idToken: getIdToken() ?? "", traceparent: traceparentFor(), deviceId: getDeviceId() }),
         );
         const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
         ws.send(toBinary(ClientFrameSchema, frame));
@@ -148,6 +152,15 @@ export class WsClient {
             connectSpan.recordException(new Error("auth failed"));
             connectSpan.setStatus({ code: 2, message: "auth failed" });
             connectSpan.end();
+            // If the server sent a ban reason, the client is banned —
+            // stop reconnecting and surface the ban to the UI.
+            if (ar.banReason) {
+              this.closed = true;
+              this.setState("closed");
+              console.error("banned:", ar.banReason);
+              this.handlers.onBanned?.(ar.banReason, Number(ar.banUntil));
+              break;
+            }
             console.error("auth failed");
             // If auth failed with a stored token (e.g. PB DB was reset,
             // making the token stale), clear it so the next reconnect
@@ -242,6 +255,7 @@ export class WsClient {
               ip: e.ip,
               isGuest: e.isGuest,
               oidcSub: e.oidcSub,
+              deviceId: e.deviceId,
             })),
           });
           break;

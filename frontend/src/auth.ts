@@ -23,6 +23,19 @@ export function getSub(): string | null {
   return localStorage.getItem("sub");
 }
 
+// Device ID is a client-generated UUID stored in localStorage, stable across
+// sessions for the same browser. Used as a ban target for guests (alongside
+// IP and oidc_sub for logged-in users). Evadable by clearing storage — one
+// layer of three.
+export function getDeviceId(): string {
+  let id = localStorage.getItem("device_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem("device_id", id);
+  }
+  return id;
+}
+
 export function isLoggedIn(): boolean {
   return getIdToken() !== null;
 }

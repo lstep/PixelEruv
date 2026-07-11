@@ -359,7 +359,7 @@ export class GameScene extends Phaser.Scene {
   // Admin-only info by entity ID (IP, guest status). Populated from
   // AdminInfoFrame, only received by admin clients. Used to render the IP
   // below the name in the name tag pillbox for admin viewers.
-  private adminInfoByEntity = new Map<string, { ip: string; isGuest: boolean }>();
+  private adminInfoByEntity = new Map<string, { ip: string; isGuest: boolean; deviceId: string }>();
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
@@ -891,12 +891,21 @@ export class GameScene extends Phaser.Scene {
       },
       onAdminInfo: (msg) => {
         for (const e of msg.entities) {
-          this.adminInfoByEntity.set(e.entityId, { ip: e.ip, isGuest: e.isGuest });
+          this.adminInfoByEntity.set(e.entityId, { ip: e.ip, isGuest: e.isGuest, deviceId: e.deviceId });
           // If the avatar already has a name tag, update it to show the IP.
           const av = this.avatars.get(e.entityId);
           if (av?.nameTag) {
             this.updateNameTagAdminInfo(e.entityId);
           }
+        }
+      },
+      onBanned: (reason, banUntil) => {
+        const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
+        if (msg) {
+          const expiry = banUntil > 0
+            ? `until ${new Date(banUntil * 1000).toLocaleString()}`
+            : "permanently";
+          msg.setText(`You are banned ${expiry}\n${reason}`);
         }
       },
     });
@@ -1266,6 +1275,7 @@ export class GameScene extends Phaser.Scene {
     if (this.ws?.isAdmin()) {
       const info = this.adminInfoByEntity.get(entityId);
       if (info?.ip) adminLines.push(info.ip);
+      if (info?.deviceId) adminLines.push("dev:" + info.deviceId.slice(0, 8));
     }
     const hasAdminPill = adminLines.length > 0;
 
