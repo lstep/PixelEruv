@@ -25,6 +25,10 @@ message AuthFrame {
   // W3C traceparent of the browser span that initiated this connection.
   // Lets the pusher parent its server spans to the client-side trace.
   string traceparent = 2;
+  // Client-generated device ID (UUID stored in localStorage). Stable across
+  // sessions for the same browser, used as a ban target for guests. Evadable
+  // by clearing storage — one layer of three (oidc_sub, IP, device_id).
+  string device_id = 3;
 }
 
 message InputFrame {
@@ -116,6 +120,10 @@ message AuthResultFrame {
   string map_id = 5;          // player's current map (initial map to load)
   string ip = 6;              // client IP (pusher→worldsim only; not sent to browser)
   bool is_admin = 7;          // admin status (worldsim→pusher→browser)
+  string device_id = 8;       // client device ID (pusher→worldsim transport)
+  bool banned = 9;            // worldsim→pusher: client is banned, reject connection
+  string ban_reason = 10;     // worldsim→pusher→browser: human-readable ban reason
+  uint64 ban_until = 11;      // worldsim→pusher→browser: unix timestamp expiry (0 = permanent)
 }
 
 message ErrorFrame {
@@ -169,6 +177,7 @@ message AdminInfoFrame {
     string ip = 2;           // client IP (all players; in-memory on Entity)
     bool is_guest = 3;       // anonymous session?
     string oidc_sub = 4;     // OIDC subject (empty for guests)
+    string device_id = 5;    // client device ID (for ban targeting)
   }
   repeated EntityAdminInfo entities = 1;
 }
