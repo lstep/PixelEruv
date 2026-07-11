@@ -8,17 +8,23 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/plugins/migratecmd"
+	"github.com/pocketbase/pocketbase/tools/osutils"
+
 	"github.com/lstep/pixeleruv/backend/internal/otel"
 	"github.com/lstep/pixeleruv/backend/internal/worldsim"
+
+	// Register Go migrations (side-effect import)
+	_ "github.com/lstep/pixeleruv/backend/migrations"
 )
 
 func main() {
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	tickHz := envInt("TICK_HZ", 20)
 	mapID := envOr("MAP_ID", "map1")
-	pocketbaseURL := envOr("POCKETBASE_URL", "http://localhost:8090")
-	pbAdminEmail := envOr("PB_ADMIN_EMAIL", "admin@pixeleruv.local")
-	pbAdminPassword := envOr("PB_ADMIN_PASSWORD", "password123")
+	pbDataDir := envOr("PB_DATA_DIR", "./pb_data")
+	pbHTTPAddr := envOr("PB_HTTP_ADDR", ":8090")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -33,7 +39,34 @@ func main() {
 		shutdown(sctx)
 	}()
 
-	sim, err := worldsim.New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword, tickHz, logger)
+	// Initialize PocketBase as an embedded library.
+	app := pocketbase.NewWithConfig(pocketbase.Config{
+		DefaultDataDir: pbDataDir,
+	})
+
+	// Configure the serve command to bind on the specified HTTP address.
+	// PB's default is 127.0.0.1:8090; for Docker we need 0.0.0.0:8090.
+	app.RootCmd.SetArgs([]string{"serve", "--http=" + pbHTTPAddr})
+
+	// Register the migrate command (for manual migration operations).
+	migratecmd.MustRegister(app, app.RootCmd, migratecmd.Config{
+		Automigrate: osutils.IsProbablyGoRun(),
+	})
+
+	// Bootstrap: run migrations, init DB (no HTTP server yet).
+	if err := app.Bootstrap(); err != nil {
+		log.Fatalf("pocketbase bootstrap: %v", err)
+	}
+
+	// Start PB's HTTP server in a goroutine (admin GUI + file serving for
+	// the frontend). The HTTP server runs alongside worldsim's tick loop.
+	go func() {
+		if err := app.Start(); err != nil {
+			log.Fatalf("pocketbase start: %v", err)
+		}
+	}()
+
+	sim, err := worldsim.New(natsURL, mapID, app, tickHz, logger)
 	if err != nil {
 		log.Fatalf("worldsim init: %v", err)
 	}

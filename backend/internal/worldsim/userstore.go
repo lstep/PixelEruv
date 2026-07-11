@@ -1,95 +1,30 @@
 package worldsim
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"sync"
+
+	"github.com/pocketbase/pocketbase/core"
 )
 
 // UserRecord represents a player in PocketBase's players collection.
 type UserRecord struct {
-	ID          string  `json:"id"`
-	OidcSub     string  `json:"oidc_sub"`
-	EntityID    string  `json:"entity_id"`
-	DisplayName string  `json:"display_name"`
-	PosX        float32 `json:"pos_x"`
-	PosY        float32 `json:"pos_y"`
-	SpriteBase  string  `json:"sprite_base"`
+	ID          string
+	OidcSub     string
+	EntityID    string
+	DisplayName string
+	PosX        float32
+	PosY        float32
+	SpriteBase  string
 }
 
-type pbListResponse struct {
-	Items []UserRecord `json:"items"`
-}
-
-type pbAuthResponse struct {
-	Token string `json:"token"`
-}
-
-// UserStore handles PocketBase player lookups and persistence.
-// It authenticates as a superuser to get a token for write operations.
+// UserStore handles PocketBase player lookups and persistence via the
+// PocketBase Go SDK (in-process DAO access, no HTTP).
 type UserStore struct {
-	pocketbaseURL string
-	adminEmail    string
-	adminPassword string
-	token         string
-	mu            sync.Mutex
+	app core.App
 }
 
-func NewUserStore(pocketbaseURL, adminEmail, adminPassword string) *UserStore {
-	return &UserStore{
-		pocketbaseURL: strings.TrimRight(pocketbaseURL, "/"),
-		adminEmail:    adminEmail,
-		adminPassword: adminPassword,
-	}
-}
-
-// authToken returns a cached superuser token, authenticating if needed.
-func (s *UserStore) authToken() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.token != "" {
-		return s.token, nil
-	}
-	body := fmt.Sprintf(`{"identity":"%s","password":"%s"}`, s.adminEmail, s.adminPassword)
-	resp, err := http.Post(
-		s.pocketbaseURL+"/api/collections/_superusers/auth-with-password",
-		"application/json",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		return "", fmt.Errorf("pb auth: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("pb auth %d: %s", resp.StatusCode, string(b))
-	}
-	var auth pbAuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&auth); err != nil {
-		return "", fmt.Errorf("pb auth decode: %w", err)
-	}
-	s.token = auth.Token
-	return s.token, nil
-}
-
-// doRequest creates an authenticated request to PocketBase.
-func (s *UserStore) doRequest(method, url string, body io.Reader) (*http.Response, error) {
-	token, err := s.authToken()
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return http.DefaultClient.Do(req)
+func NewUserStore(app core.App) *UserStore {
+	return &UserStore{app: app}
 }
 
 // FindOrCreateUser looks up a player by oidc_sub. If not found, creates a new
@@ -117,141 +52,96 @@ func (s *UserStore) FindOrCreateUser(sub, entityID string) (*UserRecord, error) 
 
 // SavePosition updates the player's position in PocketBase.
 func (s *UserStore) SavePosition(entityID string, x, y float32) error {
-	user, err := s.findByEntityID(entityID)
+	record, err := s.findByEntityIDRecord(entityID)
 	if err != nil {
 		return fmt.Errorf("find user for save: %w", err)
 	}
-	if user == nil {
+	if record == nil {
 		return nil
 	}
 
-	body := fmt.Sprintf(`{"pos_x":%g,"pos_y":%g}`, x, y)
-	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
-	resp, err := s.doRequest("PATCH", url, strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pocketbase update %d: %s", resp.StatusCode, string(b))
-	}
-	return nil
+	record.Set("pos_x", x)
+	record.Set("pos_y", y)
+	return s.app.Save(record)
 }
 
 // UpdateDisplayName persists the player's display name to PocketBase. No-op
-// if the entity has no PocketBase record (guests). The name is JSON-escaped
-// to prevent injection.
+// if the entity has no PocketBase record (guests).
 func (s *UserStore) UpdateDisplayName(entityID, name string) error {
-	user, err := s.findByEntityID(entityID)
+	record, err := s.findByEntityIDRecord(entityID)
 	if err != nil {
 		return fmt.Errorf("find user for name update: %w", err)
 	}
-	if user == nil {
+	if record == nil {
 		return nil
 	}
 
-	escaped, err := json.Marshal(name)
-	if err != nil {
-		return fmt.Errorf("escape name: %w", err)
-	}
-	body := fmt.Sprintf(`{"display_name":%s}`, escaped)
-	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
-	resp, err := s.doRequest("PATCH", url, strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pocketbase update %d: %s", resp.StatusCode, string(b))
-	}
-	return nil
+	record.Set("display_name", name)
+	return s.app.Save(record)
 }
 
 // UpdateSpriteBase persists the player's chosen sprite_bases record ID to
 // PocketBase. No-op if the entity has no PocketBase record (guests).
 func (s *UserStore) UpdateSpriteBase(entityID, spriteBase string) error {
-	user, err := s.findByEntityID(entityID)
+	record, err := s.findByEntityIDRecord(entityID)
 	if err != nil {
 		return fmt.Errorf("find user for sprite_base update: %w", err)
 	}
-	if user == nil {
+	if record == nil {
 		return nil
 	}
 
-	escaped, err := json.Marshal(spriteBase)
-	if err != nil {
-		return fmt.Errorf("escape sprite_base: %w", err)
-	}
-	body := fmt.Sprintf(`{"sprite_base":%s}`, escaped)
-	url := fmt.Sprintf("%s/api/collections/players/records/%s", s.pocketbaseURL, user.ID)
-	resp, err := s.doRequest("PATCH", url, strings.NewReader(body))
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pocketbase update %d: %s", resp.StatusCode, string(b))
-	}
-	return nil
+	record.Set("sprite_base", spriteBase)
+	return s.app.Save(record)
 }
 
 func (s *UserStore) findBySub(sub string) (*UserRecord, error) {
-	url := fmt.Sprintf("%s/api/collections/players/records?filter=(oidc_sub=\"%s\")&perPage=1", s.pocketbaseURL, sub)
-	resp, err := s.doRequest("GET", url, nil)
+	record, err := s.app.FindFirstRecordByData("players", "oidc_sub", sub)
 	if err != nil {
-		return nil, err
+		return nil, nil // not found is not an error here
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("pocketbase %d: %s", resp.StatusCode, string(b))
-	}
-	var result pbListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	if len(result.Items) == 0 {
+	if record == nil {
 		return nil, nil
 	}
-	return &result.Items[0], nil
+	return recordToUser(record), nil
 }
 
-func (s *UserStore) findByEntityID(entityID string) (*UserRecord, error) {
-	url := fmt.Sprintf("%s/api/collections/players/records?filter=(entity_id=\"%s\")&perPage=1", s.pocketbaseURL, entityID)
-	resp, err := s.doRequest("GET", url, nil)
+// findByEntityIDRecord returns the raw *core.Record for update operations.
+func (s *UserStore) findByEntityIDRecord(entityID string) (*core.Record, error) {
+	record, err := s.app.FindFirstRecordByData("players", "entity_id", entityID)
 	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("pocketbase %d: %s", resp.StatusCode, string(b))
-	}
-	var result pbListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-	if len(result.Items) == 0 {
 		return nil, nil
 	}
-	return &result.Items[0], nil
+	return record, nil
 }
 
 func (s *UserStore) create(user *UserRecord) error {
-	body := fmt.Sprintf(`{"oidc_sub":"%s","entity_id":"%s","pos_x":%g,"pos_y":%g}`,
-		user.OidcSub, user.EntityID, user.PosX, user.PosY)
-	url := fmt.Sprintf("%s/api/collections/players/records", s.pocketbaseURL)
-	resp, err := s.doRequest("POST", url, strings.NewReader(body))
+	collection, err := s.app.FindCollectionByNameOrId("players")
 	if err != nil {
+		return fmt.Errorf("find players collection: %w", err)
+	}
+
+	record := core.NewRecord(collection)
+	record.Set("oidc_sub", user.OidcSub)
+	record.Set("entity_id", user.EntityID)
+	record.Set("pos_x", user.PosX)
+	record.Set("pos_y", user.PosY)
+	if err := s.app.Save(record); err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pocketbase create %d: %s", resp.StatusCode, string(b))
+
+	user.ID = record.Id
+	return nil
+}
+
+func recordToUser(r *core.Record) *UserRecord {
+	return &UserRecord{
+		ID:          r.Id,
+		OidcSub:     r.GetString("oidc_sub"),
+		EntityID:    r.GetString("entity_id"),
+		DisplayName: r.GetString("display_name"),
+		PosX:        float32(r.GetFloat("pos_x")),
+		PosY:        float32(r.GetFloat("pos_y")),
+		SpriteBase:  r.GetString("sprite_base"),
 	}
-	return json.NewDecoder(resp.Body).Decode(user)
 }
