@@ -54,7 +54,7 @@ services:
     depends_on:
       - nats
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
       - pb_data:/pb_data
     environment:
