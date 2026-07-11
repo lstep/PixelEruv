@@ -463,18 +463,18 @@ tags follow the avatar each frame and sit at a fixed pixel offset above
 the sprite.
 
 Logged-in players also have their IP address and last-seen timestamp
-persisted in the `players` collection. Admins see this information in
-an expandable pillbox below the name tag — regular players never see
-IPs. The pusher conditionally subscribes admin users to a dedicated
-NATS channel that carries an `AdminInfoFrame` with every player's IP,
-so the data only reaches clients that should see it.
+persisted in the `players` collection. Admins see the IP in an
+expandable pillbox below the name tag — regular players never see it.
+The pusher conditionally subscribes admin users to a dedicated NATS
+channel that carries an `AdminInfoFrame` with every player's IP, so
+the data only reaches clients that should see it.
 
 **Storyboard:** Two characters on screen, each with a name tag above.
 Walk one character around — the tag follows. Point out that guests get
 a generated name and logged-in users get their PocketBase display name.
 Switch to an admin account — click a name tag to expand it into a
-pillbox showing the player's IP and last-seen time. Switch back to a
-regular account — the pillbox is gone, no IP is visible.
+pillbox showing the player's IP. Switch back to a regular account —
+the pillbox is gone, no IP is visible.
 
 ### 1.6 Mobile Support with Virtual Joystick
 
