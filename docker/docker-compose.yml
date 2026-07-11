@@ -9,19 +9,6 @@ services:
       - "8222:8222"
     restart: unless-stopped
 
-  pocketbase:
-    build:
-      context: ..
-      dockerfile: docker/pocketbase.Dockerfile
-    ports:
-      - "8090:8090"
-    volumes:
-      - pb_data:/pb/pb_data
-    environment:
-      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
-      PB_ADMIN_PASSWORD: "password123"
-    restart: unless-stopped
-
   dex:
     image: ghcr.io/dexidp/dex:latest
     entrypoint: ["/entrypoint.sh"]
@@ -65,12 +52,16 @@ services:
       target: worldsim
     depends_on:
       - nats
-      - pocketbase
+    ports:
+      - "8090:8090"
+    volumes:
+      - pb_data:/pb_data
     environment:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"
       MAP_ID: "map1"
-      POCKETBASE_URL: "http://pocketbase:8090"
+      PB_DATA_DIR: "/pb_data"
+      PB_HTTP_ADDR: "0.0.0.0:8090"
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
       PB_ADMIN_PASSWORD: "password123"
       OTEL_ENABLED: "false"
@@ -120,10 +111,10 @@ services:
       target: ext-walls
     depends_on:
       - nats
-      - pocketbase
+      - worldsim
     environment:
       NATS_URL: "nats://nats:4222"
-      POCKETBASE_URL: "http://pocketbase:8090"
+      POCKETBASE_URL: "http://worldsim:8090"
       MAP_ID: "map1"
     restart: unless-stopped
 
@@ -164,11 +155,11 @@ services:
       target: ext-av
     depends_on:
       - nats
-      - pocketbase
+      - worldsim
       - livekit
     environment:
       NATS_URL: "nats://nats:4222"
-      POCKETBASE_URL: "http://pocketbase:8090"
+      POCKETBASE_URL: "http://worldsim:8090"
       MAP_ID: "map1"
       LIVEKIT_URL: "ws://livekit:7880"
       # Browser-facing URL (host-exposed port, not Docker-internal). Defaults
