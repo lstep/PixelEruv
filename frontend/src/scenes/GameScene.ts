@@ -338,6 +338,9 @@ interface Avatar {
   predY: number;
   // Name tag above the avatar (null for props and local player's own avatar).
   nameTag: Phaser.GameObjects.Container | null;
+  // IP text shown below the name in the name tag (admin viewers only).
+  // Null for non-admins or when admin info hasn't arrived yet.
+  ipText: Phaser.GameObjects.Text | null;
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
@@ -357,6 +360,10 @@ export class GameScene extends Phaser.Scene {
   // Guest status by entity ID, from the DisplayName component's is_guest
   // field. Used to render a "GUEST" badge on the name tag.
   private isGuestByEntity = new Map<string, boolean>();
+  // Admin-only info by entity ID (IP, guest status). Populated from
+  // AdminInfoFrame, only received by admin clients. Used to render the IP
+  // below the name in the name tag pillbox for admin viewers.
+  private adminInfoByEntity = new Map<string, { ip: string; isGuest: boolean }>();
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
@@ -860,6 +867,9 @@ export class GameScene extends Phaser.Scene {
           av.nameTag?.destroy();
         }
         this.avatars.clear();
+        this.displayNameByEntity.clear();
+        this.isGuestByEntity.clear();
+        this.adminInfoByEntity.clear();
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
         this.inputDirty = true;
@@ -882,6 +892,16 @@ export class GameScene extends Phaser.Scene {
       },
       onMapTransition: (msg) => {
         this.handleMapTransition(msg.mapId, msg.spawnX, msg.spawnY);
+      },
+      onAdminInfo: (msg) => {
+        for (const e of msg.entities) {
+          this.adminInfoByEntity.set(e.entityId, { ip: e.ip, isGuest: e.isGuest });
+          // If the avatar already has a name tag, update it to show the IP.
+          const av = this.avatars.get(e.entityId);
+          if (av?.nameTag) {
+            this.updateNameTagAdminInfo(e.entityId);
+          }
+        }
       },
     });
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
@@ -1028,6 +1048,9 @@ export class GameScene extends Phaser.Scene {
           av.nameTag?.destroy();
         }
         this.avatars.clear();
+        this.displayNameByEntity.clear();
+        this.isGuestByEntity.clear();
+        this.adminInfoByEntity.clear();
         // Restart the scene to reload the map.
         this.scene.restart();
       })
@@ -1088,6 +1111,7 @@ export class GameScene extends Phaser.Scene {
             predX: 0,
             predY: 0,
             nameTag: null,
+            ipText: null,
           });
           console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid}`);
           continue;
@@ -1120,6 +1144,7 @@ export class GameScene extends Phaser.Scene {
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
         nameTag: null,
+        ipText: null,
       });
       // Create name tag if the server sent a DisplayName component. Hidden
       // for the local player's own avatar (you don't need a tag over your
@@ -1218,6 +1243,9 @@ export class GameScene extends Phaser.Scene {
         avatar.nameTag?.destroy();
         avatar.sprite.destroy();
         this.avatars.delete(dest.entityId);
+        this.displayNameByEntity.delete(dest.entityId);
+        this.isGuestByEntity.delete(dest.entityId);
+        this.adminInfoByEntity.delete(dest.entityId);
         console.log(`destroyed ${dest.entityId}`);
       }
     }
@@ -1226,13 +1254,24 @@ export class GameScene extends Phaser.Scene {
   // createNameTag builds a speech-bubble name tag above the avatar's sprite.
   // A semi-transparent grey pillbox contains a green status pill, the
   // avatar's name in a scalable web font (Nunito), and optionally a "GUEST"
-  // badge for anonymous users. A small inverted triangle at the bottom
-  // points down at the avatar. The container is counter-scaled by 1/zoom
-  // each frame (see update) so it stays a constant screen size.
-  // Hidden for the local player's own avatar.
+  // badge for anonymous users. For admin viewers, a second pillbox below the
+  // name pillbox shows admin-only data (IP, etc.) — expandable via adminLines.
+  // A small inverted triangle at the bottom points down at the avatar. The
+  // container is counter-scaled by 1/zoom each frame (see update) so it stays
+  // a constant screen size. Hidden for the local player's own avatar.
   private createNameTag(entityId: string, name: string, isGuest: boolean): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
+
+    // Collect admin info lines (admin viewers only). Each line becomes a
+    // row in the admin pillbox below the name. Expandable — add more lines
+    // here as admin features grow.
+    const adminLines: string[] = [];
+    if (this.ws?.isAdmin()) {
+      const info = this.adminInfoByEntity.get(entityId);
+      if (info?.ip) adminLines.push(info.ip);
+    }
+    const hasAdminPill = adminLines.length > 0;
 
     const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
 
@@ -1270,14 +1309,18 @@ export class GameScene extends Phaser.Scene {
     const pillBoxHeight = 22;
     const tailW = 8;
     const tailH = 5;
+    const adminLineHeight = 14;
+    const adminPillBoxHeight = hasAdminPill ? adminLines.length * adminLineHeight + 6 : 0;
+    const adminGap = 2; // gap between name pillbox and admin pillbox
     const badgeGap = guestBadge ? 6 : 0;
     const contentWidth =
       pillRadius * 2 + gap + text.width + badgeGap + (guestBadge ? guestBadge.width : 0);
     const pillBoxWidth = contentWidth + padding * 2;
 
     // (0, 0) in container space = tip of the speech-bubble tail, pointing
-    // down at the avatar. The pillbox sits above the tail.
-    const bgCenterY = -tailH - pillBoxHeight / 2;
+    // down at the avatar. Stack grows upward: tail → admin pillbox → name pillbox.
+    const adminBgCenterY = -tailH - adminPillBoxHeight / 2;
+    const bgCenterY = -tailH - adminPillBoxHeight - adminGap - pillBoxHeight / 2;
 
     // --- Pillbox background (semi-transparent grey, rounded) ---
     const bg = this.add.graphics();
@@ -1297,7 +1340,7 @@ export class GameScene extends Phaser.Scene {
     tail.fillTriangle(-tailW / 2, -tailH, tailW / 2, -tailH, 0, 0);
     tail.setDepth(0);
 
-    // Position pill, text, and badge inside the pillbox (left to right).
+    // Position pill, text, and badge inside the name pillbox (left to right).
     const pillX = -pillBoxWidth / 2 + padding + pillRadius;
     statusPill.setPosition(pillX, bgCenterY);
     const textX = pillX + pillRadius + gap;
@@ -1308,6 +1351,48 @@ export class GameScene extends Phaser.Scene {
 
     const children: Phaser.GameObjects.GameObject[] = [bg, tail, statusPill, text];
     if (guestBadge) children.push(guestBadge);
+
+    // --- Admin pillbox (admin viewers only) ---
+    // Sits between the name pillbox and the tail. Each line is a centered
+    // text row. The pillbox height grows with the number of lines.
+    if (hasAdminPill) {
+      const adminTexts: Phaser.GameObjects.Text[] = [];
+      let maxAdminWidth = 0;
+      for (const line of adminLines) {
+        const at = this.add.text(0, 0, line, {
+          fontFamily: "Nunito, sans-serif",
+          fontSize: "10px",
+          color: "#cbd5e1",
+          fontStyle: "bold",
+        });
+        at.setOrigin(0.5, 0.5);
+        if (at.width > maxAdminWidth) maxAdminWidth = at.width;
+        adminTexts.push(at);
+      }
+      const adminPillBoxWidth = maxAdminWidth + padding * 2;
+
+      const adminBg = this.add.graphics();
+      adminBg.fillStyle(0x333340, 0.78);
+      adminBg.fillRoundedRect(
+        -adminPillBoxWidth / 2,
+        adminBgCenterY - adminPillBoxHeight / 2,
+        adminPillBoxWidth,
+        adminPillBoxHeight,
+        8,
+      );
+      adminBg.setDepth(0);
+
+      children.push(adminBg);
+      for (let i = 0; i < adminTexts.length; i++) {
+        const lineY = adminBgCenterY + (i - (adminTexts.length - 1) / 2) * adminLineHeight;
+        adminTexts[i].setPosition(0, lineY);
+        children.push(adminTexts[i]);
+      }
+      avatar.ipText = adminTexts[0] ?? null;
+    } else {
+      avatar.ipText = null;
+    }
+
     container.add(children);
     container.setDepth(avatar.sprite.depth + 0.01);
     // Hide for the local player's own avatar.
@@ -1315,6 +1400,20 @@ export class GameScene extends Phaser.Scene {
     // Counter-scale so the tag stays constant screen size regardless of zoom.
     container.setScale(1 / this.cameras.main.zoom);
     avatar.nameTag = container;
+  }
+
+  // updateNameTagAdminInfo recreates the name tag when admin info arrives or
+  // changes for an entity. The admin pillbox layout depends on the number of
+  // admin lines, so the simplest correct approach is to destroy and rebuild.
+  private updateNameTagAdminInfo(entityId: string): void {
+    const avatar = this.avatars.get(entityId);
+    if (!avatar) return;
+    const name = this.displayNameByEntity.get(entityId) ?? "";
+    const isGuest = this.isGuestByEntity.get(entityId) ?? false;
+    avatar.nameTag?.destroy();
+    avatar.nameTag = null;
+    avatar.ipText = null;
+    this.createNameTag(entityId, name, isGuest);
   }
 
   // resolveDisplayName returns the display name for an entity, used by the

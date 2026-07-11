@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -67,6 +69,7 @@ type session struct {
 	sub       *nats.Subscription
 	avSub     *nats.Subscription
 	chatSub   *nats.Subscription
+	adminSub  *nats.Subscription
 	closeOnce sync.Once
 }
 
@@ -400,6 +403,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		if sess.chatSub != nil {
 			sess.chatSub.Unsubscribe()
 		}
+		if sess.adminSub != nil {
+			sess.adminSub.Unsubscribe()
+		}
 		s.sessions.Delete(clientID)
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
 	}()
@@ -408,8 +414,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// request-reply to get the actual entity ID, which may differ from
 	// "e_"+clientID[2:] when a PocketBase-stored identity exists. The
 	// client needs the real entity ID to identify its own avatar.
+	ip := clientIP(r)
 	entityID := ""
-	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub); err != nil {
+	isAdmin := false
+	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip); err != nil {
 		s.logger.Warn("client.connected request-reply, using default entity ID", "client", clientID, "err", err)
 	} else {
 		var ar pb.AuthResultFrame
@@ -417,16 +425,37 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("client.connected reply unmarshal", "client", clientID, "err", err)
 		} else {
 			entityID = ar.EntityId
+			isAdmin = ar.IsAdmin
 		}
 	}
 
-	// Send AuthResultFrame with the entity ID from worldsim.
+	// If the client is an admin, subscribe to the admin-only NATS channel.
+	// Worldsim publishes AdminInfoFrame data (guest IPs, etc.) here. The
+	// pusher forwards raw bytes to the browser. Non-admin sessions never
+	// get this subscription, so admin data never reaches their WebSocket.
+	if isAdmin {
+		adminSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.admin", clientID), func(m *nats.Msg) {
+			writeCtx, cancel := context.WithTimeout(authCtx, 5*time.Second)
+			defer cancel()
+			if err := c.Write(writeCtx, websocket.MessageBinary, m.Data); err != nil {
+				s.logger.Warn("ws write admin info", "client", clientID, "err", err)
+			}
+		})
+		if err != nil {
+			s.logger.Warn("nats sub admin", "client", clientID, "err", err)
+		} else {
+			sess.adminSub = adminSub
+		}
+	}
+
+	// Send AuthResultFrame with the entity ID and admin flag from worldsim.
 	result := &pb.ServerFrame{
 		Payload: &pb.ServerFrame_AuthResult{
 			AuthResult: &pb.AuthResultFrame{
 				Ok:       true,
 				ClientId: clientID,
 				EntityId: entityID,
+				IsAdmin:  isAdmin,
 			},
 		},
 	}
@@ -592,9 +621,10 @@ func (s *Server) publishLifecycle(ctx context.Context, subject, clientID, sub st
 
 // publishLifecycleRequest is like publishLifecycle but uses NATS request-reply
 // and returns the reply data. Used for client.connected so worldsim can return
-// the provisioned entity ID.
-func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub string) ([]byte, error) {
-	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub})
+// the provisioned entity ID. The client IP is carried so worldsim can persist
+// it in the players collection.
+func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub, ip string) ([]byte, error) {
+	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub, Ip: ip})
 	m := &nats.Msg{Subject: subject, Data: msg}
 	otelinternal.Inject(ctx, m)
 	reply, err := s.nc.RequestMsg(m, 5*time.Second)
@@ -608,4 +638,25 @@ func generateClientID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return "c_" + hex.EncodeToString(b)
+}
+
+// clientIP extracts the client's IP address from the request. It prefers the
+// X-Forwarded-For header (set by nginx; first entry is the original client),
+// then X-Real-IP, then falls back to the TCP remote address. The port is
+// stripped — only the IP is stored.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if idx := strings.IndexByte(xff, ','); idx >= 0 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
