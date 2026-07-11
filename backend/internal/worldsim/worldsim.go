@@ -674,21 +674,6 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		return provisionResult{entityID: existing.ID, mapID: existing.Position.MapId, isAdmin: existing.IsAdmin}
 	}
 
-	// Check ban list before provisioning. Bans by any of the three
-	// identifiers (oidc_sub, IP, device_id) block the connection.
-	if s.banStore != nil {
-		if ban, found := s.banStore.CheckBan(sub, ip, deviceID); found {
-			s.logger.InfoContext(ctx, "rejected banned client",
-				"client", clientID, "sub", sub, "ip", ip, "device", deviceID,
-				"reason", ban.Reason, "until", ban.BannedUntil)
-			return provisionResult{
-				banned:    true,
-				banReason: ban.Reason,
-				banUntil:  ban.BannedUntil,
-			}
-		}
-	}
-
 	defaultEntityID := "e_" + clientID[2:]
 	spawnX, spawnY := float32(10), float32(10)
 	mapName := s.defaultMap
@@ -741,6 +726,24 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			}
 		}
 	}
+
+	// Check ban list after the PB lookup so we know isAdmin. Admins are
+	// exempt from bans — they can always connect. Guests (never admins)
+	// and non-admin logged-in users are checked against all three
+	// identifiers (oidc_sub, IP, device_id).
+	if !isAdmin && s.banStore != nil {
+		if ban, found := s.banStore.CheckBan(sub, ip, deviceID); found {
+			s.logger.InfoContext(ctx, "rejected banned client",
+				"client", clientID, "sub", sub, "ip", ip, "device", deviceID,
+				"reason", ban.Reason, "until", ban.BannedUntil)
+			return provisionResult{
+				banned:    true,
+				banReason: ban.Reason,
+				banUntil:  ban.BannedUntil,
+			}
+		}
+	}
+
 	// Guests (sub == "" or "dev") get a per-session display name derived
 	// from their entity ID. Logged-in users with an empty PocketBase
 	// display_name fall back to their entity ID.
