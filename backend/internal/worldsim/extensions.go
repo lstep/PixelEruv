@@ -196,6 +196,17 @@ func (m *ExtensionManager) RegisterTriggers(data []byte) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Clear existing gate triggers from this extension before re-adding.
+	// This ensures that an extension that sends fewer triggers (e.g.
+	// ext-walls with enabled=false sending zero triggers) actually
+	// removes its old triggers.
+	for zid, gt := range m.gateTriggers {
+		if gt.ExtensionID == msg.ExtensionID {
+			delete(m.gateTriggers, zid)
+		}
+	}
+
 	for _, gt := range msg.GateTriggers {
 		if gt.ZoneID == "" {
 			continue
