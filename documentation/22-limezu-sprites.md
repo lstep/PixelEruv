@@ -10,9 +10,9 @@
 Characters come from the limezu **Modern Interiors** pack.
 The original third-party art pack is in `assets/moderninteriors-win/` (gitignored).
 We use the 32px legacy single character sheets (`Old/Single_Characters_Legacy/32x32/`)
-as the art source, extracted into `spritesheets/char_0.png` … `char_5.png`.
+as the art source, extracted into `spritesheets/char_0.png` … `char_3.png`.
 
-The in-game sheets are `spritesheets/char_0.png` … `char_5.png` (copied to
+The in-game sheets are `spritesheets/char_0.png` … `char_3.png` (copied to
 `frontend/public/sprites/` by `make`), each **768×192** px.
 
 ## The key quirk: characters are ~48px tall, not 32px
@@ -71,8 +71,7 @@ Frame index = `frameRow * COLS_PER_ROW + col`. With 64px frames:
 The frontend currently uses frame-row 2 (run) as the default movement
 animation, controlled by `WALK_ROW` in `GameScene.ts`.
 
-Column/direction layout, confirmed correct for all sheets **except `char_4.png`
-and `char_5.png`** (see "Malformed / non-conforming sheets" below):
+Column/direction layout, confirmed correct for all sheets:
 
 - **Row 0 (idle)**: 4 frames — col 0 = right, col 1 = up, col 2 = left, col 3 = down.
 - **Row 1 (walk)**: 24 frames, 6 per direction, in the same right/up/left/down order.
@@ -108,19 +107,6 @@ With the sprite placed at the tile **center** (`x*32+16, y*32+16`), origin
 `0.75` puts the **feet at the tile bottom** and lets the head extend ~16px up
 into the tile above — the standard "tall character" top-down look. This keeps
 the existing tile-center position formulas unchanged.
-
-## Malformed / non-conforming sheets: `char_4`, `char_5`
-
-`char_5.png` is **broken** — its walk-cycle rows only contain the right/up
-directions; the down and left frames are empty. It renders as an invisible/
-empty sprite.
-
-`char_4.png` has a **different column/direction order** than the layout
-documented above (not right/up/left/down). It has not been broken, just
-generated differently.
-
-Both are therefore **excluded** from `CHAR_SPRITES` in `GameScene.ts` for now.
-They will be regenerated with the standard layout; once fixed, add them back.
 
 ## Checklist before changing sprite code
 

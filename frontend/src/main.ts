@@ -69,7 +69,7 @@ async function bootstrap(): Promise<void> {
   console.log("loaded map from PocketBase");
 
   // Fetch the sprite catalog from PocketBase. Empty array means the
-  // sprite_bases collection has not been seeded yet; the default char_0..char_4
+  // sprite_bases collection has not been seeded yet; the default char_0..char_3
   // sheets are always available as a baseline.
   const spriteBases = await loadSpriteBases();
 
