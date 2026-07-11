@@ -1,7 +1,7 @@
 # Runtime Options System — Design Discussion
 
 **Date:** 2026-07-11
-**Status:** Decisions recorded. Multi-map support and PB embedding are being designed as the prerequisites. This document records decisions and open questions for resumption.
+**Status:** Extension options implemented (Phase 3 Part B, `feat/extension-options`). World options and player preferences are not yet implemented. This document records decisions and open questions for resumption.
 
 ## Context
 
@@ -111,12 +111,13 @@ Documentation (`06-data-model-and-persistence.md` line 38) says "Extensions do n
 
 ## Revised Implementation Order
 
-1. **Design multi-map support + PB embedding** — how `worlds` relates to `maps`, how worldsim boots with a world (not a map), how players move between maps, how PB is embedded, how extensions get data via NATS.
-2. **Implement PB embedding** — embed PB in worldsim, convert stores to Go SDK, remove standalone PB container, expose admin GUI.
-3. **Implement multi-map support** — `DEFAULT_MAP` env var, worldsim loading all maps from PocketBase, player map transitions via portal zones.
-4. **Refactor extensions to use NATS for map data** — remove direct PB access, get zone metadata from worldsim via NATS.
-5. **Layer options on top** — world options as env vars or singleton config, player preferences as columns on `players`, extension options declared at registration and created by worldsim.
-6. **Realtime hot-reload** — via PB in-process Go hooks (world options, extension options).
+1. ✅ **Design multi-map support + PB embedding** — done (Phase 1 + Phase 2).
+2. ✅ **Implement PB embedding** — done (Phase 1, `feat/pb-embedding`).
+3. ✅ **Implement multi-map support** — done (Phase 2, `feat/multi-map`).
+4. ✅ **Refactor extensions to use NATS for map data** — done (Phase 3 Part A, `feat/extension-nats`).
+5. ✅ **Extension options** — done (Phase 3 Part B, `feat/extension-options`). Extensions declare options schema at registration, worldsim creates `extension_options` PB rows, admin edits in PB GUI, changes hot-reload via NATS.
+6. ⬜ **World options** — not yet implemented. World options as env vars or singleton config, `WorldOptionsFrame` replication to clients.
+7. ⬜ **Player preferences** — not yet implemented. Persisted preferences as columns on `players`, `SetPreferenceFrame` for updates.
 
 ## Files to Modify (when implementation proceeds)
 

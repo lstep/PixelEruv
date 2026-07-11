@@ -112,6 +112,20 @@ Append-only. Written by the World Simulator on any security-relevant event.
 | `payload` | json | Event-specific details |
 | `occurred_at` | datetime | Server-side timestamp |
 
+#### `extension_options`
+One row per registered extension. Created by worldsim when an extension
+registers with an `options_schema`. The admin edits the `options` JSON in
+the PB admin GUI; worldsim's in-process hook republishes changes to the
+extension via NATS (`extension.<id>.options`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string (PB auto) | |
+| `extension_id` | string (required) | Extension ID from registration (e.g. `walls`, `av`) |
+| `options` | json | JSON object of option name → value (e.g. `{"enabled": true}`) |
+| `created_at` | datetime | Auto |
+| `updated_at` | datetime | Auto |
+
 ---
 
 ## 2. NATS JetStream KV (reactive semi-persistent state)
