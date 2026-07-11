@@ -1,5 +1,43 @@
 # Dashboard
 
+## PocketBase Embedding (Phase 1 complete)
+
+**Branch:** `feat/pb-embedding`
+**Status:** Phase 1 complete — PB embedded in worldsim, standalone container removed, full stack verified.
+
+PocketBase now runs as a Go library inside worldsim instead of as a separate container. The worldsim process calls `app.Bootstrap()` + `app.RunAllMigrations()` to initialize the DB and run Go migrations, then `app.Start()` in a goroutine to serve the admin GUI and file API on port 8090.
+
+### What changed
+
+- **Migrations:** JS migrations in `pb_migrations/` replaced by Go migrations in `backend/migrations/` (compiled into the binary). `Bootstrap()` only runs system migrations, so `app.RunAllMigrations()` is called explicitly after bootstrap.
+- **Stores:** `MapStore`, `UserStore`, `SpriteStore` rewritten from HTTP API calls to PB Go SDK DAO calls (`app.FindFirstRecordByData`, `app.Save`, `app.NewFilesystem`, etc.).
+- **Docker:** `pocketbase` service removed from both `docker-compose.yml` and `dist/docker-compose.yml`. The `worldsim` container now mounts `pb_data` and exposes port 8090. Nginx proxies `/api/` to `worldsim:8090`. Extensions (ext-walls, ext-av) temporarily point `POCKETBASE_URL` at `http://worldsim:8090` (will be removed in Phase 3).
+- **Map reload:** PB `OnRecordAfterUpdateSuccess("maps")` hook triggers instant map reload instead of the 30-second polling checker.
+- **Makefile:** `debug-pocketbase` target removed; `debug` target now passes `PB_DATA_DIR`/`PB_HTTP_ADDR` env vars to worldsim.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/migrations/*.go` | New — 5 Go migrations (maps, players, sprite_bases, add_sprite_base_to_players, initial_superuser) |
+| `backend/internal/worldsim/{mapstore,userstore,spritestore}.go` | Rewritten — Go SDK DAO calls instead of HTTP |
+| `backend/internal/worldsim/mapdata.go` | Removed `LoadMap`/`FetchMapRecordInfo`/`loadMapOnce` (moved to mapstore.go), kept `parseTiledMapJSON` |
+| `backend/internal/worldsim/worldsim.go` | `Simulator.app` replaces `pocketbaseURL`; PB hook for map reload |
+| `backend/cmd/worldsim/main.go` | Creates PB app, bootstraps, runs migrations, starts HTTP server in goroutine |
+| `backend/cmd/seed-sprites/main.go` | Embeds PB instead of HTTP auth |
+| `docker/docker-compose.yml` | Removed pocketbase service; worldsim mounts pb_data + exposes 8090 |
+| `docker/dist/docker-compose.yml` | Same |
+| `docker/nginx.conf` | `/api/` proxies to `worldsim:8090` |
+| `docker/pocketbase.Dockerfile` | Deleted |
+| `docker/pocketbase-entrypoint.sh` | Deleted |
+| `pb_migrations/*.js` | Deleted |
+| `Makefile` | Removed `debug-pocketbase`, updated `dist-stage` and `debug` targets |
+
+### Next phases
+
+- **Phase 2 (`feat/multi-map`):** Multi-map support — `WORLD_ID` env var, `Simulator` manages multiple `MapData`/`ZoneRegistry` instances, portal zones, `MapTransitionFrame` protobuf.
+- **Phase 3 (`feat/extension-nats`):** Extensions stop hitting PB directly; worldsim broadcasts zone metadata via NATS. Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
+
 ## Day/Night Overlay
 
 **Branch:** `feat/day-night-overlay`
