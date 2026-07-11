@@ -45,6 +45,10 @@ type Entity struct {
 	// "Guest <short>" for anonymous sessions. Empty for base (non-player)
 	// entities.
 	DisplayName string
+	// IsGuest is true for anonymous sessions (no OIDC sub). Replicated as
+	// part of the DisplayName component so clients can visually distinguish
+	// guests (e.g. a "GUEST" badge on the name tag).
+	IsGuest bool
 	// EntityType/OwnerExtension/TriggerRadius: set for base entities loaded
 	// from the map's "Entities" object layer (see mapdata.go PropEntity).
 	// Included in input-trigger dispatch payloads so extensions can
@@ -576,6 +580,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 			Input:    &pb.InputState{},
 		},
 		DisplayName:  displayName,
+		IsGuest:      sub == "" || sub == "dev",
 		SpriteBase:   spriteBase,
 		spawnedTo:    make(map[string]bool),
 		currentZones: make(map[string]bool),
@@ -1194,7 +1199,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
 			}
 			if e.NetworkSession != nil && e.DisplayName != "" {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest})
 				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
 			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
@@ -1223,7 +1228,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				})
 			}
 			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest})
 				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,

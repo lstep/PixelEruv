@@ -353,6 +353,9 @@ export class GameScene extends Phaser.Scene {
   // Display names by entity ID, populated from DisplayName component updates.
   // Used by the VideoBar to label tiles (including the local player's self-view).
   private displayNameByEntity = new Map<string, string>();
+  // Guest status by entity ID, from the DisplayName component's is_guest
+  // field. Used to render a "GUEST" badge on the name tag.
+  private isGuestByEntity = new Map<string, boolean>();
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
@@ -998,6 +1001,7 @@ export class GameScene extends Phaser.Scene {
       let gid = 0;
       let spriteBase = "";
       let displayName = "";
+      let isGuest = false;
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
           // Position component
@@ -1013,6 +1017,7 @@ export class GameScene extends Phaser.Scene {
           // DisplayName component — player avatar name tag
           const dn = fromBinary(DisplayNameSchema, comp.data);
           displayName = dn.name;
+          isGuest = dn.isGuest;
         }
       }
 
@@ -1076,7 +1081,8 @@ export class GameScene extends Phaser.Scene {
       // own head).
       if (displayName) {
         this.displayNameByEntity.set(spawn.entityId, displayName);
-        this.createNameTag(spawn.entityId, displayName);
+        this.isGuestByEntity.set(spawn.entityId, isGuest);
+        this.createNameTag(spawn.entityId, displayName, isGuest);
       }
       // Start idle animation immediately.
       sprite.play(`${charKey}_idle_down`, true);
@@ -1134,9 +1140,10 @@ export class GameScene extends Phaser.Scene {
         const dn = fromBinary(DisplayNameSchema, upd.data);
         if (dn.name) {
           this.displayNameByEntity.set(upd.entityId, dn.name);
+          this.isGuestByEntity.set(upd.entityId, dn.isGuest);
           // Recreate the tag because the pillbox width depends on text width.
           avatar.nameTag?.destroy();
-          this.createNameTag(upd.entityId, dn.name);
+          this.createNameTag(upd.entityId, dn.name, dn.isGuest);
         }
       } else if (upd.componentId === 3) {
         // Appearance component — hot-swap the character sheet if sprite_base
@@ -1172,12 +1179,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   // createNameTag builds a speech-bubble name tag above the avatar's sprite.
-  // A semi-transparent grey pillbox contains a green status pill and the
-  // avatar's name in a scalable web font (Nunito). A small inverted triangle
-  // at the bottom points down at the avatar. The container is counter-scaled
-  // by 1/zoom each frame (see update) so it stays a constant screen size.
+  // A semi-transparent grey pillbox contains a green status pill, the
+  // avatar's name in a scalable web font (Nunito), and optionally a "GUEST"
+  // badge for anonymous users. A small inverted triangle at the bottom
+  // points down at the avatar. The container is counter-scaled by 1/zoom
+  // each frame (see update) so it stays a constant screen size.
   // Hidden for the local player's own avatar.
-  private createNameTag(entityId: string, name: string): void {
+  private createNameTag(entityId: string, name: string, isGuest: boolean): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
 
@@ -1192,6 +1200,20 @@ export class GameScene extends Phaser.Scene {
     });
     text.setOrigin(0, 0.5); // left-aligned, vertically centered
 
+    // --- GUEST badge (only for anonymous users) ---
+    let guestBadge: Phaser.GameObjects.Text | null = null;
+    if (isGuest) {
+      guestBadge = this.add.text(0, 0, "GUEST", {
+        fontFamily: "Nunito, sans-serif",
+        fontSize: "9px",
+        color: "#f8fafc",
+        fontStyle: "bold",
+        backgroundColor: "#6b7280",
+        padding: { left: 4, right: 4, top: 1, bottom: 1 },
+      });
+      guestBadge.setOrigin(0, 0.5);
+    }
+
     // --- Status pill (green circle — status not yet implemented) ---
     const pillRadius = 4;
     const statusPill = this.add.circle(0, 0, pillRadius, 0x22c55e);
@@ -1203,7 +1225,9 @@ export class GameScene extends Phaser.Scene {
     const pillBoxHeight = 22;
     const tailW = 8;
     const tailH = 5;
-    const contentWidth = pillRadius * 2 + gap + text.width;
+    const badgeGap = guestBadge ? 6 : 0;
+    const contentWidth =
+      pillRadius * 2 + gap + text.width + badgeGap + (guestBadge ? guestBadge.width : 0);
     const pillBoxWidth = contentWidth + padding * 2;
 
     // (0, 0) in container space = tip of the speech-bubble tail, pointing
@@ -1228,12 +1252,18 @@ export class GameScene extends Phaser.Scene {
     tail.fillTriangle(-tailW / 2, -tailH, tailW / 2, -tailH, 0, 0);
     tail.setDepth(0);
 
-    // Position pill and text inside the pillbox.
+    // Position pill, text, and badge inside the pillbox (left to right).
     const pillX = -pillBoxWidth / 2 + padding + pillRadius;
     statusPill.setPosition(pillX, bgCenterY);
-    text.setPosition(pillX + pillRadius + gap, bgCenterY);
+    const textX = pillX + pillRadius + gap;
+    text.setPosition(textX, bgCenterY);
+    if (guestBadge) {
+      guestBadge.setPosition(textX + text.width + badgeGap, bgCenterY);
+    }
 
-    container.add([bg, tail, statusPill, text]);
+    const children: Phaser.GameObjects.GameObject[] = [bg, tail, statusPill, text];
+    if (guestBadge) children.push(guestBadge);
+    container.add(children);
     container.setDepth(avatar.sprite.depth + 0.01);
     // Hide for the local player's own avatar.
     container.setVisible(entityId !== this.myEntityId);
