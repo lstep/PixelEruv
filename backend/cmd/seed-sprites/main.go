@@ -7,11 +7,9 @@
 //
 //	seed-sprites [-dir ./sprites] [-force]
 //
-// Env vars (same as worldsim):
+// Env vars:
 //
-//	POCKETBASE_URL       (default http://localhost:8090)
-//	PB_ADMIN_EMAIL       (default admin@pixeleruv.local)
-//	PB_ADMIN_PASSWORD    (default password123)
+//	PB_DATA_DIR    (default ./pb_data) — must match worldsim's data dir
 package main
 
 import (
@@ -20,7 +18,12 @@ import (
 	"log"
 	"os"
 
+	"github.com/pocketbase/pocketbase"
+
 	"github.com/lstep/pixeleruv/backend/internal/worldsim"
+
+	// Register Go migrations (side-effect import)
+	_ "github.com/lstep/pixeleruv/backend/migrations"
 )
 
 func main() {
@@ -28,11 +31,17 @@ func main() {
 	force := flag.Bool("force", false, "upload all PNGs, skipping existing names")
 	flag.Parse()
 
-	pocketbaseURL := envOr("POCKETBASE_URL", "http://localhost:8090")
-	pbAdminEmail := envOr("PB_ADMIN_EMAIL", "admin@pixeleruv.local")
-	pbAdminPassword := envOr("PB_ADMIN_PASSWORD", "password123")
+	pbDataDir := envOr("PB_DATA_DIR", "./pb_data")
 
-	store := worldsim.NewSpriteStore(pocketbaseURL, pbAdminEmail, pbAdminPassword)
+	app := pocketbase.NewWithConfig(pocketbase.Config{
+		DefaultDataDir: pbDataDir,
+	})
+	if err := app.Bootstrap(); err != nil {
+		fmt.Fprintf(os.Stderr, "seed-sprites: pocketbase bootstrap: %v\n", err)
+		os.Exit(1)
+	}
+
+	store := worldsim.NewSpriteStore(app)
 	if err := store.Seed(*dir, *force); err != nil {
 		fmt.Fprintf(os.Stderr, "seed-sprites: %v\n", err)
 		os.Exit(1)

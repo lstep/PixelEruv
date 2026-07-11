@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/pocketbase/pocketbase/core"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -105,14 +106,15 @@ type NetworkSession struct {
 
 type Simulator struct {
 	nc            *nats.Conn
+	app           core.App
 	mapID         string
 	mapFilename   string
 	mapData       *MapData
 	zoneReg       *ZoneRegistry
+	mapStore      *MapStore
 	userStore     *UserStore
 	spriteStore   *SpriteStore
 	extMgr        *ExtensionManager
-	pocketbaseURL string
 	tickHz        int
 	tickDur       time.Duration
 	tickCount     uint64
@@ -136,7 +138,7 @@ type Simulator struct {
 	snapshotSeq uint32
 }
 
-func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, tickHz int, logger *slog.Logger) (*Simulator, error) {
+func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (*Simulator, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("worldsim"),
 		nats.ReconnectWait(2*time.Second),
@@ -146,43 +148,41 @@ func New(natsURL, mapID, pocketbaseURL, pbAdminEmail, pbAdminPassword string, ti
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
 
+	mapStore := NewMapStore(app)
+	userStore := NewUserStore(app)
+	spriteStore := NewSpriteStore(app)
+
 	// Auto-seed the default map into PocketBase on first run, so a fresh
 	// deployment boots without a manual upload step. MAP_DIR defaults to
 	// ./maps (bundled in dist/) for production; for local dev, set MAP_DIR
-	// to the repo's maps/ directory. Retries for up to 30s while PocketBase
-	// is still starting. Non-fatal: if seeding ultimately fails, worldsim
-	// still starts and LoadMap below will surface the real error.
+	// to the repo's maps/ directory. Non-fatal: if seeding fails, worldsim
+	// still starts and LoadMapData below will surface the real error.
 	mapDir := os.Getenv("MAP_DIR")
 	if mapDir == "" {
 		mapDir = "./maps"
 	}
-	mapStore := NewMapStore(pocketbaseURL, pbAdminEmail, pbAdminPassword)
-	for i := 0; i < 30; i++ {
-		if err := mapStore.SeedMapIfMissing(mapID, mapDir, "default-map.json"); err == nil {
-			break
-		} else if i == 29 {
-			logger.Warn("map seed failed", "err", err, "dir", mapDir)
-		}
-		time.Sleep(time.Second)
+	if err := mapStore.SeedMapIfMissing(mapID, mapDir, "default-map.json"); err != nil {
+		logger.Warn("map seed failed", "err", err, "dir", mapDir)
 	}
 
 	// Load map data (dimensions + collision grid + zones) from PocketBase.
-	mapData, err := LoadMap(pocketbaseURL, mapID)
+	mapData, err := mapStore.LoadMapData(mapID)
 	if err != nil {
 		logger.Warn("failed to load map from pocketbase, using fallback bounds",
-			"err", err, "pocketbase", pocketbaseURL, "map", mapID)
+			"err", err, "map", mapID)
 		mapData = &MapData{Width: 20, Height: 20}
 	}
 
 	s := &Simulator{
 		nc:               nc,
+		app:              app,
 		mapID:            mapID,
 		mapData:          mapData,
 		zoneReg:          NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
-		userStore:        NewUserStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
-		spriteStore:      NewSpriteStore(pocketbaseURL, pbAdminEmail, pbAdminPassword),
+		mapStore:         mapStore,
+		userStore:        userStore,
+		spriteStore:      spriteStore,
 		extMgr:           NewExtensionManager(logger),
-		pocketbaseURL:    pocketbaseURL,
 		tickHz:           tickHz,
 		tickDur:          time.Second / time.Duration(tickHz),
 		startTime:        time.Now(),
@@ -1306,7 +1306,7 @@ func (s *Simulator) runIntegrityCheck() {
 // so extensions can re-read the map too.
 func (s *Simulator) startMapReloadChecker(ctx context.Context) {
 	// Get the initial filename.
-	currentInfo, err := FetchMapRecordInfo(s.pocketbaseURL, s.mapID)
+	currentInfo, err := s.mapStore.FetchMapRecordInfo(s.mapID)
 	if err != nil {
 		s.logger.Warn("map reload checker: failed to get initial record info", "err", err)
 	} else if currentInfo != nil {
@@ -1330,7 +1330,7 @@ func (s *Simulator) startMapReloadChecker(ctx context.Context) {
 // checkMapReload fetches the current map record info and compares the
 // filename. If it changed, reloads the map.
 func (s *Simulator) checkMapReload() {
-	info, err := FetchMapRecordInfo(s.pocketbaseURL, s.mapID)
+	info, err := s.mapStore.FetchMapRecordInfo(s.mapID)
 	if err != nil {
 		return // PocketBase might be temporarily unreachable
 	}
@@ -1352,7 +1352,7 @@ func (s *Simulator) checkMapReload() {
 		"new_file", info.TiledJSONFilename)
 
 	// Reload the map.
-	newMapData, err := LoadMap(s.pocketbaseURL, s.mapID)
+	newMapData, err := s.mapStore.LoadMapData(s.mapID)
 	if err != nil {
 		s.logger.Error("map reload failed", "err", err)
 		return

@@ -3,11 +3,8 @@ package worldsim
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand/v2"
-	"net/http"
 	"strings"
-	"time"
 )
 
 // MapData holds the spatial properties of a Tiled map needed by the
@@ -68,105 +65,10 @@ type tiledMapJSON struct {
 	} `json:"layers"`
 }
 
-// LoadMap fetches the Tiled map JSON from PocketBase by map name and builds
-// a collision grid from the "Walls" layer (any non-zero tile = blocked).
-// It retries for up to 30 seconds in case PocketBase is still starting.
-func LoadMap(pocketbaseURL, mapName string) (*MapData, error) {
-	var lastErr error
-	for i := 0; i < 30; i++ {
-		md, err := loadMapOnce(pocketbaseURL, mapName)
-		if err == nil {
-			return md, nil
-		}
-		lastErr = err
-		time.Sleep(time.Second)
-	}
-	return nil, lastErr
-}
-
 // MapRecordInfo is the lightweight metadata for a map record in PocketBase,
 // used to detect when the map has been re-uploaded (filename changes).
 type MapRecordInfo struct {
 	TiledJSONFilename string
-}
-
-// FetchMapRecordInfo fetches just the map record metadata (without parsing
-// the full Tiled JSON). Used by the periodic reload checker to detect
-// changes by comparing the tiled_json filename.
-func FetchMapRecordInfo(pocketbaseURL, mapName string) (*MapRecordInfo, error) {
-	resp, err := http.Get(fmt.Sprintf(
-		"%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1",
-		pocketbaseURL, mapName,
-	))
-	if err != nil {
-		return nil, fmt.Errorf("fetch map record: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("pocketbase responded %d", resp.StatusCode)
-	}
-	var record struct {
-		Items []struct {
-			TiledJSON string `json:"tiled_json"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-		return nil, fmt.Errorf("decode record: %w", err)
-	}
-	if len(record.Items) == 0 {
-		return nil, fmt.Errorf("no map named %q", mapName)
-	}
-	return &MapRecordInfo{TiledJSONFilename: record.Items[0].TiledJSON}, nil
-}
-
-func loadMapOnce(pocketbaseURL, mapName string) (*MapData, error) {
-	// Fetch the maps record by name.
-	resp, err := http.Get(fmt.Sprintf(
-		"%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1",
-		pocketbaseURL, mapName,
-	))
-	if err != nil {
-		return nil, fmt.Errorf("fetch map record: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("pocketbase responded %d", resp.StatusCode)
-	}
-
-	var record struct {
-		Items []struct {
-			ID           string   `json:"id"`
-			CollectionID string   `json:"collectionId"`
-			TiledJSON    string   `json:"tiled_json"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-		return nil, fmt.Errorf("decode record: %w", err)
-	}
-	if len(record.Items) == 0 {
-		return nil, fmt.Errorf("no map named %q in pocketbase", mapName)
-	}
-
-	r := record.Items[0]
-	jsonURL := fmt.Sprintf("%s/api/files/%s/%s/%s",
-		pocketbaseURL, r.CollectionID, r.ID, r.TiledJSON)
-
-	// Fetch the Tiled JSON.
-	jresp, err := http.Get(jsonURL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch tiled json: %w", err)
-	}
-	defer jresp.Body.Close()
-	if jresp.StatusCode != 200 {
-		return nil, fmt.Errorf("tiled json responded %d", jresp.StatusCode)
-	}
-
-	body, err := io.ReadAll(jresp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read tiled json: %w", err)
-	}
-
-	return parseTiledMapJSON(body)
 }
 
 // parseTiledMapJSON parses a Tiled JSON export into MapData: collision grid,

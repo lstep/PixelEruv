@@ -1,0 +1,47 @@
+package migrations
+
+import (
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/types"
+	m "github.com/pocketbase/pocketbase/migrations"
+)
+
+func init() {
+	m.Register(func(app core.App) error {
+		collection := core.NewBaseCollection("maps")
+
+		collection.Fields.Add(
+			&core.TextField{
+				Name:     "name",
+				Required: true,
+				Min:      1,
+				Max:      100,
+			},
+			&core.FileField{
+				Name:       "tiled_json",
+				Required:   true,
+				MaxSelect:  1,
+				MaxSize:    5242880,
+				MimeTypes:  []string{"application/json"},
+			},
+			&core.FileField{
+				Name:       "tilesets",
+				Required:   true,
+				MaxSelect:  10,
+				MaxSize:    10485760,
+				MimeTypes:  []string{"image/png", "image/jpeg"},
+			},
+		)
+
+		collection.ListRule = types.Pointer("")
+		collection.ViewRule = types.Pointer("")
+
+		return app.Save(collection)
+	}, func(app core.App) error {
+		collection, err := app.FindCollectionByNameOrId("maps")
+		if err != nil {
+			return err
+		}
+		return app.Delete(collection)
+	})
+}

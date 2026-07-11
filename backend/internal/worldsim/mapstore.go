@@ -1,103 +1,31 @@
 package worldsim
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
-	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
+
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/filesystem"
 )
 
 // MapStore handles the maps PB collection: it can seed a default map record
 // (Tiled JSON + tileset PNGs) on first run when no record exists for the
-// configured map name. It authenticates as a superuser, mirroring SpriteStore.
+// configured map name. Uses the PocketBase Go SDK (in-process DAO access).
 type MapStore struct {
-	pocketbaseURL string
-	adminEmail    string
-	adminPassword string
-	token         string
-	mu            sync.Mutex
+	app core.App
 }
 
-func NewMapStore(pocketbaseURL, adminEmail, adminPassword string) *MapStore {
-	return &MapStore{
-		pocketbaseURL: strings.TrimRight(pocketbaseURL, "/"),
-		adminEmail:    adminEmail,
-		adminPassword: adminPassword,
-	}
-}
-
-// authToken returns a cached superuser token, authenticating if needed.
-func (s *MapStore) authToken() (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.token != "" {
-		return s.token, nil
-	}
-	body := fmt.Sprintf(`{"identity":"%s","password":"%s"}`, s.adminEmail, s.adminPassword)
-	resp, err := http.Post(
-		s.pocketbaseURL+"/api/collections/_superusers/auth-with-password",
-		"application/json",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		return "", fmt.Errorf("pb auth: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("pb auth %d: %s", resp.StatusCode, string(b))
-	}
-	var auth pbAuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&auth); err != nil {
-		return "", fmt.Errorf("pb auth decode: %w", err)
-	}
-	s.token = auth.Token
-	return s.token, nil
-}
-
-func (s *MapStore) doRequest(method, url string, body io.Reader, contentType string) (*http.Response, error) {
-	token, err := s.authToken()
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequest(method, url, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
-	}
-	return http.DefaultClient.Do(req)
+func NewMapStore(app core.App) *MapStore {
+	return &MapStore{app: app}
 }
 
 // mapRecordExists returns true if a maps record with the given name exists.
 func (s *MapStore) mapRecordExists(mapName string) (bool, error) {
-	url := fmt.Sprintf("%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1", s.pocketbaseURL, mapName)
-	resp, err := s.doRequest("GET", url, nil, "")
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return false, fmt.Errorf("pocketbase %d: %s", resp.StatusCode, string(b))
-	}
-	var result struct {
-		Items []struct {
-			ID string `json:"id"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false, err
-	}
-	return len(result.Items) > 0, nil
+	record, _ := s.app.FindFirstRecordByData("maps", "name", mapName)
+	return record != nil, nil
 }
 
 // SeedMapIfMissing uploads the Tiled JSON and referenced tileset PNGs from
@@ -131,56 +59,97 @@ func (s *MapStore) SeedMapIfMissing(mapName, mapDir, jsonFile string) error {
 		return fmt.Errorf("parse map json: %w", err)
 	}
 
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	if err := w.WriteField("name", mapName); err != nil {
-		return fmt.Errorf("write name field: %w", err)
-	}
-	// tiled_json file field.
-	jfw, err := w.CreateFormFile("tiled_json", jsonFile)
+	collection, err := s.app.FindCollectionByNameOrId("maps")
 	if err != nil {
-		return fmt.Errorf("create tiled_json form file: %w", err)
+		return fmt.Errorf("find maps collection: %w", err)
 	}
-	if _, err := jfw.Write(jsonBytes); err != nil {
-		return fmt.Errorf("write tiled_json: %w", err)
+
+	record := core.NewRecord(collection)
+	record.Set("name", mapName)
+
+	// tiled_json file field.
+	jsonFileObj, err := filesystem.NewFileFromPath(jsonPath)
+	if err != nil {
+		return fmt.Errorf("create tiled_json file: %w", err)
 	}
-	// tilesets file field — one part per referenced PNG.
+	record.Set("tiled_json", jsonFileObj)
+
+	// tilesets file field — one per referenced PNG.
+	var tilesetFiles []*filesystem.File
 	for _, ts := range tiled.Tilesets {
 		pngName := ts.Image
 		if pngName == "" {
 			continue
 		}
-		// Tiled may store a relative path; use the basename.
 		if base := filepath.Base(pngName); base != "" {
 			pngName = base
 		}
 		pngPath := filepath.Join(mapDir, pngName)
-		f, err := os.Open(pngPath)
+		pngFile, err := filesystem.NewFileFromPath(pngPath)
 		if err != nil {
-			return fmt.Errorf("open tileset %s: %w", pngName, err)
+			return fmt.Errorf("create tileset file %s: %w", pngName, err)
 		}
-		fw, err := w.CreateFormFile("tilesets", pngName)
-		if err != nil {
-			f.Close()
-			return fmt.Errorf("create tileset form file %s: %w", pngName, err)
-		}
-		if _, err := io.Copy(fw, f); err != nil {
-			f.Close()
-			return fmt.Errorf("copy tileset %s: %w", pngName, err)
-		}
-		f.Close()
+		tilesetFiles = append(tilesetFiles, pngFile)
 	}
-	w.Close()
+	if len(tilesetFiles) == 0 {
+		// PocketBase requires at least one tileset file (field is required).
+		return fmt.Errorf("no tileset PNGs found in %s", mapDir)
+	}
+	record.Set("tilesets", tilesetFiles)
 
-	url := fmt.Sprintf("%s/api/collections/maps/records", s.pocketbaseURL)
-	resp, err := s.doRequest("POST", url, &buf, w.FormDataContentType())
+	return s.app.Save(record)
+}
+
+// FetchMapRecordInfo returns lightweight metadata for a map record, used to
+// detect when the map has been re-uploaded (filename changes).
+func (s *MapStore) FetchMapRecordInfo(mapName string) (*MapRecordInfo, error) {
+	record, err := s.app.FindFirstRecordByData("maps", "name", mapName)
+	if err != nil || record == nil {
+		return nil, fmt.Errorf("no map named %q", mapName)
+	}
+	return &MapRecordInfo{
+		TiledJSONFilename: record.GetString("tiled_json"),
+	}, nil
+}
+
+// LoadMapData fetches the Tiled map JSON from PocketBase by map name and
+// builds a collision grid from the "Walls" layer (any non-zero tile =
+// blocked). With PB embedded, no retry is needed — the collection exists
+// by the time this is called (migrations run during Bootstrap).
+func (s *MapStore) LoadMapData(mapName string) (*MapData, error) {
+	return s.loadMapOnce(mapName)
+}
+
+// loadMapOnce fetches and parses a single map record.
+func (s *MapStore) loadMapOnce(mapName string) (*MapData, error) {
+	record, err := s.app.FindFirstRecordByData("maps", "name", mapName)
+	if err != nil || record == nil {
+		return nil, fmt.Errorf("no map named %q", mapName)
+	}
+
+	tiledJSONFilename := record.GetString("tiled_json")
+	if tiledJSONFilename == "" {
+		return nil, fmt.Errorf("map %q has no tiled_json file", mapName)
+	}
+
+	// Read the Tiled JSON file from PB's filesystem.
+	fileKey := record.BaseFilesPath() + "/" + tiledJSONFilename
+	fsys, err := s.app.NewFilesystem()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("init filesystem: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pocketbase create map %d: %s", resp.StatusCode, string(b))
+	defer fsys.Close()
+
+	r, err := fsys.GetReader(fileKey)
+	if err != nil {
+		return nil, fmt.Errorf("read tiled json: %w", err)
 	}
-	return nil
+	defer r.Close()
+
+	body, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read tiled json body: %w", err)
+	}
+
+	return parseTiledMapJSON(body)
 }
