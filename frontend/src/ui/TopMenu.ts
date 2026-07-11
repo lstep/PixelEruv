@@ -17,6 +17,7 @@ export class TopMenu {
   private dropdown: HTMLDivElement;
   private micBtn: HTMLButtonElement;
   private camBtn: HTMLButtonElement;
+  private screenBtn: HTMLButtonElement;
   private avClient: AvClient | null = null;
   private chatPanel: ChatPanel | null = null;
   private chatBtn: HTMLButtonElement;
@@ -48,6 +49,21 @@ export class TopMenu {
       this.updateAvLabels();
     });
     this.container.appendChild(this.camBtn);
+
+    // Screen share toggle — hidden until a scene attaches an AvClient.
+    this.screenBtn = document.createElement("button");
+    this.screenBtn.style.cssText = PILL_STYLE + "display:none;";
+    this.screenBtn.addEventListener("click", async () => {
+      if (this.avClient) {
+        try {
+          await this.avClient.setScreenShareEnabled(!this.avClient.isScreenShareEnabled());
+        } catch (err) {
+          console.warn("screenBtn: screen share failed:", err);
+        }
+      }
+      this.updateAvLabels();
+    });
+    this.container.appendChild(this.screenBtn);
 
     // "Enable Audio" button — shown when the browser's autoplay policy
     // blocks remote audio playback. Clicking calls room.startAudio()
@@ -251,6 +267,7 @@ export class TopMenu {
     this.avClient = avClient;
     this.micBtn.style.display = "block";
     this.camBtn.style.display = "block";
+    this.screenBtn.style.display = "block";
     // Wire the audio-blocked callback so the "Enable Audio" button
     // appears when the browser blocks autoplay.
     avClient.setAudioBlockedHandler((blocked) => {
@@ -265,6 +282,7 @@ export class TopMenu {
     this.avClient = null;
     this.micBtn.style.display = "none";
     this.camBtn.style.display = "none";
+    this.screenBtn.style.display = "none";
     this.audioBtn.style.display = "none";
   }
 
@@ -295,5 +313,7 @@ export class TopMenu {
     this.micBtn.style.opacity = this.avClient.isMicMuted() ? "0.5" : "1";
     this.camBtn.textContent = this.avClient.isCameraEnabled() ? "📷 On" : "📷 Cam";
     this.camBtn.style.opacity = this.avClient.isCameraEnabled() ? "1" : "0.5";
+    this.screenBtn.textContent = this.avClient.isScreenShareEnabled() ? "🖥️ Stop" : "🖥️ Screen";
+    this.screenBtn.style.opacity = this.avClient.isScreenShareEnabled() ? "1" : "0.5";
   }
 }
