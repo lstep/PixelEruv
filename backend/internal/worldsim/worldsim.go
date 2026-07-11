@@ -214,6 +214,17 @@ func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (
 		return nil, fmt.Errorf("subscribe: %w", err)
 	}
 
+	// Register a PB hook to reload the map immediately when the maps record
+	// is updated, replacing the 30-second polling checker. The hook fires
+	// in-process since PB is embedded.
+	app.OnRecordAfterUpdateSuccess("maps").BindFunc(func(e *core.RecordEvent) error {
+		if e.Record.GetString("name") == mapID {
+			s.logger.Info("map record updated via PB hook, reloading", "map", mapID)
+			s.checkMapReload()
+		}
+		return e.Next()
+	})
+
 	return s, nil
 }
 
