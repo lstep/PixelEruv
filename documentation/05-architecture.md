@@ -7,7 +7,8 @@ tech-stack decisions in `04-tech-stack.md` and the requirements in
 
 > **Status:** draft. Several wiring decisions are **inferred** from the
 > existing docs and are marked below as **[ASSUMPTION]**. They must be reviewed
-> and confirmed or corrected.
+> and confirmed or corrected. (PocketBase embedding in WorldSim is confirmed
+> and no longer an assumption.)
 
 
 ## Architecture diagram
@@ -44,11 +45,9 @@ flowchart TB
 
             Pusher["🚀 Pusher<br/>WebSocket Gateway<br/>Session + Auth"]
 
-            WorldSim["🌍 World Simulator<br/>ECS Host<br/>Spatial Authority + Replication"]
+            WorldSim["🌍 World Simulator<br/>ECS Host<br/>Spatial Authority + Replication<br/>+ embedded PocketBase"]
 
             NATS["📡 NATS<br/>Pub/Sub<br/>JetStream"]
-
-            PocketBase["🗄️ PocketBase<br/>Users<br/>World Config"]
 
         end
 
@@ -86,8 +85,6 @@ flowchart TB
 
     WorldSim <--> NATS
 
-    WorldSim --> PocketBase
-
     Bridge --> LiveKit
 
     Bridge --> Redis
@@ -122,7 +119,7 @@ flowchart LR
 
   subgraph State [Shared state]
     NATS[NATS<br/>Core pub/sub + JetStream KV]
-    PB[PocketBase<br/>durable store]
+    PB[PocketBase<br/>durable store<br/>embedded in WorldSim]
     REDIS[(Redis<br/>LiveKit only)]
   end
 
@@ -154,7 +151,7 @@ flowchart LR
   PUSH -- "Core NATS pub/sub<br/>(client input, replication batches,<br/>connect/disconnect events)" --> NATS
   WORLDSIM -- "Core NATS pub/sub<br/>(volatile: movements, events)" --> NATS
   WORLDSIM -- "JetStream KV<br/>(semi-persistent: zones, profiles)" --> NATS
-  WORLDSIM -- "user lookup, world config" --> PB
+  WORLDSIM -- "user lookup, world config<br/>(Go SDK, embedded)" --> PB
   BRIDGE -- "kv.Watch on zone state" --> NATS
 
   BRIDGE -- "create/destroy rooms,<br/>mute/unmute participants" --> LK
@@ -229,7 +226,7 @@ flowchart LR
 
     subgraph WSState["State access layer"]
       KV["JetStream KV<br/>read / write"]
-      PB["PocketBase<br/>HTTP client"]
+      PB["PocketBase<br/>Go SDK (embedded)"]
     end
 
     PlayerMove -->|"validate move"| TriggerEval
@@ -266,7 +263,7 @@ flowchart LR
   subgraph StateInfra["State & infrastructure"]
     NATSCore["NATS Core<br/>(ephemeral pub/sub)"]
     NATSKV["NATS JetStream KV<br/>(semi-persistent)"]
-    PBStore["PocketBase<br/>(durable, HTTP API)"]
+    PBStore["PocketBase<br/>(embedded in WorldSim)"]
     Redis[("Redis<br/>(LiveKit only)")]
   end
 
@@ -347,7 +344,7 @@ flowchart LR
 | **World Sim** | NATS Core | pub/sub | Publish volatile cross-shard events (positions for other shards) | Per tick |
 | **World Sim** | NATS Core | pub/sub | Publish `client.provisioned` (for LiveKit Bridge token issuance) | On connect |
 | **World Sim** | NATS JetStream KV | KV read/write | Player positions, player status; reads zone state (written by extensions) | Per change |
-| **World Sim** | PocketBase | HTTP | User lookup/create, world config, audit log writes | On login / rare |
+| **World Sim** | PocketBase (embedded) | Go SDK (in-process) | User lookup/create, world config, audit log writes | On login / rare |
 | **Extension** | NATS Core | pub/sub | Register, spawn, update entities, register triggers/zones (zone gate/notify, input), reply to trigger queries and input trigger dispatches | Per tick / event-driven |
 | **Extension** | NATS JetStream KV | KV read/write | Extension-private state, shared world state (e.g. zone properties) | Event-driven |
 | **Bridge** | NATS JetStream KV | `kv.Watch` | React to zone-state changes | Event-driven |
@@ -364,8 +361,9 @@ flowchart LR
 >   to which client). It has no ECS, no spatial index, no knowledge of entity
 >   state. If a Pusher restarts, clients reconnect (sticky session) and the
 >   World Sim resumes sending replication batches.
-> - The World Sim is **the only service that touches PocketBase and JetStream
->   KV**. It is the authoritative owner of all game state and persistent data.
+> - The World Sim is **the only service that touches PocketBase (now embedded
+>   in-process via the Go SDK) and JetStream KV**. It is the authoritative
+>   owner of all game state and persistent data.
 > - The Pusher and the Bridge **never communicate directly** either — the
 >   World Sim mediates via NATS.
 
@@ -428,8 +426,8 @@ flowchart LR
   them to clients).
 - Reads/writes semi-persistent reactive state in JetStream KV (player
   positions, player status; reads zone state written by extensions).
-- Reads/writes durable data in PocketBase (user lookup/create, world config,
-  audit log).
+- Reads/writes durable data in PocketBase (embedded in-process via the Go SDK;
+  user lookup/create, world config, audit log).
 - Publishes `client.provisioned` to NATS Core after provisioning a client
   (the LiveKit Bridge subscribes to issue a LiveKit token).
 - Manages extension lifecycle (registration, heartbeat, freeze/despawn).
@@ -470,7 +468,7 @@ flowchart LR
 ### OIDC Provider (Dex)
 - Issues identity tokens consumed by the Pusher on the WebSocket upgrade.
 - The Pusher validates the token and extracts the `sub` claim; the World
-  Simulator maps `sub` → entity ID → avatar/entity via PocketBase.
+  Simulator maps `sub` → entity ID → avatar/entity via the embedded PocketBase.
 
 ## Key data flows
 
@@ -565,9 +563,13 @@ flowchart LR
   visibility is handled via Core NATS pub/sub.
 - **[ASSUMPTION] The LiveKit Bridge is a separate Go process**, not embedded
   in the World Sim. *To confirm.*
-- **[DECISION] Durable store is PocketBase.** User accounts, world/map
-  metadata, audit logs, and other durable relational data live in PocketBase.
-  See `06-data-model-and-persistence.md` for the full schema. (Inventory and
+- **[DECISION] Durable store is PocketBase (embedded in WorldSim).** User
+  accounts, world/map metadata, audit logs, and other durable relational data
+  live in PocketBase, which is now embedded in the World Simulator as a Go
+  library (not a standalone Docker service). WorldSim bootstraps the DB, runs
+  Go migrations, and serves PB's HTTP API on port 8090 from a goroutine.
+  Stores use the PB Go SDK DAO calls directly. See
+  `06-data-model-and-persistence.md` for the full schema. (Inventory and
   equipment state is persisted by the inventory extension to JetStream KV, or
   by coordinating with the kernel for PocketBase access; see
   `18-extensions.md` §6a. Extensions do not access PocketBase directly — see

@@ -141,11 +141,10 @@ future work and the design does not preclude it.
 
 | Service | CPU | RAM |
 |---|---|---|
-| World Simulator | 1–2 vCPU | 1–2 GB |
+| World Simulator (incl. embedded PocketBase) | 1–2 vCPU | 1–2 GB |
 | Pusher | 0.5 vCPU | 0.5 GB |
 | NATS (Core + JetStream) | 0.5 vCPU | 1 GB |
 | LiveKit SFU | 1 vCPU | 1 GB |
-| PocketBase | 0.25 vCPU | 0.25 GB |
 | Redis (LiveKit) | 0.25 vCPU | 0.25 GB |
 | coturn, Traefik, Dex, SeaweedFS/RustFS | shared remainder | ~1 GB total |
 
@@ -155,8 +154,8 @@ These are starting points to validate with load testing, not hard limits.
 
 ## 9. Observability (requirement, spec deferred)
 
-The system is distributed (Pusher × N, World Sim × N, Bridge, extensions,
-NATS, PocketBase, LiveKit). The following are **required** for operability;
+The system is distributed (Pusher × N, World Sim × N (with embedded
+PocketBase), Bridge, extensions, NATS, LiveKit). The following are **required** for operability;
 the detailed strategy is deferred to a future ops/deployment document:
 
 - **Structured logging** with a correlation ID per client session

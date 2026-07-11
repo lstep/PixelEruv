@@ -1018,7 +1018,11 @@ other clients can render equipped items.
 - **Persistence**: item definitions and player inventory state are persisted by
   the extension to JetStream KV (extensions have unrestricted KV access, see
   §7). For durable relational storage in PocketBase, the extension coordinates
-  with the kernel (extensions do not access PocketBase directly, see
+  with the kernel. PocketBase is embedded in worldsim as a Go library;
+  extensions do not have Go SDK access to it. Some first-party extensions
+  (ext-walls, ext-av) temporarily hit PB's HTTP API directly at
+  `http://worldsim:8090` — this is an interim measure until Phase 3, which
+  will route all extension ↔ PB access through the kernel via NATS (see
   `06-data-model-and-persistence.md` §1).
 
 ### Custom components

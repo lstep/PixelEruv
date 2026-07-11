@@ -41,14 +41,15 @@ Those are all extension responsibilities, communicated via NATS.
           │                  │
           │  ECS (Ark)       │
           │  Spatial index   │     ┌──────────┐
-          │  Trigger registry│────►│ PocketBase│
-          │  Zone registry   │     └──────────┘
-          │  AOI manager     │
-          │  Replication     │     ┌──────────┐
-          │  encoder         │────►│ JetStream │
-          │  Player movement │     │   KV     │
-          │  KV client       │     └──────────┘
-          │  PB client       │
+          │  Trigger registry│────►│ JetStream │
+          │  Zone registry   │     │   KV     │
+          │  AOI manager     │     └──────────┘
+          │  Replication     │
+          │  encoder         │
+          │  Player movement │
+          │  KV client       │
+          │  PB (embedded,   │
+          │     Go SDK)      │
           │  Extension mgr   │
           └──────────────────┘
 ```
@@ -124,7 +125,8 @@ does not implement trigger behavior itself.
    within a client's AOI are replicated.
 8. **State-store access** — reads/writes JetStream KV (player positions, player
    status; reads zone state written by extensions) and PocketBase (user
-   lookup/create, world config, audit log). These are infrastructure
+   lookup/create, world config, audit log) via in-process Go SDK DAO calls
+   (PocketBase is embedded, not accessed over HTTP). These are infrastructure
    dependencies for provisioning and persistence, not gameplay.
 9. **Identity → entity provisioning** — on `client.connected` from the Pusher,
    looks up or creates the user in PocketBase, restores position from
@@ -169,7 +171,7 @@ World Simulator process
 ├── NATS subscriber       (client input, connect/disconnect, extension updates, trigger replies)
 ├── NATS publisher        (per-client replication batches, cross-shard events, trigger queries)
 ├── JetStream KV client   (player positions, player status; reads zone state)
-├── PocketBase client     (HTTP: user lookup/create, world config, audit)
+├── PocketBase (embedded) (Go SDK DAO: user lookup/create, world config, audit)
 ├── SpriteStore           (auto-seeds sprite_bases from SPRITES_DIR on first run)
 ├── MapStore              (auto-seeds the default maps record from MAP_DIR on first run)
 └── Extension manager     (registration, entity hosting, heartbeat, input trigger dispatch)
@@ -683,10 +685,11 @@ positions, user status) is in JetStream KV. On restart, the World Sim:
 
 1. Reads all JetStream KV keys for its shard(s) to reconstruct zone state and
    user positions.
-2. Reads world configuration from PocketBase.
+2. Reads world configuration from PocketBase (embedded, via Go SDK).
 3. Auto-seeds the default `maps` record from `MAP_DIR` if no record named
-   `MAP_ID` exists (idempotent; retries for 30s while PocketBase is booting).
-   Mirrors the `SpriteStore.SeedIfEmpty` pattern for `sprite_bases`.
+   `MAP_ID` exists (idempotent; runs after `app.Bootstrap()` and
+   `app.RunAllMigrations()` complete). Mirrors the `SpriteStore.SeedIfEmpty`
+   pattern for `sprite_bases`.
 4. Re-registers all entities in the ECS.
 5. Resumes the tick loop.
 6. Sends a fresh initial snapshot to each connected client (via NATS → Pusher
@@ -705,16 +708,18 @@ running the tick loop on the last known input (dead reckoning for a
 configurable timeout, e.g. 5 seconds). If NATS is still down after the
 timeout, it pauses the tick loop and waits for NATS to recover.
 
-### PocketBase unreachable
+### PocketBase failure
 
-User provisioning on connect fails. The World Sim rejects the connection by
-publishing an error to the Pusher via NATS (subject
-`client.<client_id>.replication` with an error frame), which closes the
-WebSocket with `4401 Unauthorized`.
+Since PocketBase is embedded in the World Simulator process (not a separate
+network service), it cannot be "unreachable" over the network. However, PB
+operations can still fail (e.g. disk errors, corruption). User provisioning on
+connect fails in that case. The World Sim rejects the connection by publishing
+an error to the Pusher via NATS (subject `client.<client_id>.replication` with
+an error frame), which closes the WebSocket with `4401 Unauthorized`.
 
-For already-connected clients, PocketBase unavailability does not affect the
-replication tick (simulation state is in the ECS and JetStream KV). Only audit
-log writes and new user provisioning are impacted.
+For already-connected clients, a PB failure does not affect the replication
+tick (simulation state is in the ECS and JetStream KV). Only audit log writes
+and new user provisioning are impacted.
 
 ### Extension crash
 

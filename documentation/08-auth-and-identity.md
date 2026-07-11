@@ -16,9 +16,11 @@ trust boundary. It builds on `04-tech-stack.md` (technology choices),
 - **The Pusher is the single validation point for game-state access.** It
   validates the token on the WebSocket upgrade and extracts the `sub` claim.
   It does not do identity provisioning — it forwards the validated `sub` to
-  the World Simulator via NATS. Downstream components (NATS, PocketBase,
-  LiveKit Bridge) trust the Pusher's validation within the same internal
-  Docker network. They are never reachable from outside.
+  the World Simulator via NATS. Downstream components (NATS, LiveKit Bridge)
+  trust the Pusher's validation within the same internal Docker network.
+  PocketBase is embedded in the World Simulator as a Go library and receives
+  the validated `sub` in-process (see §5). None of these are reachable from
+  outside.
 - **The World Simulator maps identity to entities.** It receives the
   validated `sub` from the Pusher, looks up or creates the user in
   PocketBase, and registers the entity in the ECS. The Pusher never touches
@@ -57,7 +59,8 @@ deploy time. The application code does not change between connector types.
 
 - Runs as a **standalone Docker Compose service** (`dex`).
 - Persists OAuth sessions and connector state in its own **SQLite volume**
-  (`dex-data`). This volume is separate from PocketBase's volume.
+  (`dex-data`). This volume is separate from the World Simulator's data
+  (PocketBase is embedded in worldsim, see §5).
 - Exposes its OIDC discovery endpoint at `/.well-known/openid-configuration`
   on an internal port, routed through Traefik for the browser-facing flows.
 - The **JWKS endpoint** (`/keys`) is consumed by the Pusher at startup and
@@ -112,6 +115,12 @@ Browser            Traefik          Dex           Pusher        NATS        Worl
    |                                               |<-- replication batch --|            |
    |<-- WS established + initial world snapshot ---|<-----------|            |            |
 ```
+
+> **Note:** PocketBase is no longer a separate Docker service. It is embedded
+> in the World Simulator as a Go library; the "lookup sub" and "user rec"
+> steps above are in-process DAO calls, not HTTP requests. worldsim serves
+> PB's HTTP API on port 8090 (for the admin UI and extensions that still
+> access PB via HTTP — see `18-extensions.md`).
 
 ### 3.2 Token delivery on WebSocket upgrade
 
@@ -264,10 +273,12 @@ preclude them.
 
 ## 8. Admin access
 
-The PocketBase admin dashboard (superuser) is accessible only on a **private
-Docker internal port**, never routed through Traefik. It is protected by
-PocketBase's own superuser password (set at first-run via environment
-variable). It is used solely for:
+The PocketBase admin dashboard (superuser) is served by the World Simulator
+on port 8090 — PocketBase is embedded in worldsim as a Go library, not a
+separate container. It is not routed through Traefik. It is protected by
+PocketBase's own superuser password (set at first-run via the
+`PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` environment variables, consumed by
+worldsim's initial superuser migration). It is used solely for:
 
 - Inspecting and editing durable data (user profiles, world config).
 - Schema migrations.

@@ -28,7 +28,7 @@ how object layering and traversal work.
 ## MVP: uploading a map via PocketBase
 
 The `maps` collection is created automatically by the migration in
-`pb_migrations/`. Each record has three fields:
+`backend/migrations/`. Each record has three fields:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -45,6 +45,11 @@ step is needed for a fresh deploy — the world boots with the bundled office
 map. This mirrors the `SpriteStore.SeedIfEmpty` pattern used for
 `sprite_bases`.
 
+> **Note:** PocketBase is embedded in worldsim as a Go library. The seed and
+> all map fetches use PB Go SDK DAO calls in-process, not the HTTP API.
+> worldsim also serves PB's HTTP API on port 8090 for the admin UI and for
+> the frontend (which still fetches map data over HTTP).
+
 | Var | Default | Notes |
 |---|---|---|
 | `MAP_DIR` | `./maps` (native) / `/maps` (Docker) | Directory containing `default-map.json` + tileset PNGs for first-run seeding |
@@ -52,13 +57,14 @@ map. This mirrors the `SpriteStore.SeedIfEmpty` pattern used for
 
 The seed is **idempotent**: once a record with the configured name exists,
 worldsim never overwrites it. To replace the map, edit the PocketBase record
-(see "Replacing a map" below). The seed retries for up to 30s while PocketBase
-is still booting (it logs `map seed failed` on each attempt and proceeds once
-PocketBase is up).
+(see "Replacing a map" below). Seeding runs once on startup, after
+`app.Bootstrap()` and `app.RunAllMigrations()` complete (PocketBase is
+embedded in worldsim as a Go library, so there is no external service to
+wait for).
 
 ### Manual upload (replacing or adding maps)
 
-1. **Start PocketBase** — `docker compose -f docker/docker-compose.yml up pocketbase` (or `make up` for all services). PocketBase serves on `http://localhost:8090`.
+1. **Start worldsim** — `docker compose -f docker/docker-compose.yml up worldsim` (or `make up` for all services). worldsim serves PocketBase's HTTP API and admin UI on `http://localhost:8090`.
 
 2. **Create an admin account** — open `http://localhost:8090/_/` in a browser and create the first admin user.
 
@@ -73,13 +79,13 @@ PocketBase is up).
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`)
 
-5. **Load the app** — the frontend fetches the record by name from PocketBase, retrieves the JSON and tileset images via PB file URLs, and renders the map. PocketBase must be available; there is no static fallback.
+5. **Load the app** — the frontend fetches the record by name from PocketBase (served by worldsim on port 8090), retrieves the JSON and tileset images via PB file URLs, and renders the map. worldsim must be running; there is no static fallback.
 
 ### Env vars
 
 | Var | Default | Notes |
 |---|---|---|
-| `VITE_POCKETBASE_URL` | `http://localhost:8090` | PocketBase base URL (browser-reachable) |
+| `VITE_POCKETBASE_URL` | `http://localhost:8090` | PocketBase base URL, served by worldsim (browser-reachable) |
 | `VITE_MAP_NAME` | `map1` | Name of the map record to load |
 
 ## To be specified (the hard parts)
