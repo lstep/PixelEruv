@@ -61,7 +61,7 @@
   <text x="615" y="480" text-anchor="start" font-size="10" font-weight="500" fill="#16a34a">KV r/w: positions</text>
   <text x="615" y="493" text-anchor="start" font-size="10" font-weight="500" fill="#16a34a">read: zone state</text>
 
-  <!-- World Sim → PocketBase (HTTP) -->
+  <!-- World Sim → PocketBase (Go SDK, embedded) -->
   <line x1="720" y1="420" x2="820" y2="556" stroke="#16a34a" stroke-width="2" marker-end="url(#arr-green)"/>
   <text x="790" y="480" text-anchor="middle" font-size="10" font-weight="500" fill="#16a34a">HTTP: users ·</text>
   <text x="790" y="493" text-anchor="middle" font-size="10" font-weight="500" fill="#16a34a">config · audit</text>
@@ -188,7 +188,7 @@
     <text x="535" y="354" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">JetStream KV r/w</text>
 
     <rect x="630" y="340" width="150" height="20" rx="4" fill="#e0e7ff" stroke="#818cf8" stroke-width="0.8"/>
-    <text x="705" y="354" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">PocketBase HTTP</text>
+    <text x="705" y="354" text-anchor="middle" font-size="11" font-weight="500" fill="#312e81">PocketBase Go SDK</text>
 
     <!-- Internal flow: sim → replication -->
     <line x1="610" y1="255" x2="638" y2="255" stroke="#a5b4fc" stroke-width="1.5" marker-end="url(#arr)"/>
@@ -312,7 +312,7 @@
     <text x="122" y="82" font-size="11" fill="#334155">NATS (Core + KV) — the bus</text>
 
     <rect x="340" y="70" width="16" height="16" rx="3" fill="#99f6e4" stroke="#0ea5e9" stroke-width="1.5"/>
-    <text x="362" y="82" font-size="11" fill="#334155">PocketBase — durable store</text>
+    <text x="362" y="82" font-size="11" fill="#334155">PocketBase — durable store (embedded in WorldSim, Go SDK)</text>
 
     <rect x="640" y="70" width="16" height="16" rx="3" fill="#fecaca" stroke="#dc2626" stroke-width="1.5"/>
     <text x="662" y="82" font-size="11" fill="#334155">Redis — LiveKit only</text>

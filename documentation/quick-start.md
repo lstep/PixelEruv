@@ -35,8 +35,10 @@ nginx -v   # only needed if you'll use a host nginx (section 5)
 ## 2. Get `dist/` onto the host
 
 `dist/` is self-contained: native binaries in `dist/bin/`, built web assets in
-`dist/web/`, Docker support files in `dist/docker/`, the compose file at the
-dist root, and PocketBase migrations in `dist/pb_migrations/`.
+`dist/web/`, Docker support files in `dist/docker/`, and the compose file at
+the dist root. PocketBase is embedded in the worldsim binary — its collection
+schemas are Go migrations compiled in, so there is no `pb_migrations/`
+directory to ship.
 
 From the machine where `dist/` was built (e.g. via `make dist-x86`):
 
@@ -59,14 +61,12 @@ On the host, the layout should look like:
 ├── docker-compose.yml
 ├── bin/                  # pusher, worldsim, ext-* (linux/amd64)
 ├── web/                  # built frontend (assets/maps/, sprites/, fonts/)
-├── docker/               # Dockerfiles, nginx.conf, livekit.yaml, dex/, entrypoint scripts
-└── pb_migrations/        # PocketBase collection schemas
+└── docker/               # Dockerfiles, nginx.conf, livekit.yaml, dex/, entrypoint scripts
 ```
 
 > The compose file's build context is the dist root (`.`), so it expects
-> `bin/`, `web/`, `docker/`, and `pb_migrations/` as siblings of
-> `docker-compose.yml`. Run all `docker compose` commands from that
-> directory.
+> `bin/`, `web/`, and `docker/` as siblings of `docker-compose.yml`. Run all
+> `docker compose` commands from that directory.
 
 ---
 
@@ -189,7 +189,9 @@ docker compose up --build -d
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `devkey` / `devsecret…` | `ext-av` in compose **and** `docker/livekit.yaml` | Shared secret for signing LiveKit join tokens. **Must match** in both places. Rotate for production (§3a). |
 | `TLS_HOSTS` | `localhost,127.0.0.1` | `frontend` in compose | Comma-separated DNS/IP entries for the self-signed cert's SAN. `PUBLIC_HOST` is auto-appended at startup, so you usually don't set this directly. |
 | `MAP_ID` | `map1` | `worldsim` + `ext-av` + `ext-walls` in compose | Name of the PocketBase `maps` record to load. |
-| `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `pocketbase` + `worldsim` in compose | PocketBase superuser credentials. **Change before exposing to the internet.** |
+| `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `worldsim` in compose | PocketBase superuser credentials (used by worldsim's initial-superuser migration, since PB is embedded). **Change before exposing to the internet.** |
+| `PB_DATA_DIR` | `/pb_data` | `worldsim` in compose | Directory worldsim mounts for PocketBase's SQLite data + uploaded files. Backed by the `pb_data` Docker volume. |
+| `PB_HTTP_ADDR` | `0.0.0.0:8090` | `worldsim` in compose | Address worldsim's embedded PocketBase listens on (admin UI + file API). |
 
 > Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
 > deploy. The rest have working defaults; override them for production
@@ -207,9 +209,10 @@ PUBLIC_HOST=192.168.1.10 LIVEKIT_NODE_IP=192.168.1.10 docker compose up --build 
 
 (Or set them in a `.env` file — compose reads it automatically.)
 
-This starts: `nats`, `pocketbase` (:8090), `dex` (:5556), `pusher` (:8081),
-`worldsim`, `frontend` (host **:4080** HTTP + **:4043** HTTPS), `ext-demo`,
-`ext-walls`, `ext-props`, `ext-av`, `livekit` (:7880 / :7881 / UDP 50000-50020).
+This starts: `nats`, `dex` (:5556), `pusher` (:8081),
+`worldsim` (embeds PocketBase on :8090), `frontend` (host **:4080** HTTP +
+**:4043** HTTPS), `ext-demo`, `ext-walls`, `ext-props`, `ext-av`, `livekit`
+(:7880 / :7881 / UDP 50000-50020).
 
 Check it came up:
 
@@ -236,7 +239,7 @@ For a real domain + Let's Encrypt cert, put a host nginx proxy in front
 
 The in-container nginx already terminates TLS (self-signed cert from
 `PUBLIC_HOST`) and proxies `/ws` → pusher, `/dex/` → dex, and `/api/` →
-pocketbase same-origin. For LAN testing you can skip this section entirely
+worldsim (PocketBase) same-origin. For LAN testing you can skip this section entirely
 and just use `https://<host-ip>:4043`.
 
 For a real domain with a Let's Encrypt cert, put a host nginx in front that
@@ -285,7 +288,7 @@ server {
     }
 
     # Everything → in-container nginx on :4080 (which already handles
-    # /ws → pusher, /dex/ → dex, and /api/ → pocketbase same-origin).
+    # /ws → pusher, /dex/ → dex, and /api/ → worldsim same-origin).
     location / {
         proxy_pass         http://127.0.0.1:4080;
         proxy_http_version 1.1;
@@ -355,7 +358,7 @@ server {
 > Notes on this variant:
 > - It forwards to `http://localhost:4080` (the in-container nginx's HTTP
 >   endpoint), which already proxies `/ws` → pusher, `/dex/` → dex, and
->   `/api/` → pocketbase same-origin. No need to re-implement those
+>   `/api/` → worldsim (PocketBase) same-origin. No need to re-implement those
 >   `location` blocks here.
 > - `proxy_buffering off` + `chunked_transfer_encoding off` matter for the
 >   WebSocket and any streaming responses; keep them off.
@@ -425,7 +428,7 @@ else stays on localhost.
 | 50000-50020 | UDP | host ↔ browser | **LiveKit WebRTC media (audio/video).** Browsers send and receive RTP here. | **Yes** — this is the one that bites people |
 | 7880 | TCP | host → browser | LiveKit signaling (raw `ws://`) — **not needed** if you proxy `/livekit/` through nginx (§5c) | Only if not proxying through nginx |
 | 7881 | TCP | host ↔ browser | LiveKit WebRTC-over-TCP fallback (only used if UDP fails) | Optional — open if UDP is blocked and you want TCP fallback |
-| 8090 | TCP | host → admin | PocketBase admin UI (`/_/`) — not proxied by the container nginx | No — SSH tunnel instead (`ssh -L 8090:127.0.0.1:8090 …`) |
+| 8090 | TCP | host → admin | PocketBase admin UI (`/_/`) served by worldsim — not proxied by the container nginx | No — SSH tunnel instead (`ssh -L 8090:127.0.0.1:8090 …`) |
 | 5556 | TCP | — | Dex (container-internal; proxied as `/dex/` by nginx) | No |
 | 8081 | TCP | — | Pusher (container-internal; proxied as `/ws` by nginx) | No |
 | 4222 | TCP | — | NATS (container-internal) | No |
@@ -484,7 +487,9 @@ You'll be redirected to Dex for login.
 > host to the internet** — edit the hashes in that file and restart `dex`.
 > The PocketBase superuser uses the same email/password
 > (`admin@pixeleruv.local` / `password123`), set via
-> `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` in `docker-compose.yml`.
+> `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` on the `worldsim` service in
+> `docker-compose.yml` (worldsim embeds PocketBase and runs the
+> initial-superuser migration on first start).
 
 After login you'll land in the world. Move with the arrow keys; each browser
 tab is a player. Proximity-based audio/video engages automatically when
@@ -494,10 +499,10 @@ players are near each other or inside an `av_enabled` zone.
 
 | Service     | URL                                  | Use |
 |-------------|--------------------------------------|-----|
-| PocketBase  | `http://<host-ip>:8090/_/` (admin UI) or `https://<host-ip>/api/` (API, proxied) | Manage `maps` and `players` collections, upload map files |
+| PocketBase  | `http://<host-ip>:8090/_/` (admin UI, served by worldsim) or `https://<host-ip>/api/` (API, proxied) | Manage `maps` and `players` collections, upload map files |
 | Dex         | `https://<host-ip>/dex/` | OIDC issuer (same-origin via container nginx) |
 
-> The container nginx proxies `/api/` → PocketBase (so the frontend can fetch
+> The container nginx proxies `/api/` → worldsim (so the frontend can fetch
 > maps same-origin), but the **admin UI** at `/_/` is not proxied. For remote
 > admin access either proxy `:8090` through a host nginx, or SSH tunnel:
 > `ssh -L 8090:127.0.0.1:8090 admin@<host-ip>`.
@@ -666,8 +671,9 @@ docker exec -it $(docker compose ps -q nats) nats -s nats://127.0.0.1:4222 pub a
 docker compose logs worldsim 2>&1 | grep integrity
 ```
 
-Persistent data lives in two Docker volumes: `pb_data` (PocketBase) and
-`dex_data` (Dex). Back them up with `docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine tar czf /b/pb_data.tgz /d`.
+Persistent data lives in two Docker volumes: `pb_data` (PocketBase, mounted
+into worldsim via `PB_DATA_DIR`) and `dex_data` (Dex). Back them up with
+`docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine tar czf /b/pb_data.tgz /d`.
 
 ---
 

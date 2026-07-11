@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 1200 980" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
   <title>Pixel Eruv — Overall System Architecture (High-Level Overview)</title>
-  <desc>All components across the public internet, Traefik edge, and the internal Docker Compose network: client (Phaser + LiveKit JS), simulation plane (Pusher + World Simulator), extensions, NATS bus, media plane (LiveKit SFU + Bridge + coturn), persistence (PocketBase + SeaweedFS + Redis), and identity (Dex).</desc>
+  <desc>All components across the public internet, Traefik edge, and the internal Docker Compose network: client (Phaser + LiveKit JS), simulation plane (Pusher + World Simulator with embedded PocketBase), extensions, NATS bus, media plane (LiveKit SFU + Bridge + coturn), persistence (SeaweedFS + Redis), and identity (Dex). NOTE: PocketBase is now embedded in WorldSim as a Go library, not a standalone service — this SVG is outdated; see the Mermaid diagram in 00-system-overview.md for the current architecture.</desc>
 
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

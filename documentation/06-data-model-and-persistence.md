@@ -28,16 +28,20 @@ with application data.
 PocketBase is the single source of truth for data that must survive indefinitely
 and has a relational shape: user profiles, world configuration, audit logs.
 
-It runs as a **standalone Docker Compose service** (not embedded in any Go
-service). It exposes an admin dashboard on a private port (not routed through
-Traefik). Its data directory is mounted as a named Docker volume for durability.
+It runs as an **embedded Go library inside the World Simulator** (via
+`pocketbase.NewWithConfig()`, `app.Bootstrap()`, `app.RunAllMigrations()`,
+and `app.Start()` in a goroutine). The World Simulator accesses PocketBase
+through in-process Go SDK DAO calls (`app.FindFirstRecordByData`,
+`app.Save`, `app.NewFilesystem`), not over HTTP. PocketBase's admin GUI and
+file API are still served on port 8090 by the World Simulator process. Its
+data directory (`pb_data`) is mounted as a named Docker volume for durability.
 
-This means the World Simulator talks to PocketBase over its HTTP API (or the
-Go SDK), not via an in-process call. The benefit is that multiple World Sim
-instances (shards) can share the same PocketBase without any migration. The
-Pusher does not access PocketBase. Extensions do not access PocketBase
-directly — if an extension needs durable data (e.g. NPC identity), it
-coordinates with the kernel or uses its own JetStream KV namespace.
+Because PocketBase is embedded, each World Sim instance has its own isolated
+PocketBase — there is no shared store. Sharding across multiple World Sim
+instances will require a different approach (e.g. a shared external database)
+in the future. The Pusher does not access PocketBase. Extensions do not access
+PocketBase directly — if an extension needs durable data (e.g. NPC identity),
+it coordinates with the kernel or uses its own JetStream KV namespace.
 
 ### Collections
 
@@ -231,15 +235,18 @@ communicate via NATS Core.
 
 ## Open questions
 
-- **[DECISION] PocketBase runs as a standalone container** with a named Docker
-  volume. The World Simulator communicates with it over HTTP. This allows
-  multiple World Sim instances (shards) to share the same store without
-  migration. The Pusher does not access PocketBase.
+- **[DECISION] PocketBase is embedded in the World Simulator as a Go library**,
+  not run as a standalone container. The World Simulator accesses it via
+  in-process Go SDK DAO calls. The `pb_data` directory is mounted as a named
+  Docker volume. Each World Sim instance has its own embedded PocketBase;
+  sharding will require a shared external database in the future. The Pusher
+  does not access PocketBase.
 - **[DECISION] JetStream KV TTL for `users.<entity_id>.position`**: **90 days**.
   Keys for inactive users expire automatically, preventing unbounded accumulation.
   Users returning after 90 days spawn at the world default spawn point.
 - **[OPEN] Chat backend**: Matrix Synapse vs. PocketBase `messages` collection.
   To be resolved in `17-chat.md`.
-- **[OPEN] Schema migrations**: PocketBase handles collection schema changes
-  through its admin API; a migration strategy (code-first vs. admin-UI) needs
-  to be defined before the first production deployment.
+- **[DECISION] Schema migrations**: PocketBase collection schema changes are
+  handled by Go migrations in `backend/migrations/` (run via
+  `app.RunAllMigrations()` at startup), replacing the earlier JS migrations in
+  `pb_migrations/`.

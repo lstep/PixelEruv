@@ -303,7 +303,8 @@ Player walks near entity, presses E
 > steps below are for **replacing** the default map or **adding** new ones.
 
 1. In Tiled: File → Export As… → choose `*.json` format
-2. Open PocketBase admin UI at `http://localhost:8090/_/`
+2. Open the PocketBase admin UI at `http://localhost:8090/_/` (served by
+   worldsim — PocketBase is embedded in worldsim as a Go library)
 3. Go to the `maps` collection → edit the existing `map1` record (or New
    record to add a new map)
 4. Fill in:
@@ -358,11 +359,12 @@ Tiled JSON ──┐
    entities cross zone boundaries. When a player presses an input key with
    a registered trigger, the worldsim computes adjacent entities (within
    `trigger_radius`) and dispatches the action to registered extensions.
-5. **Hot-reload**: the worldsim polls PocketBase every 30 seconds for map
-   changes (detected by filename change). When the map is updated, it
-   reloads the map, rebuilds the zone registry, and publishes a
-   `map.updated` NATS event. Extensions (like ext-walls) subscribe to
-   this event and re-read the map automatically. No restart needed.
+5. **Hot-reload**: when a `maps` record is updated in PocketBase (e.g.
+   re-uploaded via the admin GUI), an in-process PB hook fires and
+   worldsim reloads the map immediately, rebuilds the zone registry,
+   and publishes a `map.updated` NATS event. Extensions (like ext-walls)
+   subscribe to this event and re-read the map automatically. No restart
+   needed.
 
 ## How-to: common operations
 

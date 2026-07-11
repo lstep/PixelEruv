@@ -65,7 +65,7 @@ flowchart TB
     subgraph Sim["🎮 Simulation plane (Go)"]
       direction LR
       Pusher["🚀 Pusher<br/>WebSocket proxy<br/>auth + session"]
-      WorldSim["🌍 World Simulator<br/>spatial authority<br/>ECS · triggers · replication"]
+      WorldSim["🌍 World Simulator<br/>spatial authority<br/>ECS · triggers · replication<br/>+ embedded PocketBase"]
     end
 
     %% --- Extensions (peer simulators) ---
@@ -88,7 +88,6 @@ flowchart TB
     %% --- Persistence ---
     subgraph Persist["💾 Persistence"]
       direction LR
-      PB["🗄️ PocketBase<br/>users · world config<br/>chat · audit"]
       Assets["📦 SeaweedFS / RustFS<br/>maps · tilesets (S3-compatible)"]
       Redis[("⚡ Redis<br/>LiveKit only")]
     end
@@ -107,7 +106,6 @@ flowchart TB
   %% =========================
   Pusher <-->|client input ·<br/>replication batches| NATS
   WorldSim <-->|input · replication ·<br/>cross-shard events| NATS
-  WorldSim -->|users · chat ·<br/>world config · audit| PB
   Pusher -.->|JWKS · token<br/>validation| Dex
 
   %% =========================
@@ -140,7 +138,7 @@ flowchart TB
 | **Extensions** | Peer simulators driving entity behavior (NPCs, custom zones, objects) — any language with a NATS client | Per-extension processes |
 | **Bus** | Ephemeral pub/sub (Core NATS) and reactive semi-persistent state (JetStream KV) | NATS |
 | **Media** | Real-time audio/video relay, zone-scoped room management, TURN fallback | LiveKit SFU, LiveKit Bridge, coturn |
-| **Persistence** | Durable relational data, asset storage, LiveKit-only shared state | PocketBase, SeaweedFS/RustFS, Redis |
+| **Persistence** | Durable relational data (PocketBase, embedded in WorldSim), asset storage, LiveKit-only shared state | PocketBase (embedded in WorldSim), SeaweedFS/RustFS, Redis |
 | **Identity** | Issue and validate OIDC tokens | Dex |
 
 ### Reading the diagram
@@ -187,8 +185,8 @@ The World Simulator is a Go service that **is the spatial authority and
 replication gateway**. It owns the tile grid, the spatial index, the trigger
 registry, the zone registry, and the replication pipeline. Its only gameplay
 system is player avatar movement; all other gameplay behavior is delegated to
-extensions via NATS. It is the only service that accesses PocketBase and
-JetStream KV.
+extensions via NATS. It is the only service that accesses PocketBase (now
+embedded in-process via the Go SDK, not over HTTP) and JetStream KV.
 
 - Hosts the authoritative ECS (Ark) — see `13-ecs-design.md`. All entities live
   in the same ECS.
@@ -280,8 +278,12 @@ PocketBase is the single source of truth for data that must survive
 indefinitely and has a relational shape: user profiles, avatar appearance,
 world configuration, map references, and the audit log.
 
-It runs as a standalone Docker Compose service. The World Simulator talks to
-it over HTTP. Written rarely, read on login.
+It is embedded in the World Simulator as a Go library (not a standalone
+Docker service). WorldSim calls `app.Bootstrap()` + `app.RunAllMigrations()`
+to initialise the DB and run Go migrations, then serves PB's HTTP API (admin
+GUI + file downloads) on port 8090 from a goroutine. Stores (MapStore,
+UserStore, SpriteStore) use the PB Go SDK DAO calls directly rather than the
+HTTP API. Written rarely, read on login.
 
 See `06-data-model-and-persistence.md` for the full schema.
 

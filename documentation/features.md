@@ -871,10 +871,10 @@ Walk around, talk to people — everything works except persistence
 ### 5.1 Self-Hostable via Docker Compose
 
 The entire stack runs with a single `make up` command — no Kubernetes,
-no platform engineering. NATS, PocketBase, Dex, LiveKit, the Pusher,
-the WorldSim, and all extensions start as Docker Compose services. A
-self-contained `dist/` directory can be copied to any host and run
-without source code.
+no platform engineering. NATS, Dex, LiveKit, the Pusher, the WorldSim
+(with embedded PocketBase), and all extensions start as Docker Compose
+services. A self-contained `dist/` directory can be copied to any host
+and run without source code.
 
 **Storyboard:** Show a terminal. Type `make up`. Show the Docker
 Compose logs scrolling — each service starting. Open the browser to
