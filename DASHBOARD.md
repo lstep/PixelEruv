@@ -1,5 +1,55 @@
 # Dashboard
 
+## Extension Options System (Phase 3, Part B complete)
+
+**Branch:** `feat/extension-options`
+**Status:** Part B complete — extensions declare options schema at registration, worldsim creates PB rows with defaults, admin edits options in PB GUI, changes hot-reload to extensions via NATS. Build and tests pass.
+
+Extensions declare their options as a JSON schema (`options_schema` field) in the `extension.<id>.register` message. Each schema entry has `name`, `type` ("bool", "number", "text"), and `default`. Worldsim's `ExtensionOptionsManager` ensures a row exists in the `extension_options` PocketBase collection for each extension, creating one with default values if missing and backfilling new fields on schema changes. The current options JSON is published back to the extension via NATS on `extension.<id>.options`.
+
+When the admin edits an extension's options in the PB admin GUI, an in-process PB hook (`OnRecordAfterUpdateSuccess("extension_options")`) fires and worldsim republishes the updated options to the extension. The extension receives the update and adjusts its behavior at runtime — no restart needed.
+
+### What changed
+
+- **Migration:** `1752700000_create_extension_options.go` — `extension_options` collection with `extension_id` (text, required) and `options` (JSON) fields. Full CRUD rules for admin access.
+- **Worldsim:** New `extensionoptions.go` — `ExtensionOptionsManager` with `EnsureOptions` (create/backfill PB row), `PublishOptions` (NATS publish to `extension.<id>.options`), `PublishAllOptions`. Wired into `New()` after PB+NATS init. PB hooks for `OnRecordAfterUpdateSuccess` and `OnRecordAfterCreateSuccess` on `extension_options` relay changes to extensions.
+- **ExtensionManager:** `registerMsg` extended with `OptionsSchema` field. `Register()` calls `EnsureOptions` + `PublishOptions` after registration. New `SetOptionsManager()` method for wiring.
+- **ext-av:** Declares `proximity_audio_enabled` (bool, default true) and `zone_audio_enabled` (bool, default true). Subscribes to `extension.av.options`. Zone A/V and proximity A/V gated by respective options.
+- **ext-walls:** Declares `enabled` (bool, default true). Subscribes to `extension.walls.options`. When disabled, re-registers with no gate triggers (walls stop blocking).
+- **ext-demo:** Declares `log_zone_events` (bool, default true). Subscribes to `extension.demo.options`. Zone enter/exit logging gated by option.
+- **ext-props:** Declares `interaction_radius` (number, default 1.5). Subscribes to `extension.props.options`. Logs updated radius on change.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/migrations/1752700000_create_extension_options.go` | New — extension_options collection |
+| `backend/internal/worldsim/extensionoptions.go` | New — ExtensionOptionsManager (PB + NATS) |
+| `backend/internal/worldsim/extensionoptions_test.go` | New — tests for defaults, registration, nil app |
+| `backend/internal/worldsim/extensions.go` | Options schema in registerMsg, SetOptionsManager, Register calls EnsureOptions+PublishOptions |
+| `backend/internal/worldsim/worldsim.go` | Wire ExtensionOptionsManager, PB hooks for option changes |
+| `backend/cmd/ext-av/main.go` | Options schema, subscription, zone/proximity gating |
+| `backend/cmd/ext-walls/main.go` | Options schema, subscription, enabled toggle |
+| `backend/cmd/ext-demo/main.go` | Options schema, subscription, log gating |
+| `backend/cmd/ext-props/main.go` | Options schema, subscription |
+
+### How it works
+
+```
+Extension startup:
+  1. Extension publishes extension.<id>.register with {extension_id, heartbeat_interval_s, options_schema: [{name, type, default}]}
+  2. Worldsim ExtensionManager.Register() parses the schema
+  3. ExtensionOptionsManager.EnsureOptions() creates/updates PB row with defaults
+  4. ExtensionOptionsManager.PublishOptions() sends current options via NATS on extension.<id>.options
+  5. Extension receives options, applies them
+
+Admin edits options in PB GUI:
+  1. Admin updates the options JSON in the extension_options collection
+  2. PB hook (OnRecordAfterUpdateSuccess) fires in-process
+  3. Worldsim publishes updated options on extension.<id>.options
+  4. Extension receives update, adjusts behavior at runtime
+```
+
 ## Extension NATS Zone Metadata (Phase 3, Part A complete)
 
 **Branch:** `feat/extension-nats`
@@ -33,7 +83,7 @@ The `POCKETBASE_URL` env var and `MAP_ID` env var are removed from ext-walls and
 
 ### Next steps (Part B — not in this branch)
 
-- Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
+- ✅ Complete — see "Extension Options System (Phase 3, Part B complete)" above.
 
 ## Multi-Map Support (Phase 2 complete)
 

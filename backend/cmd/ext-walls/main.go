@@ -20,8 +20,21 @@ import (
 )
 
 type registerMsg struct {
-	ExtensionID        string `json:"extension_id"`
-	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
+	ExtensionID        string           `json:"extension_id"`
+	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
+	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
+}
+
+// optionFieldDef declares a single configurable option.
+type optionFieldDef struct {
+	Name    string          `json:"name"`
+	Type    string          `json:"type"`
+	Default json.RawMessage `json:"default"`
+}
+
+// wallsOptions holds the current option values for ext-walls.
+type wallsOptions struct {
+	Enabled bool `json:"enabled"`
 }
 
 type triggerMsg struct {
@@ -71,6 +84,7 @@ func main() {
 
 	var mu sync.Mutex
 	wallZones := make(map[string]bool) // zone_id -> true
+	opts := wallsOptions{Enabled: true}
 
 	// fetchZoneMetadata requests zone metadata from worldsim via NATS
 	// request-reply and updates the local wall zone set.
@@ -106,17 +120,22 @@ func main() {
 			ZoneID   string `json:"zone_id"`
 			Behavior string `json:"behavior"`
 		}
-		for zid := range wallZones {
-			gateTriggers = append(gateTriggers, struct {
-				ZoneID   string `json:"zone_id"`
-				Behavior string `json:"behavior"`
-			}{ZoneID: zid, Behavior: "block"})
+		if opts.Enabled {
+			for zid := range wallZones {
+				gateTriggers = append(gateTriggers, struct {
+					ZoneID   string `json:"zone_id"`
+					Behavior string `json:"behavior"`
+				}{ZoneID: zid, Behavior: "block"})
+			}
 		}
 		mu.Unlock()
 
 		regData, _ := json.Marshal(registerMsg{
 			ExtensionID:        extID,
 			HeartbeatIntervalS: heartbeatS,
+			OptionsSchema: []optionFieldDef{
+				{Name: "enabled", Type: "bool", Default: json.RawMessage("true")},
+			},
 		})
 		trigData, _ := json.Marshal(triggerMsg{
 			ExtensionID:  extID,
@@ -146,6 +165,23 @@ func main() {
 		}
 		mu.Unlock()
 		logger.Info("zone metadata updated via broadcast", "wall_zones", len(wallZones))
+		register()
+	})
+
+	// Subscribe to extension.walls.options for hot-reloadable config.
+	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
+		mu.Lock()
+		before := opts
+		if err := json.Unmarshal(m.Data, &opts); err != nil {
+			logger.Warn("parse options", "err", err)
+			opts = before
+		} else {
+			logger.Info("options updated", "enabled", opts.Enabled)
+		}
+		mu.Unlock()
+		// Re-register: if enabled is false, register with no gate triggers
+		// (effectively unblocking all walls). If true, re-register with
+		// current wall zones.
 		register()
 	})
 
