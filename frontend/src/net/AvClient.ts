@@ -22,11 +22,12 @@ export type AvAudioBlockedHandler = (blocked: boolean) => void;
 const MIC_MUTED_KEY = "av.micMuted";
 const CAM_ENABLED_KEY = "av.cameraEnabled";
 const NOISE_CANCELLATION_KEY = "av.noiseCancellation";
+const SPEAKER_ID_KEY = "av.speakerId";
 
 export interface AvDeviceInfo {
   deviceId: string;
   label: string;
-  kind: "audioinput" | "videoinput";
+  kind: "audioinput" | "videoinput" | "audiooutput";
 }
 
 export class AvClient {
@@ -55,6 +56,8 @@ export class AvClient {
   // user's device choice survives disconnect/reconnect cycles.
   private selectedMicId: string | null = null;
   private selectedCamId: string | null = null;
+  // Selected audio output device ID, persisted across room connections.
+  private selectedSpeakerId = localStorage.getItem(SPEAKER_ID_KEY);
 
   constructor() {
     console.log(`AvClient: init micMuted=${this.micMuted} cameraEnabled=${this.cameraEnabled} noiseCancellation=${this.noiseCancellation}`);
@@ -243,24 +246,33 @@ export class AvClient {
   // getDevices enumerates available audio/video input devices. Requires
   // microphone/camera permission to have been granted for labels to be
   // populated (browsers hide labels until permission is given).
-  async getDevices(kind: "audioinput" | "videoinput"): Promise<AvDeviceInfo[]> {
+  async getDevices(kind: "audioinput" | "videoinput" | "audiooutput"): Promise<AvDeviceInfo[]> {
     if (!navigator.mediaDevices?.enumerateDevices) return [];
     const devices = await navigator.mediaDevices.enumerateDevices();
+    const fallback = kind === "audioinput" ? "Microphone" : kind === "videoinput" ? "Camera" : "Speakers";
     return devices
       .filter((d) => d.kind === kind)
       .map((d) => ({
         deviceId: d.deviceId,
-        label: d.label || (kind === "audioinput" ? "Microphone" : "Camera"),
+        label: d.label || fallback,
         kind,
       }));
   }
 
-  // switchDevice changes the active mic or camera. If a room is connected,
-  // uses room.switchActiveDevice to swap on the fly. Otherwise stores the
-  // deviceId for use when the next room connects.
-  async switchDevice(kind: "audioinput" | "videoinput", deviceId: string): Promise<void> {
+  // switchDevice changes the active mic, camera, or speaker. If a room is
+  // connected, uses room.switchActiveDevice to swap on the fly. Otherwise
+  // stores the deviceId for use when the next room connects.
+  async switchDevice(kind: "audioinput" | "videoinput" | "audiooutput", deviceId: string): Promise<void> {
     if (kind === "audioinput") this.selectedMicId = deviceId;
-    else this.selectedCamId = deviceId;
+    else if (kind === "videoinput") this.selectedCamId = deviceId;
+    else if (kind === "audiooutput") {
+      this.selectedSpeakerId = deviceId;
+      try {
+        localStorage.setItem(SPEAKER_ID_KEY, deviceId);
+      } catch (e) {
+        console.error("AvClient: localStorage.setItem failed:", e);
+      }
+    }
     if (this.room) {
       try {
         await this.room.switchActiveDevice(kind, deviceId);
@@ -268,6 +280,14 @@ export class AvClient {
         console.warn(`AvClient: switchDevice ${kind} failed:`, err);
       }
     }
+  }
+
+  // supportsAudioOutputSelection checks whether the browser supports choosing
+  // an audio output device (setSinkId). Safari and most mobile browsers don't.
+  // Mirrors LiveKit's supportsAudioOutputSelection() without eagerly importing
+  // the SDK module.
+  supportsAudioOutputSelection(): boolean {
+    return "setSinkId" in document.createElement("audio");
   }
 
   // handleTokenFrame processes an AvTokenFrame from the server. On "join",
@@ -471,6 +491,15 @@ export class AvClient {
       await this.room.localParticipant.setCameraEnabled(this.cameraEnabled);
     } catch (err) {
       console.warn("AvClient: camera publish failed (room still connected):", err);
+    }
+
+    // Apply the persisted speaker device if one was selected. Unlike mic/camera
+    // (which are set via Room constructor defaults), audio output can only be
+    // changed via switchActiveDevice after the room exists.
+    if (this.selectedSpeakerId) {
+      this.room.switchActiveDevice("audiooutput", this.selectedSpeakerId).catch((err) =>
+        console.warn("AvClient: speaker switchActiveDevice failed:", err),
+      );
     }
 
     // Populate existing participants.
