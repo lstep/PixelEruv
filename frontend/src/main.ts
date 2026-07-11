@@ -57,6 +57,14 @@ async function bootstrap(): Promise<void> {
   const chatPanel = new ChatPanel();
   topMenu.setChatPanel(chatPanel);
 
+  // Wait for the rounded UI font so Phaser Text objects render with it
+  // instead of falling back to sans-serif.
+  try {
+    await document.fonts.load("700 13px Nunito");
+  } catch {
+    // Font load failure is non-fatal — text falls back to sans-serif.
+  }
+
   const mapAssets = await loadMapAssets();
   console.log("loaded map from PocketBase");
 

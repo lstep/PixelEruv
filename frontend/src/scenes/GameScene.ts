@@ -336,7 +336,7 @@ interface Avatar {
   predX: number;
   predY: number;
   // Name tag above the avatar (null for props and local player's own avatar).
-  nameTag: Phaser.GameObjects.BitmapText | null;
+  nameTag: Phaser.GameObjects.Container | null;
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
@@ -511,8 +511,6 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Bitmap font for avatar name tags (Press Start 2P, 8x8 pixel art).
-    this.load.bitmapFont("pressstart2p", "fonts/pressstart2p.png", "fonts/pressstart2p.xml");
   }
 
   create(): void {
@@ -934,10 +932,13 @@ export class GameScene extends Phaser.Scene {
       avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
       avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
       avatar.sprite.setDepth(this.dynamicDepth(this.feetY(avatar.sprite)));
-      // Reposition name tag to follow the sprite.
+      // Reposition name tag to follow the sprite and counter-scale so it
+      // stays a constant screen size regardless of camera zoom.
       if (avatar.nameTag) {
+        const zoom = this.cameras.main.zoom;
         avatar.nameTag.x = avatar.sprite.x;
-        avatar.nameTag.y = avatar.sprite.y - 52;
+        avatar.nameTag.y = avatar.sprite.y - 52 / zoom;
+        avatar.nameTag.setScale(1 / zoom);
         avatar.nameTag.setDepth(avatar.sprite.depth + 0.01);
       }
       // Animate based on whether the avatar is actually moving on screen.
@@ -1133,11 +1134,9 @@ export class GameScene extends Phaser.Scene {
         const dn = fromBinary(DisplayNameSchema, upd.data);
         if (dn.name) {
           this.displayNameByEntity.set(upd.entityId, dn.name);
-          if (avatar.nameTag) {
-            avatar.nameTag.setText(dn.name);
-          } else {
-            this.createNameTag(upd.entityId, dn.name);
-          }
+          // Recreate the tag because the pillbox width depends on text width.
+          avatar.nameTag?.destroy();
+          this.createNameTag(upd.entityId, dn.name);
         }
       } else if (upd.componentId === 3) {
         // Appearance component — hot-swap the character sheet if sprite_base
@@ -1172,19 +1171,75 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  // createNameTag creates a BitmapText name tag above the avatar's sprite.
-  // Hidden for the local player's own avatar. Positioned above the head and
-  // depth-sorted just above the sprite so it doesn't hide behind decorations.
+  // createNameTag builds a speech-bubble name tag above the avatar's sprite.
+  // A semi-transparent grey pillbox contains a green status pill and the
+  // avatar's name in a scalable web font (Nunito). A small inverted triangle
+  // at the bottom points down at the avatar. The container is counter-scaled
+  // by 1/zoom each frame (see update) so it stays a constant screen size.
+  // Hidden for the local player's own avatar.
   private createNameTag(entityId: string, name: string): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
-    const tag = this.add.bitmapText(avatar.sprite.x, avatar.sprite.y - 52, "pressstart2p", name, 8);
-    tag.setOrigin(0.5, 1);
-    tag.setDepth(avatar.sprite.depth + 0.01);
-    tag.setDropShadow(1, 1, 0x000000, 1);
+
+    const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
+
+    // --- Name text (scalable web font, not pixel art) ---
+    const text = this.add.text(0, 0, name, {
+      fontFamily: "Nunito, sans-serif",
+      fontSize: "13px",
+      color: "#ffffff",
+      fontStyle: "bold",
+    });
+    text.setOrigin(0, 0.5); // left-aligned, vertically centered
+
+    // --- Status pill (green circle — status not yet implemented) ---
+    const pillRadius = 4;
+    const statusPill = this.add.circle(0, 0, pillRadius, 0x22c55e);
+    statusPill.setStrokeStyle(1, 0x15803d);
+
+    // --- Layout ---
+    const padding = 10;
+    const gap = 6;
+    const pillBoxHeight = 22;
+    const tailW = 8;
+    const tailH = 5;
+    const contentWidth = pillRadius * 2 + gap + text.width;
+    const pillBoxWidth = contentWidth + padding * 2;
+
+    // (0, 0) in container space = tip of the speech-bubble tail, pointing
+    // down at the avatar. The pillbox sits above the tail.
+    const bgCenterY = -tailH - pillBoxHeight / 2;
+
+    // --- Pillbox background (semi-transparent grey, rounded) ---
+    const bg = this.add.graphics();
+    bg.fillStyle(0x333340, 0.78);
+    bg.fillRoundedRect(
+      -pillBoxWidth / 2,
+      bgCenterY - pillBoxHeight / 2,
+      pillBoxWidth,
+      pillBoxHeight,
+      11,
+    );
+    bg.setDepth(0);
+
+    // --- Speech-bubble tail (inverted triangle pointing down) ---
+    const tail = this.add.graphics();
+    tail.fillStyle(0x333340, 0.78);
+    tail.fillTriangle(-tailW / 2, -tailH, tailW / 2, -tailH, 0, 0);
+    tail.setDepth(0);
+
+    // Position pill and text inside the pillbox.
+    const pillX = -pillBoxWidth / 2 + padding + pillRadius;
+    statusPill.setPosition(pillX, bgCenterY);
+    text.setPosition(pillX + pillRadius + gap, bgCenterY);
+
+    container.add([bg, tail, statusPill, text]);
+    container.setDepth(avatar.sprite.depth + 0.01);
     // Hide for the local player's own avatar.
-    tag.setVisible(entityId !== this.myEntityId);
-    avatar.nameTag = tag;
+    container.setVisible(entityId !== this.myEntityId);
+    // Counter-scale so the tag stays constant screen size regardless of zoom.
+    container.setScale(1 / this.cameras.main.zoom);
+    avatar.nameTag = container;
   }
 
   // resolveDisplayName returns the display name for an entity, used by the
