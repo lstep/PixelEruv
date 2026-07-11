@@ -498,3 +498,191 @@ func TestProximityClustering_ZoneOverride(t *testing.T) {
 		t.Errorf("expected no proximity.join events, got one for %s", ev.EntityID)
 	}
 }
+
+// TestProximityClustering_StableGroupID verifies that the group ID stays
+// stable when a third player joins or leaves an existing group of two.
+// Existing members should NOT receive proximity.leave/join events — only
+// the joining/leaving player gets an event. This prevents the LiveKit
+// room (and all video tiles) from being torn down and rebuilt on every
+// membership change.
+func TestProximityClustering_StableGroupID(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	subNc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("sub connect: %v", err)
+	}
+	t.Cleanup(subNc.Close)
+
+	pubNc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("pub connect: %v", err)
+	}
+	t.Cleanup(pubNc.Close)
+
+	sim := &Simulator{
+		nc:      pubNc,
+		mapID:   "test-map",
+		zoneReg: NewZoneRegistry(nil, 20, 20),
+		extMgr:  NewExtensionManager(logger),
+		logger:  logger,
+		tracer:  otel.Tracer("test"),
+		entities: map[string]*Entity{},
+		clients:  map[string]*Entity{},
+	}
+
+	makePlayer := func(id, cid string, x, y float32) *Entity {
+		e := &Entity{
+			ID:             id,
+			Position:       &pb.Position{X: x, Y: y},
+			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:   make(map[string]bool),
+			spawnedTo:      make(map[string]bool),
+		}
+		e.mobileZone = &Zone{
+			ID: "prox-" + id, Shape: ShapeCircle,
+			X: x - proximityRadius, Y: y - proximityRadius,
+			W: proximityRadius * 2, H: proximityRadius * 2,
+			Radius: proximityRadius, Mobility: "mobile",
+		}
+		sim.zoneReg.AddZone(e.mobileZone)
+		sim.entities[id] = e
+		sim.clients[cid] = e
+		return e
+	}
+
+	a := makePlayer("e_a", "c_a", 5, 5)
+	b := makePlayer("e_b", "c_b", 6, 5)
+	c := makePlayer("e_c", "c_c", 15, 15) // far away initially
+
+	type proxEvent struct {
+		EntityID string   `json:"entity_id"`
+		GroupID  string   `json:"group_id"`
+		Members  []string `json:"members"`
+	}
+
+	joinSub, _ := subNc.SubscribeSync("proximity.join")
+	leaveSub, _ := subNc.SubscribeSync("proximity.leave")
+	subNc.Flush()
+
+	// Tick 1: A and B are adjacent → both get proximity.join with same group ID.
+	sim.tick()
+	pubNc.Flush()
+
+	initialJoins := map[string]proxEvent{}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(initialJoins) < 2 && time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(500 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		initialJoins[ev.EntityID] = ev
+	}
+	if len(initialJoins) < 2 {
+		t.Fatalf("expected 2 initial proximity.join events, got %d", len(initialJoins))
+	}
+	groupID := initialJoins["e_a"].GroupID
+	if initialJoins["e_b"].GroupID != groupID {
+		t.Fatalf("A and B have different group IDs: %q vs %q",
+			initialJoins["e_a"].GroupID, initialJoins["e_b"].GroupID)
+	}
+
+	// Move C next to A and B.
+	c.Position.X = 7
+	c.Position.Y = 5
+
+	// Tick until clustering runs (tickCount%5==0).
+	for i := 0; i < 5; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	// C should get proximity.join with the SAME group ID.
+	// A and B should get NO new events (no leave, no join).
+	cJoined := false
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(200 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_a" || ev.EntityID == "e_b" {
+			t.Errorf("existing member %s got unexpected proximity.join on 3rd player join", ev.EntityID)
+		}
+		if ev.EntityID == "e_c" {
+			if ev.GroupID != groupID {
+				t.Errorf("C joined group %q, expected stable group %q", ev.GroupID, groupID)
+			}
+			cJoined = true
+		}
+	}
+	if !cJoined {
+		t.Fatal("C did not get proximity.join")
+	}
+
+	// Check no leave events fired for A or B during the join.
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		msg, err := leaveSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_a" || ev.EntityID == "e_b" {
+			t.Errorf("existing member %s got unexpected proximity.leave on 3rd player join", ev.EntityID)
+		}
+	}
+
+	// Move C far away.
+	c.Position.X = 15
+	c.Position.Y = 15
+
+	for i := 0; i < 5; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	// C should get proximity.leave. A and B should get NO events.
+	cLeft := false
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		msg, err := leaveSub.NextMsg(200 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_a" || ev.EntityID == "e_b" {
+			t.Errorf("existing member %s got unexpected proximity.leave on 3rd player departure", ev.EntityID)
+		}
+		if ev.EntityID == "e_c" {
+			cLeft = true
+		}
+	}
+	if !cLeft {
+		t.Fatal("C did not get proximity.leave")
+	}
+
+	// Check no join events fired for A or B during the leave.
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_a" || ev.EntityID == "e_b" {
+			t.Errorf("existing member %s got unexpected proximity.join on 3rd player departure", ev.EntityID)
+		}
+	}
+
+	_ = a
+	_ = b
+}

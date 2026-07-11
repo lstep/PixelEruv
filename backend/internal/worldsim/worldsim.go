@@ -1683,6 +1683,13 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 	}
 
 	// Assign group IDs and detect changes.
+	//
+	// Group IDs are stable across membership changes: if any member of the
+	// connected component already has a currentProximityGroup, that ID is
+	// reused. A new ID is minted only for brand-new groups (no member has
+	// an existing group). This prevents all existing members from being
+	// torn down and re-joined to a new LiveKit room when a player joins or
+	// leaves the group — only the joining/leaving player gets an event.
 	newGroup := make(map[string]string)       // entity_id -> group_id
 	groupMembers := make(map[string][]string) // group_id -> sorted member entity IDs
 	for _, comp := range groups {
@@ -1692,12 +1699,24 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 		}
 		sorted := append([]string(nil), comp...)
 		sort.Strings(sorted)
-		h := fnv.New64a()
+		// Reuse an existing group ID from any member already in a group.
+		// This keeps the LiveKit room stable when members join/leave.
+		var gid string
 		for _, id := range sorted {
-			h.Write([]byte(id))
-			h.Write([]byte{0}) // separator
+			if e, ok := s.entities[id]; ok && e.currentProximityGroup != "" {
+				gid = e.currentProximityGroup
+				break
+			}
 		}
-		gid := fmt.Sprintf("proxgroup-%016x", h.Sum64())
+		if gid == "" {
+			// Brand-new group: mint a new ID from the member hash.
+			h := fnv.New64a()
+			for _, id := range sorted {
+				h.Write([]byte(id))
+				h.Write([]byte{0}) // separator
+			}
+			gid = fmt.Sprintf("proxgroup-%016x", h.Sum64())
+		}
 		for _, id := range comp {
 			newGroup[id] = gid
 		}
