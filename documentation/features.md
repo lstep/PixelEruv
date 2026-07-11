@@ -462,9 +462,19 @@ the server stamps them, the client never authors them directly. Name
 tags follow the avatar each frame and sit at a fixed pixel offset above
 the sprite.
 
+Logged-in players also have their IP address and last-seen timestamp
+persisted in the `players` collection. Admins see this information in
+an expandable pillbox below the name tag — regular players never see
+IPs. The pusher conditionally subscribes admin users to a dedicated
+NATS channel that carries an `AdminInfoFrame` with every player's IP,
+so the data only reaches clients that should see it.
+
 **Storyboard:** Two characters on screen, each with a name tag above.
 Walk one character around — the tag follows. Point out that guests get
 a generated name and logged-in users get their PocketBase display name.
+Switch to an admin account — click a name tag to expand it into a
+pillbox showing the player's IP and last-seen time. Switch back to a
+regular account — the pillbox is gone, no IP is visible.
 
 ### 1.6 Mobile Support with Virtual Joystick
 
@@ -934,6 +944,27 @@ no rebuild.
 **Storyboard:** Show the PocketBase admin dashboard with the
 `sprite_bases` collection. Upload a new spritesheet PNG. Reload the
 browser — the new character appears in the character select grid.
+
+### 5.6 Cloudflare Proxy Support
+
+For deployments behind Cloudflare, a second example nginx config
+(`example.cloudflare.nginx.conf`) rewrites `$remote_addr` to the real
+visitor IP using `set_real_ip_from` and `real_ip_header
+CF-Connecting-IP`. Without this, the pusher's IP tracking stores
+Cloudflare's edge IP instead of the client's address. A companion
+script (`update-cloudflare-ips.sh`) downloads Cloudflare's current IP
+ranges and refreshes the `set_real_ip_from` block in the config —
+idempotent, so it can run from cron. Admins pick the config that
+matches their topology: `example.nginx.conf` for direct-to-internet,
+`example.cloudflare.nginx.conf` behind Cloudflare.
+
+**Storyboard:** Show two terminal windows. In the first, deploy with
+`example.nginx.conf` — point out that player IPs in the admin pillbox
+show the Cloudflare edge IP. In the second, swap to
+`example.cloudflare.nginx.conf`, run `update-cloudflare-ips.sh`, reload
+nginx — the admin pillbox now shows real visitor IPs. Narrate: "the
+right config for your topology. Cloudflare or direct — the admin sees
+the real IP either way."
 
 ---
 
