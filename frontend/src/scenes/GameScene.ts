@@ -4,6 +4,7 @@ import { AppearanceSchema, DisplayNameSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
 import { VideoBar } from "../ui/VideoBar";
+import { ScreenShareOverlay } from "../ui/ScreenShareOverlay";
 import { DayNightOverlay } from "../ui/DayNightOverlay";
 import { VirtualJoystick } from "../ui/VirtualJoystick";
 import type { MapAssets } from "../mapLoader";
@@ -348,6 +349,7 @@ export class GameScene extends Phaser.Scene {
   private myEntityId: string | null = null;
   private avClient: AvClient | null = null;
   private videoBar: VideoBar | null = null;
+  private screenShareOverlay: ScreenShareOverlay | null = null;
   // Display names by entity ID, populated from DisplayName component updates.
   // Used by the VideoBar to label tiles (including the local player's self-view).
   private displayNameByEntity = new Map<string, string>();
@@ -769,6 +771,11 @@ export class GameScene extends Phaser.Scene {
       getName: (entityId) => this.resolveDisplayName(entityId),
       getLocalEntityId: () => this.myEntityId,
     });
+    this.screenShareOverlay = new ScreenShareOverlay({
+      avClient: this.avClient,
+      getName: (entityId) => this.resolveDisplayName(entityId),
+      getLocalEntityId: () => this.myEntityId,
+    });
     const topMenu = this.game.registry.get("topMenu") as TopMenu | undefined;
     topMenu?.attachAvControls(this.avClient);
     const chatPanel = this.game.registry.get("chatPanel") as ChatPanel | undefined;
@@ -863,8 +870,10 @@ export class GameScene extends Phaser.Scene {
     // Clean up A/V video bar + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.videoBar?.destroy();
+      this.screenShareOverlay?.destroy();
       this.avClient?.close();
       this.videoBar = null;
+      this.screenShareOverlay = null;
       this.avClient = null;
       topMenu?.detachAvControls();
       window.removeEventListener("blur", clearMovementInput);

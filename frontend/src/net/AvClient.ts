@@ -14,6 +14,12 @@ export interface AvParticipant {
   hasCamera: boolean;
   hasMic: boolean;
   cameraTrack: Track | null;
+  hasScreenShare: boolean;
+  screenShareTrack: Track | null;
+  // True when the remote's screen-share publication is muted — happens when
+  // the sharer minimizes/hides the source window. Propagated via the
+  // visibility relay (see attachScreenSourceVisibilityRelay).
+  screenMuted: boolean;
 }
 
 export type AvParticipantsHandler = (participants: Map<string, AvParticipant>) => void;
@@ -43,7 +49,7 @@ export class AvClient {
   private lkModule: typeof import("livekit-client") | null = null;
   // Participants indexed by entity_id (LiveKit participant identity).
   private participants = new Map<string, AvParticipant>();
-  private onParticipantsChange: AvParticipantsHandler | null = null;
+  private participantsHandlers = new Set<AvParticipantsHandler>();
   // Increments on each join attempt so stale retry loops can bail out
   // when a newer token frame supersedes them.
   private connectGeneration = 0;
@@ -58,6 +64,18 @@ export class AvClient {
   private selectedCamId: string | null = null;
   // Selected audio output device ID, persisted across room connections.
   private selectedSpeakerId = localStorage.getItem(SPEAKER_ID_KEY);
+  // Screen share state — transient (not persisted). Screen sharing only
+  // starts on user click when a room is connected (getDisplayMedia requires
+  // a user gesture).
+  private screenShareEnabled = false;
+  // Relay state for the local screen-share source visibility. Browsers fire
+  // 'mute' on a getDisplayMedia MediaStreamTrack when the source window is
+  // minimized/hidden. LiveKit doesn't propagate this to remotes, so we relay
+  // it via track.mute()/unmute() (see attachScreenSourceVisibilityRelay).
+  private screenRelayMst: MediaStreamTrack | null = null;
+  private screenRelayOnMute: (() => void) | null = null;
+  private screenRelayOnUnmute: (() => void) | null = null;
+  private localScreenSourceHidden = false;
 
   constructor() {
     console.log(`AvClient: init micMuted=${this.micMuted} cameraEnabled=${this.cameraEnabled} noiseCancellation=${this.noiseCancellation}`);
@@ -92,7 +110,7 @@ export class AvClient {
   }
 
   setParticipantsHandler(handler: AvParticipantsHandler): void {
-    this.onParticipantsChange = handler;
+    this.participantsHandlers.add(handler);
   }
 
   setAudioBlockedHandler(handler: AvAudioBlockedHandler): void {
@@ -186,6 +204,93 @@ export class AvClient {
         this.room.startAudio().catch(() => {});
       }
     }
+  }
+
+  // setScreenShareEnabled toggles screen sharing. Requires an active room
+  // connection — getDisplayMedia needs a user gesture, so screen sharing can
+  // only start on button click when already in an A/V room. If no room is
+  // connected, the call is a no-op.
+  async setScreenShareEnabled(enabled: boolean): Promise<void> {
+    if (!this.room && enabled) {
+      console.log("AvClient.setScreenShareEnabled: no room connected, ignoring");
+      return;
+    }
+    this.screenShareEnabled = enabled;
+    if (!this.room) return;
+    const lk = await this.ensureModule();
+    try {
+      // CRITICAL: detach the visibility relay BEFORE asking LiveKit to stop
+      // the share. Otherwise, the MediaStreamTrack's 'mute' event (fired
+      // during disposal) is caught by our relay and propagated as track.mute()
+      // → remotes receive isMuted=true just before (or instead of) the
+      // unpublish signal, leaving them stuck on a paused/black state.
+      if (!enabled) {
+        this.detachScreenSourceVisibilityRelay();
+      }
+      await this.room.localParticipant.setScreenShareEnabled(enabled, { audio: true });
+      if (enabled) {
+        // Locate the freshly-published screen track and hook our relay.
+        for (const pub of this.room.localParticipant.trackPublications.values()) {
+          if (pub.source === lk.Track.Source.ScreenShare && pub.track) {
+            this.attachScreenSourceVisibilityRelay(pub.track as any);
+            break;
+          }
+        }
+      }
+      this.updateLocalParticipant();
+    } catch (err) {
+      this.screenShareEnabled = !enabled; // revert on failure
+      console.warn("AvClient: screen share failed:", err);
+      throw err;
+    }
+  }
+
+  isScreenShareEnabled(): boolean {
+    return this.screenShareEnabled;
+  }
+
+  // Browsers fire 'mute' on a getDisplayMedia MediaStreamTrack when the OS
+  // stops compositing the source (window minimized, app hidden). LiveKit's
+  // built-in handler only pauses the upstream after a 5s debounce and does
+  // NOT propagate isMuted to remote participants — so the other side keeps
+  // displaying the last frozen frame with no indication.
+  //
+  // We relay the native mute/unmute through LiveKit's own mute()/unmute() so
+  // RemoteTrackPublication.isMuted flips on every other client and the UI
+  // can show a "paused" placeholder.
+  private attachScreenSourceVisibilityRelay(track: import("livekit-client").LocalVideoTrack): void {
+    this.detachScreenSourceVisibilityRelay();
+    const mst = track.mediaStreamTrack;
+    if (!mst) return;
+    const onMute = () => {
+      this.localScreenSourceHidden = true;
+      void track.mute().catch(() => undefined);
+      this.updateLocalParticipant();
+    };
+    const onUnmute = () => {
+      this.localScreenSourceHidden = false;
+      void track.unmute().catch(() => undefined);
+      this.updateLocalParticipant();
+    };
+    mst.addEventListener("mute", onMute);
+    mst.addEventListener("unmute", onUnmute);
+    this.screenRelayMst = mst;
+    this.screenRelayOnMute = onMute;
+    this.screenRelayOnUnmute = onUnmute;
+    if (mst.muted) onMute();
+  }
+
+  private detachScreenSourceVisibilityRelay(): void {
+    if (this.screenRelayMst && this.screenRelayOnMute) {
+      this.screenRelayMst.removeEventListener("mute", this.screenRelayOnMute);
+    }
+    if (this.screenRelayMst && this.screenRelayOnUnmute) {
+      this.screenRelayMst.removeEventListener("unmute", this.screenRelayOnUnmute);
+    }
+    this.screenRelayMst = null;
+    this.screenRelayOnMute = null;
+    this.screenRelayOnUnmute = null;
+    this.localScreenSourceHidden = false;
   }
 
   // requestPermission triggers the browser's mic/camera permission prompt by
@@ -444,10 +549,30 @@ export class AvClient {
     this.room.on(lk.RoomEvent.TrackUnsubscribed, (_track: Track, _pub: TrackPublication, participant: RemoteParticipant) => {
       this.updateParticipant(participant.identity, participant);
     });
+    // TrackPublished/TrackUnpublished are different from Subscribed/Unsubscribed:
+    // a track can be unpublished (sender stops) without an immediate
+    // TrackUnsubscribed. Without these listeners, the participant state goes
+    // stale until another event fires (e.g. mic mute), causing a delayed UI
+    // update when a screen share stops.
+    this.room.on(lk.RoomEvent.TrackPublished, (_pub: TrackPublication, participant: RemoteParticipant) => {
+      this.updateParticipant(participant.identity, participant);
+    });
+    this.room.on(lk.RoomEvent.TrackUnpublished, (_pub: TrackPublication, participant: RemoteParticipant) => {
+      this.updateParticipant(participant.identity, participant);
+    });
     // Local track events — keep the local participant entry in sync so the
     // VideoBar self-view appears/disappears when the camera is toggled.
     this.room.on(lk.RoomEvent.LocalTrackPublished, () => this.updateLocalParticipant());
-    this.room.on(lk.RoomEvent.LocalTrackUnpublished, () => this.updateLocalParticipant());
+    this.room.on(lk.RoomEvent.LocalTrackUnpublished, (pub: TrackPublication) => {
+      // If the user stopped screen sharing via the browser's native UI
+      // (not through our toggle), the source MediaStreamTrack is gone —
+      // drop our relay listeners and sync state.
+      if (pub.source === lk.Track.Source.ScreenShare) {
+        this.detachScreenSourceVisibilityRelay();
+        this.screenShareEnabled = false;
+      }
+      this.updateLocalParticipant();
+    });
     // Browsers block audio playback not initiated by a user gesture. When
     // LiveKit's auto-play is blocked, notify the UI so it can show an
     // "Enable Audio" button (whose click calls room.startAudio()).
@@ -517,6 +642,8 @@ export class AvClient {
       this.leaveTimer = null;
     }
     if (this.room) {
+      this.detachScreenSourceVisibilityRelay();
+      this.screenShareEnabled = false;
       await this.room.disconnect();
       console.log(`AvClient: disconnected from room ${this.currentRoom}`);
       this.room = null;
@@ -531,11 +658,15 @@ export class AvClient {
     const hasCamera = participant.isCameraEnabled;
     const hasMic = participant.isMicrophoneEnabled;
     let cameraTrack: Track | null = null;
+    let screenShareTrack: Track | null = null;
+    let screenMuted = false;
     const pubs = participant.getTrackPublications();
     for (const pub of pubs.values()) {
       if (pub.track && pub.source === "camera") {
         cameraTrack = pub.track;
-        break;
+      } else if (pub.source === "screen_share") {
+        screenMuted = pub.isMuted;
+        if (pub.track) screenShareTrack = pub.track;
       }
     }
     this.participants.set(identity, {
@@ -544,13 +675,17 @@ export class AvClient {
       hasCamera,
       hasMic,
       cameraTrack,
+      hasScreenShare: !!screenShareTrack,
+      screenShareTrack,
+      screenMuted,
     });
     this.notifyChange();
   }
 
   private notifyChange(): void {
-    if (this.onParticipantsChange) {
-      this.onParticipantsChange(new Map(this.participants));
+    const snapshot = new Map(this.participants);
+    for (const handler of this.participantsHandlers) {
+      handler(snapshot);
     }
   }
 
@@ -563,10 +698,12 @@ export class AvClient {
     const identity = lp.identity;
     if (!identity) return;
     let cameraTrack: Track | null = null;
+    let screenShareTrack: Track | null = null;
     for (const pub of lp.getTrackPublications().values()) {
       if (pub.source === "camera" && pub.track) {
         cameraTrack = pub.track;
-        break;
+      } else if (pub.source === "screen_share" && pub.track) {
+        screenShareTrack = pub.track;
       }
     }
     this.participants.set(identity, {
@@ -575,6 +712,9 @@ export class AvClient {
       hasCamera: lp.isCameraEnabled,
       hasMic: lp.isMicrophoneEnabled,
       cameraTrack,
+      hasScreenShare: !!screenShareTrack,
+      screenShareTrack,
+      screenMuted: this.localScreenSourceHidden,
     });
     this.notifyChange();
   }
