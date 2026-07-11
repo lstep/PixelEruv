@@ -169,6 +169,10 @@ func main() {
 	})
 
 	// Subscribe to extension.walls.options for hot-reloadable config.
+	// The enabled option is read by register() on the next periodic
+	// re-register (every 3rd heartbeat). We don't call register() here
+	// because that would create a feedback loop: register → PublishOptions
+	// → options handler → register → ...
 	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
 		mu.Lock()
 		before := opts
@@ -179,10 +183,6 @@ func main() {
 			logger.Info("options updated", "enabled", opts.Enabled)
 		}
 		mu.Unlock()
-		// Re-register: if enabled is false, register with no gate triggers
-		// (effectively unblocking all walls). If true, re-register with
-		// current wall zones.
-		register()
 	})
 
 	// worldsim.ready fires when worldsim's subscriptions are live (on startup

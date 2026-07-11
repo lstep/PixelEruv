@@ -98,14 +98,18 @@ func (m *ExtensionManager) Register(data []byte) error {
 	m.logger.Info("extension registered", "id", msg.ExtensionID, "heartbeat", interval)
 
 	// If the extension declared an options schema, ensure a PB row exists
-	// with default values, then publish the current options back via NATS.
+	// with default values. Only publish options via NATS if a PB write
+	// occurred (created or backfilled) — this avoids a feedback loop on
+	// periodic re-registrations where PublishOptions would trigger the
+	// extension's options handler on every heartbeat.
 	if m.optsMgr != nil && len(msg.OptionsSchema) > 0 {
-		if _, err := m.optsMgr.EnsureOptions(msg.ExtensionID, msg.OptionsSchema); err != nil {
+		_, changed, err := m.optsMgr.EnsureOptions(msg.ExtensionID, msg.OptionsSchema)
+		if err != nil {
 			m.logger.Warn("ensure extension options", "err", err, "extension", msg.ExtensionID)
 		}
-	}
-	if m.optsMgr != nil {
-		m.optsMgr.PublishOptions(msg.ExtensionID)
+		if changed {
+			m.optsMgr.PublishOptions(msg.ExtensionID)
+		}
 	}
 
 	return nil
