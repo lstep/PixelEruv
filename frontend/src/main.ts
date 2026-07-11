@@ -78,6 +78,9 @@ async function bootstrap(): Promise<void> {
   game.registry.set("spriteBases", spriteBases);
   game.registry.set("topMenu", topMenu);
   game.registry.set("chatPanel", chatPanel);
+  // Track which map was initially loaded so onReady can detect if the
+  // server wants the player on a different map (saved map_id in PB).
+  game.registry.set("loadedMapName", import.meta.env.VITE_MAP_NAME || "main");
 }
 
 bootstrap();

@@ -28,6 +28,10 @@ export interface ConnectHandlers {
   // The server stamps display_name + timestamp; the client never authors
   // these directly. See documentation/plans/2026-07-07-chat-design.md.
   onChatMessage?: (msg: { channel: "global" | "proximity"; entityId: string; displayName: string; text: string; timestamp: number }) => void;
+  // Fired when a MapTransitionFrame is received — the server moved the
+  // player to a different map. The frontend should load the new tilemap
+  // and clear entities from the old map.
+  onMapTransition?: (msg: { mapId: string; spawnX: number; spawnY: number }) => void;
 }
 
 export interface SpawnEntityView {
@@ -57,6 +61,7 @@ export class WsClient {
   private url: string;
   private clientId: string | null = null;
   private entityId: string | null = null;
+  private mapId: string | null = null;
   private seq = 0;
   private handlers!: ConnectHandlers;
   // True after the first successful auth; used to dispatch onReady vs
@@ -120,6 +125,7 @@ export class WsClient {
           if (ar.ok) {
             this.clientId = ar.clientId;
             this.entityId = ar.entityId || null;
+            this.mapId = ar.mapId || null;
             this.reconnectAttempt = 0;
             connectSpan.setAttribute("client.id", ar.clientId);
             connectSpan.end();
@@ -203,6 +209,15 @@ export class WsClient {
         case "error":
           console.error("server error:", serverFrame.payload.value);
           break;
+        case "mapTransition": {
+          const mt = serverFrame.payload.value;
+          this.handlers.onMapTransition?.({
+            mapId: mt.mapId,
+            spawnX: Number(mt.spawnX),
+            spawnY: Number(mt.spawnY),
+          });
+          break;
+        }
       }
     };
 
@@ -374,6 +389,10 @@ export class WsClient {
 
   getEntityId(): string | null {
     return this.entityId;
+  }
+
+  getMapId(): string | null {
+    return this.mapId;
   }
 
   close(): void {

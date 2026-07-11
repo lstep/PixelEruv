@@ -107,10 +107,10 @@ type NetworkSession struct {
 type Simulator struct {
 	nc            *nats.Conn
 	app           core.App
-	mapID         string
-	mapFilename   string
-	mapData       *MapData
-	zoneReg       *ZoneRegistry
+	defaultMap    string
+	maps          map[string]*MapData       // mapName → MapData
+	zones         map[string]*ZoneRegistry  // mapName → ZoneRegistry
+	mapFilenames  map[string]string         // mapName → last known tiled_json filename
 	mapStore      *MapStore
 	userStore     *UserStore
 	spriteStore   *SpriteStore
@@ -138,7 +138,7 @@ type Simulator struct {
 	snapshotSeq uint32
 }
 
-func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (*Simulator, error) {
+func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logger) (*Simulator, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("worldsim"),
 		nats.ReconnectWait(2*time.Second),
@@ -161,24 +161,50 @@ func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (
 	if mapDir == "" {
 		mapDir = "./maps"
 	}
-	if err := mapStore.SeedMapIfMissing(mapID, mapDir, "default-map.json"); err != nil {
+	if err := mapStore.SeedMapIfMissing(defaultMap, mapDir, "default-map.json"); err != nil {
 		logger.Warn("map seed failed", "err", err, "dir", mapDir)
 	}
 
-	// Load map data (dimensions + collision grid + zones) from PocketBase.
-	mapData, err := mapStore.LoadMapData(mapID)
+	// Load all maps from PocketBase.
+	mapRecords, err := mapStore.ListAllMaps()
 	if err != nil {
-		logger.Warn("failed to load map from pocketbase, using fallback bounds",
-			"err", err, "map", mapID)
-		mapData = &MapData{Width: 20, Height: 20}
+		logger.Warn("failed to list maps", "err", err)
+	}
+	maps := make(map[string]*MapData)
+	zones := make(map[string]*ZoneRegistry)
+	mapFilenames := make(map[string]string)
+	for _, mr := range mapRecords {
+		md, err := mapStore.LoadMapData(mr.Name)
+		if err != nil {
+			logger.Warn("failed to load map", "err", err, "map", mr.Name)
+			continue
+		}
+		maps[mr.Name] = md
+		zones[mr.Name] = NewZoneRegistry(md.Zones, md.Width, md.Height)
+		mapFilenames[mr.Name] = mr.TiledJSONFilename
+		logger.Info("loaded map", "map", mr.Name, "width", md.Width, "height", md.Height)
+	}
+
+	// Fallback: if no maps were loaded, try loading the default map by name.
+	if len(maps) == 0 {
+		logger.Warn("no maps loaded, trying default map", "default_map", defaultMap)
+		md, err := mapStore.LoadMapData(defaultMap)
+		if err != nil {
+			logger.Warn("failed to load default map, using fallback bounds",
+				"err", err, "map", defaultMap)
+			md = &MapData{Width: 20, Height: 20}
+		}
+		maps[defaultMap] = md
+		zones[defaultMap] = NewZoneRegistry(md.Zones, md.Width, md.Height)
 	}
 
 	s := &Simulator{
 		nc:               nc,
 		app:              app,
-		mapID:            mapID,
-		mapData:          mapData,
-		zoneReg:          NewZoneRegistry(mapData.Zones, mapData.Width, mapData.Height),
+		defaultMap:       defaultMap,
+		maps:             maps,
+		zones:            zones,
+		mapFilenames:     mapFilenames,
 		mapStore:         mapStore,
 		userStore:        userStore,
 		spriteStore:      spriteStore,
@@ -194,7 +220,10 @@ func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (
 		entityIDToClient: make(map[string]string),
 	}
 
-	s.loadBaseEntities()
+	// Load base entities for all maps.
+	for mapName, md := range s.maps {
+		s.loadBaseEntities(mapName, md)
+	}
 
 	// Auto-seed the sprite_bases catalog from the bundled sprites directory on
 	// first run. Non-fatal: if PB is down or seeding fails, worldsim still
@@ -218,9 +247,10 @@ func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (
 	// is updated, replacing the 30-second polling checker. The hook fires
 	// in-process since PB is embedded.
 	app.OnRecordAfterUpdateSuccess("maps").BindFunc(func(e *core.RecordEvent) error {
-		if e.Record.GetString("name") == mapID {
-			s.logger.Info("map record updated via PB hook, reloading", "map", mapID)
-			s.checkMapReload()
+		mapName := e.Record.GetString("name")
+		if _, ok := s.maps[mapName]; ok {
+			s.logger.Info("map record updated via PB hook, reloading", "map", mapName)
+			s.checkMapReload(mapName)
 		}
 		return e.Next()
 	})
@@ -233,14 +263,14 @@ func New(natsURL, mapID string, app core.App, tickHz int, logger *slog.Logger) (
 // documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md
 // Part C). These have no NetworkSession and are inert until an extension
 // claims them via an input trigger.
-func (s *Simulator) loadBaseEntities() {
-	if s.mapData == nil {
+func (s *Simulator) loadBaseEntities(mapName string, md *MapData) {
+	if md == nil {
 		return
 	}
-	for _, pe := range s.mapData.Entities {
+	for _, pe := range md.Entities {
 		s.entities[pe.ID] = &Entity{
 			ID:             pe.ID,
-			Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: s.mapID},
+			Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: mapName},
 			EntityType:     pe.EntityType,
 			OwnerExtension: pe.OwnerExtension,
 			TriggerRadius:  pe.TriggerRadius,
@@ -255,7 +285,7 @@ func (s *Simulator) loadBaseEntities() {
 // "Entities" object layer after a map reload. Removes entities that no longer
 // exist (queuing them for destroy notification), updates existing ones, and
 // adds new ones. Caller must hold s.mu.
-func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
+func (s *Simulator) reloadBaseEntities(mapName string, newEntities []*PropEntity) {
 	newIDs := make(map[string]bool, len(newEntities))
 	for _, pe := range newEntities {
 		newIDs[pe.ID] = true
@@ -265,6 +295,9 @@ func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
 	for id, e := range s.entities {
 		if e.NetworkSession != nil {
 			continue // player avatar, not a base entity
+		}
+		if e.Position == nil || e.Position.MapId != mapName {
+			continue // belongs to a different map
 		}
 		if !newIDs[id] {
 			delete(s.entities, id)
@@ -277,7 +310,7 @@ func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
 		if e, ok := s.entities[pe.ID]; ok {
 			e.Position.X = pe.X
 			e.Position.Y = pe.Y
-			e.Position.MapId = s.mapID
+			e.Position.MapId = mapName
 			e.EntityType = pe.EntityType
 			e.OwnerExtension = pe.OwnerExtension
 			e.TriggerRadius = pe.TriggerRadius
@@ -286,7 +319,7 @@ func (s *Simulator) reloadBaseEntities(newEntities []*PropEntity) {
 		} else {
 			s.entities[pe.ID] = &Entity{
 				ID:             pe.ID,
-				Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: s.mapID},
+				Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: mapName},
 				EntityType:     pe.EntityType,
 				OwnerExtension: pe.OwnerExtension,
 				TriggerRadius:  pe.TriggerRadius,
@@ -311,13 +344,14 @@ func (s *Simulator) subscribe() error {
 			return
 		}
 		span.SetAttributes(attribute.String("client.id", ar.ClientId), attribute.String("user.sub", ar.GetSub()))
-		entityID := s.provisionClient(ctx, ar.ClientId, ar.GetSub())
-		// Respond with the entity ID so the pusher can include it in the
-		// AuthResultFrame sent to the client. The client needs the actual
-		// entity ID (which may differ from "e_"+clientID[2:] when a
-		// PocketBase-stored identity exists) to identify its own avatar.
+		entityID, mapID := s.provisionClient(ctx, ar.ClientId, ar.GetSub())
+		// Respond with the entity ID and map_id so the pusher can include
+		// them in the AuthResultFrame sent to the client. The client needs
+		// the actual entity ID (which may differ from "e_"+clientID[2:]
+		// when a PocketBase-stored identity exists) to identify its own
+		// avatar, and the map_id to know which tilemap to load initially.
 		if m.Reply != "" {
-			resp, _ := proto.Marshal(&pb.AuthResultFrame{EntityId: entityID})
+			resp, _ := proto.Marshal(&pb.AuthResultFrame{EntityId: entityID, MapId: mapID})
 			if err := s.nc.Publish(m.Reply, resp); err != nil {
 				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
 			}
@@ -442,18 +476,39 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe admin.map.integrity: %w", err)
 	}
 
+	// Extension-triggered map transitions: extensions can teleport a player
+	// to a different map via NATS (e.g. clicking a door, admin teleport).
+	// The target position is resolved by target_entity (beacon name) or, if
+	// omitted, a random spawn zone on the target map.
+	if _, err := s.nc.Subscribe("worldsim.entity.teleport", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.entity.teleport")
+		defer span.End()
+		var req struct {
+			EntityID     string `json:"entity_id"`
+			MapID        string `json:"map_id"`
+			TargetEntity string `json:"target_entity,omitempty"`
+		}
+		if err := json.Unmarshal(m.Data, &req); err != nil {
+			s.logger.WarnContext(ctx, "teleport unmarshal", "err", err)
+			return
+		}
+		s.transitionEntity(ctx, req.EntityID, req.MapID, req.TargetEntity)
+	}); err != nil {
+		return fmt.Errorf("subscribe worldsim.entity.teleport: %w", err)
+	}
+
 	// Announce readiness so extensions can register against a live subscriber
 	// instead of racing their initial publish (NATS Core drops publishes with
 	// no subscribers). Flush guarantees the broadcast is on the wire before
 	// the tick loop starts. Extensions also listen for this to re-register on
 	// worldsim restarts.
-	if err := s.nc.Publish("worldsim.ready", []byte(s.mapID)); err != nil {
+	if err := s.nc.Publish("worldsim.ready", []byte(s.defaultMap)); err != nil {
 		s.logger.Warn("publish worldsim.ready", "err", err)
 	}
 	if err := s.nc.Flush(); err != nil {
 		return fmt.Errorf("flush worldsim.ready: %w", err)
 	}
-	s.logger.Info("worldsim ready", "map", s.mapID)
+	s.logger.Info("worldsim ready", "default_map", s.defaultMap, "maps", len(s.maps))
 
 	return nil
 }
@@ -538,18 +593,26 @@ func (s *Simulator) publishHealth() {
 // If the user has a record in PocketBase (by oidc_sub), their persistent
 // entity_id and last position are restored. Otherwise a new user record
 // is created.
-func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) string {
+func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) (string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if existing, exists := s.clients[clientID]; exists {
-		return existing.ID
+		return existing.ID, existing.Position.MapId
 	}
 
 	defaultEntityID := "e_" + clientID[2:]
 	spawnX, spawnY := float32(10), float32(10)
-	if s.mapData != nil {
-		spawnX, spawnY = s.mapData.FindSpawnPoint(s.rng)
+	mapName := s.defaultMap
+	if mapName == "" {
+		// Fallback: pick the first loaded map.
+		for name := range s.maps {
+			mapName = name
+			break
+		}
+	}
+	if md := s.maps[mapName]; md != nil {
+		spawnX, spawnY = md.FindSpawnPoint(s.rng)
 	}
 
 	entityID := defaultEntityID
@@ -558,7 +621,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 
 	// Look up or create the user in PocketBase for persistent identity.
 	if s.userStore != nil && sub != "" && sub != "dev" {
-		user, err := s.userStore.FindOrCreateUser(sub, defaultEntityID)
+		user, err := s.userStore.FindOrCreateUser(sub, defaultEntityID, mapName)
 		if err != nil {
 			s.logger.WarnContext(ctx, "user store lookup failed, using defaults",
 				"err", err, "sub", sub)
@@ -569,6 +632,22 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
+			}
+			// Restore saved map if it exists and is loaded.
+			if user.MapID != "" {
+				if _, ok := s.maps[user.MapID]; ok {
+					mapName = user.MapID
+				}
+			}
+			// Assign a random sprite_base from the catalog if the user
+			// doesn't have one yet (new user or pre-existing record
+			// created before sprite selection was added). Persist it so
+			// the same sprite is used on reconnect.
+			if spriteBase == "" && s.spriteStore != nil {
+				if bases, err := s.spriteStore.ListBases(); err == nil && len(bases) > 0 {
+					spriteBase = bases[s.rng.IntN(len(bases))].ID
+					_ = s.userStore.UpdateSpriteBase(entityID, spriteBase)
+				}
 			}
 		}
 	}
@@ -585,7 +664,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 
 	e := &Entity{
 		ID:       entityID,
-		Position: &pb.Position{X: spawnX, Y: spawnY, MapId: s.mapID, Dir: 0},
+		Position: &pb.Position{X: spawnX, Y: spawnY, MapId: mapName, Dir: 0},
 		NetworkSession: &NetworkSession{
 			ClientID: clientID,
 			Input:    &pb.InputState{},
@@ -612,8 +691,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 		Radius:   proximityRadius,
 		Mobility: "mobile",
 	}
-	if s.zoneReg != nil {
-		s.zoneReg.AddZone(e.mobileZone)
+	if zr := s.zones[mapName]; zr != nil {
+		zr.AddZone(e.mobileZone)
 	}
 	s.entities[entityID] = e
 	s.clients[clientID] = e
@@ -621,8 +700,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub string) s
 
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
-		"x", e.Position.X, "y", e.Position.Y)
-	return entityID
+		"map", mapName, "x", e.Position.X, "y", e.Position.Y)
+	return entityID, mapName
 }
 
 func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
@@ -638,16 +717,22 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	// tokens). Without this, stale LiveKit participants linger after
 	// a client disconnects or reconnects.
 	clientIDForEvent := e.NetworkSession.ClientID
+	mapIDForEvent := ""
+	if e.Position != nil {
+		mapIDForEvent = e.Position.MapId
+	}
 	for zid := range e.currentZones {
-		s.publishZoneEvent(ctx, "zone.exit", e.ID, clientIDForEvent, zid)
+		s.publishZoneEvent(ctx, "zone.exit", e.ID, clientIDForEvent, zid, mapIDForEvent)
 	}
 	// Leave proximity group if any.
 	if e.currentProximityGroup != "" {
-		s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientIDForEvent, e.currentProximityGroup, nil)
+		s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientIDForEvent, e.currentProximityGroup, mapIDForEvent, nil)
 	}
 	// Remove the player's mobile proximity zone from the registry.
-	if e.mobileZone != nil && s.zoneReg != nil {
-		s.zoneReg.RemoveZone(e.mobileZone.ID)
+	if e.mobileZone != nil && e.Position != nil {
+		if zr := s.zones[e.Position.MapId]; zr != nil {
+			zr.RemoveZone(e.mobileZone.ID)
+		}
 	}
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
@@ -657,17 +742,166 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	// and the avatar sprite stays on screen after the player disconnects.
 	s.destroyedEntities = append(s.destroyedEntities, e.ID)
 	posX, posY := e.Position.X, e.Position.Y
+	mapID := e.Position.MapId
 	entityID := e.ID
 	s.mu.Unlock()
 
-	// Save position to PocketBase outside the lock (network I/O).
+	// Save position and map_id to PocketBase outside the lock (network I/O).
 	if s.userStore != nil {
 		if err := s.userStore.SavePosition(entityID, posX, posY); err != nil {
 			s.logger.WarnContext(ctx, "failed to save user position", "err", err, "entity", entityID)
 		}
+		if err := s.userStore.SaveMapID(entityID, mapID); err != nil {
+			s.logger.WarnContext(ctx, "failed to save user map_id", "err", err, "entity", entityID)
+		}
 	}
 
 	s.logger.InfoContext(ctx, "despawned entity", "entity", entityID, "client", clientID)
+}
+
+// handlePortalZone checks if the entered zone is a portal and triggers a map
+// transition if so. Portal zones are defined in Tiled with zone_type="portal",
+// target_map, target_x, and target_y properties. Caller must hold s.mu.
+func (s *Simulator) handlePortalZone(ctx context.Context, e *Entity, zoneID, clientID string) {
+	if e.NetworkSession == nil {
+		return // only player avatars can transition
+	}
+	zr := s.zones[e.Position.MapId]
+	if zr == nil {
+		return
+	}
+	// Find the zone in the registry to check its properties.
+	for _, z := range zr.zones {
+		if z.ID != zoneID {
+			continue
+		}
+		if z.PortalTargetMap == "" {
+			return // not a portal zone
+		}
+		// Validate the target map exists.
+		if _, ok := s.maps[z.PortalTargetMap]; !ok {
+			s.logger.WarnContext(ctx, "portal target map not found",
+				"entity", e.ID, "zone", zoneID, "target_map", z.PortalTargetMap)
+			return
+		}
+		s.transitionEntity(ctx, e.ID, z.PortalTargetMap, z.PortalTargetEntity)
+		return
+	}
+}
+
+// transitionEntity moves an entity to a different map. The spawn position on
+// the target map is resolved as follows:
+//   - If targetEntity is set, teleport to that named base entity's position
+//     (a "beacon"). Fails if the entity doesn't exist on the target map.
+//   - Otherwise, pick a random "spawn" zone on the target map (FindSpawnPoint).
+//
+// It:
+// 1. Resolves the spawn position (beacon or random spawn point).
+// 2. Removes the entity's mobile zone from the old map's zone registry.
+// 3. Changes Position.MapId, X, Y to the target.
+// 4. Re-adds the mobile zone to the new map's zone registry.
+// 5. Resets spawnedTo so the entity re-spawns for clients on the new map.
+// 6. Sends a MapTransitionFrame to the client so the frontend loads the new map.
+// 7. Persists the new map_id to PocketBase.
+func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, targetEntity string) {
+	s.mu.Lock()
+	e, ok := s.entities[entityID]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+
+	targetMD := s.maps[targetMap]
+	if targetMD == nil {
+		s.logger.WarnContext(ctx, "transition target map not loaded",
+			"entity", entityID, "target_map", targetMap)
+		s.mu.Unlock()
+		return
+	}
+
+	// Resolve spawn position on the target map.
+	var spawnX, spawnY float32
+	if targetEntity != "" {
+		beacon := targetMD.FindEntityByName(targetEntity)
+		if beacon == nil {
+			s.logger.WarnContext(ctx, "transition target entity not found on target map",
+				"entity", entityID, "target_map", targetMap, "target_entity", targetEntity)
+			s.mu.Unlock()
+			return
+		}
+		spawnX, spawnY = beacon.X, beacon.Y
+	} else {
+		spawnX, spawnY = targetMD.FindSpawnPoint(s.rng)
+	}
+
+	oldMap := e.Position.MapId
+
+	// Remove mobile zone from old map's zone registry.
+	if e.mobileZone != nil {
+		if zr := s.zones[oldMap]; zr != nil {
+			zr.RemoveZone(e.mobileZone.ID)
+		}
+	}
+
+	// Update position to the new map.
+	e.Position.MapId = targetMap
+	e.Position.X = spawnX
+	e.Position.Y = spawnY
+	e.dirtyPosition = true
+
+	// Clear current zones — the entity is on a new map with different zones.
+	e.currentZones = make(map[string]bool)
+
+	// Reset spawnedTo so the entity re-spawns for all clients on the new map.
+	e.spawnedTo = make(map[string]bool)
+
+	// Re-add mobile zone to the new map's zone registry.
+	if e.mobileZone != nil {
+		if zr := s.zones[targetMap]; zr != nil {
+			e.mobileZone.X = spawnX - proximityRadius
+			e.mobileZone.Y = spawnY + avatarFeetYOffset - proximityRadius
+			zr.AddZone(e.mobileZone)
+		}
+	}
+
+	// Queue a DestroyEntity for clients on the old map. Clients on the new
+	// map will get a SpawnEntity via the normal replication loop.
+	s.destroyedEntities = append(s.destroyedEntities, entityID)
+
+	clientID := ""
+	if e.NetworkSession != nil {
+		clientID = e.NetworkSession.ClientID
+	}
+	s.mu.Unlock()
+
+	// Send MapTransitionFrame to the client so the frontend loads the new map.
+	if clientID != "" {
+		frame := &pb.ServerFrame{
+			Payload: &pb.ServerFrame_MapTransition{
+				MapTransition: &pb.MapTransitionFrame{
+					MapId:  targetMap,
+					SpawnX: spawnX,
+					SpawnY: spawnY,
+				},
+			},
+		}
+		frameBytes, _ := proto.Marshal(frame)
+		subject := fmt.Sprintf("client.%s.replication", clientID)
+		if err := s.nc.Publish(subject, frameBytes); err != nil {
+			s.logger.WarnContext(ctx, "map transition publish", "err", err, "client", clientID)
+		}
+	}
+
+	// Persist the new map_id to PocketBase.
+	if s.userStore != nil {
+		if err := s.userStore.SaveMapID(entityID, targetMap); err != nil {
+			s.logger.WarnContext(ctx, "failed to save user map_id", "err", err, "entity", entityID)
+		}
+	}
+
+	s.logger.InfoContext(ctx, "entity transitioned to new map",
+		"entity", entityID, "old_map", oldMap, "new_map", targetMap,
+		"target_entity", targetEntity, "x", spawnX, "y", spawnY)
 }
 
 func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {
@@ -1069,10 +1303,16 @@ func (s *Simulator) tick() {
 		if e.currentZones == nil {
 			e.currentZones = make(map[string]bool)
 		}
+		// Look up the zone registry for this entity's current map.
+		zr := s.zones[e.Position.MapId]
+		if zr == nil {
+			e.currentZones = make(map[string]bool)
+			continue
+		}
 		// Evaluate zone membership at the avatar's feet (see
 		// avatarFeetYOffset) so enter/exit transitions match where the
 		// player visually crosses a zone boundary.
-		newZones := s.zoneReg.ZonesAtPoint(e.Position.X, e.Position.Y+avatarFeetYOffset)
+		newZones := zr.ZonesAtPoint(e.Position.X, e.Position.Y+avatarFeetYOffset)
 		newSet := make(map[string]bool, len(newZones))
 		for _, zid := range newZones {
 			newSet[zid] = true
@@ -1083,12 +1323,14 @@ func (s *Simulator) tick() {
 		}
 		for zid := range newSet {
 			if !e.currentZones[zid] {
-				s.publishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid)
+				s.publishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid, e.Position.MapId)
+				// Check for portal zones — handle map transition.
+				s.handlePortalZone(ctx, e, zid, clientID)
 			}
 		}
 		for zid := range e.currentZones {
 			if !newSet[zid] {
-				s.publishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid)
+				s.publishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid, e.Position.MapId)
 			}
 		}
 		e.currentZones = newSet
@@ -1172,6 +1414,12 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 	}
 
 	for _, e := range s.entities {
+		// Multi-map filtering: only replicate entities on the same map as the
+		// client. The client's own entity is always included.
+		if e != clientEntity && e.Position != nil && e.Position.MapId != clientEntity.Position.MapId {
+			continue
+		}
+
 		alreadySpawned := e.spawnedTo[clientID]
 
 		// Don't replicate the client's own entity via SpawnEntity/UpdateComponent
@@ -1305,26 +1553,30 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 	return true
 }
 
-// runIntegrityCheck validates the current map and logs any issues.
+// runIntegrityCheck validates all loaded maps and logs any issues.
 func (s *Simulator) runIntegrityCheck() {
-	results := CheckMapIntegrity(s.mapData)
-	LogIntegrityResults(s.logger, results, s.mapID)
+	for mapName, md := range s.maps {
+		results := CheckMapIntegrity(md)
+		LogIntegrityResults(s.logger, results, mapName)
+	}
 }
 
-// startMapReloadChecker periodically checks if the map has been updated in
-// PocketBase (by comparing the tiled_json filename). If changed, reloads the
-// map, rebuilds the zone registry, and publishes a map.updated event on NATS
-// so extensions can re-read the map too.
+// startMapReloadChecker periodically checks if any loaded map has been
+// updated in PocketBase (by comparing the tiled_json filename). If changed,
+// reloads that map, rebuilds its zone registry, and publishes a map.updated
+// event on NATS so extensions can re-read the map too.
 func (s *Simulator) startMapReloadChecker(ctx context.Context) {
-	// Get the initial filename.
-	currentInfo, err := s.mapStore.FetchMapRecordInfo(s.mapID)
-	if err != nil {
-		s.logger.Warn("map reload checker: failed to get initial record info", "err", err)
-	} else if currentInfo != nil {
-		s.mu.Lock()
-		s.mapFilename = currentInfo.TiledJSONFilename
-		s.mu.Unlock()
+	// Get the initial filenames for all loaded maps.
+	s.mu.Lock()
+	for mapName := range s.maps {
+		info, err := s.mapStore.FetchMapRecordInfo(mapName)
+		if err != nil {
+			s.logger.Warn("map reload checker: failed to get initial record info", "err", err, "map", mapName)
+			continue
+		}
+		s.mapFilenames[mapName] = info.TiledJSONFilename
 	}
+	s.mu.Unlock()
 
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -1333,24 +1585,23 @@ func (s *Simulator) startMapReloadChecker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.checkMapReload()
+			for mapName := range s.maps {
+				s.checkMapReload(mapName)
+			}
 		}
 	}
 }
 
 // checkMapReload fetches the current map record info and compares the
 // filename. If it changed, reloads the map.
-func (s *Simulator) checkMapReload() {
-	info, err := s.mapStore.FetchMapRecordInfo(s.mapID)
-	if err != nil {
+func (s *Simulator) checkMapReload(mapName string) {
+	info, err := s.mapStore.FetchMapRecordInfo(mapName)
+	if err != nil || info == nil {
 		return // PocketBase might be temporarily unreachable
-	}
-	if info == nil {
-		return
 	}
 
 	s.mu.Lock()
-	oldFilename := s.mapFilename
+	oldFilename := s.mapFilenames[mapName]
 	s.mu.Unlock()
 
 	if info.TiledJSONFilename == oldFilename {
@@ -1358,37 +1609,38 @@ func (s *Simulator) checkMapReload() {
 	}
 
 	s.logger.Info("map updated, reloading",
-		"map", s.mapID,
+		"map", mapName,
 		"old_file", oldFilename,
 		"new_file", info.TiledJSONFilename)
 
 	// Reload the map.
-	newMapData, err := s.mapStore.LoadMapData(s.mapID)
+	newMapData, err := s.mapStore.LoadMapData(mapName)
 	if err != nil {
-		s.logger.Error("map reload failed", "err", err)
+		s.logger.Error("map reload failed", "err", err, "map", mapName)
 		return
 	}
 
 	s.mu.Lock()
-	s.mapData = newMapData
-	s.zoneReg = NewZoneRegistry(newMapData.Zones, newMapData.Width, newMapData.Height)
-	s.mapFilename = info.TiledJSONFilename
-	s.reloadBaseEntities(newMapData.Entities)
-	// Re-add mobile proximity zones for all connected players — the registry
-	// was rebuilt from scratch above, wiping them.
+	s.maps[mapName] = newMapData
+	s.zones[mapName] = NewZoneRegistry(newMapData.Zones, newMapData.Width, newMapData.Height)
+	s.mapFilenames[mapName] = info.TiledJSONFilename
+	s.reloadBaseEntities(mapName, newMapData.Entities)
+	// Re-add mobile proximity zones for connected players on this map — the
+	// registry was rebuilt from scratch above, wiping them.
 	for _, e := range s.clients {
-		if e.mobileZone != nil {
-			s.zoneReg.AddZone(e.mobileZone)
+		if e.mobileZone != nil && e.Position != nil && e.Position.MapId == mapName {
+			s.zones[mapName].AddZone(e.mobileZone)
 		}
 	}
 	s.mu.Unlock()
 
 	// Run integrity check on the new map.
-	s.runIntegrityCheck()
+	results := CheckMapIntegrity(newMapData)
+	LogIntegrityResults(s.logger, results, mapName)
 
 	// Notify extensions that the map has been updated.
-	s.nc.Publish("map.updated", []byte(s.mapID))
-	s.logger.Info("map reloaded and map.updated event published", "map", s.mapID)
+	s.nc.Publish("map.updated", []byte(mapName))
+	s.logger.Info("map reloaded and map.updated event published", "map", mapName)
 }
 
 // startPeriodicIntegrityCheck runs the integrity check every 5 minutes.
@@ -1447,19 +1699,21 @@ func (s *Simulator) runMovementSystem() {
 		newX := e.Position.X + dx*speed
 		newY := e.Position.Y + dy*speed
 
-		if s.mapData != nil {
+		md := s.maps[e.Position.MapId]
+		zr := s.zones[e.Position.MapId]
+		if md != nil {
 			// Clamp to map bounds.
-			newX = clamp(newX, 0, float32(s.mapData.Width-1))
-			newY = clamp(newY, 0, float32(s.mapData.Height-1))
+			newX = clamp(newX, 0, float32(md.Width-1))
+			newY = clamp(newY, 0, float32(md.Height-1))
 
 			// Collision check: try X and Y independently so the avatar
 			// slides along walls instead of sticking. Swept (segment-vs-
 			// shape) checks catch walls thinner than the per-tick movement
 			// that point-sampling at the destination would miss.
-			if s.isMoveBlocked(e.Position.X, e.Position.Y, newX, e.Position.Y) {
+			if s.isMoveBlocked(zr, md, e.Position.X, e.Position.Y, newX, e.Position.Y) {
 				newX = e.Position.X
 			}
-			if s.isMoveBlocked(newX, e.Position.Y, newX, newY) {
+			if s.isMoveBlocked(zr, md, newX, e.Position.Y, newX, newY) {
 				newY = e.Position.Y
 			}
 			// Diagonal guard: if both axes moved, check the full diagonal
@@ -1469,7 +1723,7 @@ func (s *Simulator) runMovementSystem() {
 			// its X range). If the diagonal is blocked, revert Y to slide
 			// along the X axis.
 			if newX != e.Position.X && newY != e.Position.Y {
-				if s.isMoveBlocked(e.Position.X, e.Position.Y, newX, newY) {
+				if s.isMoveBlocked(zr, md, e.Position.X, e.Position.Y, newX, newY) {
 					newY = e.Position.Y
 				}
 			}
@@ -1539,7 +1793,7 @@ const playerCollisionRadius float32 = 0.1
 // movement distance cannot be tunneled through. The Walls tile-layer fallback
 // is checked at both endpoints' feet tiles (the tile grid is integer-indexed
 // and movement is < 1 tile/tick, so endpoint sampling suffices there).
-func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
+func (s *Simulator) isMoveBlocked(zr *ZoneRegistry, md *MapData, oldX, oldY, newX, newY float32) bool {
 	// Translate to feet space.
 	ofy := oldY + avatarFeetYOffset
 	nfy := newY + avatarFeetYOffset
@@ -1549,8 +1803,8 @@ func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
 	// Each shape is expanded by the player collision radius (Minkowski sum)
 	// so the feet center stops `r` tiles before the wall edge, matching the
 	// old 5-point sampling box width.
-	if s.zoneReg != nil {
-		for _, z := range s.zoneReg.zones {
+	if zr != nil {
+		for _, z := range zr.zones {
 			if !s.extMgr.IsZoneBlocked(z.ID) {
 				continue
 			}
@@ -1585,11 +1839,11 @@ func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
 	// Fallback: Walls tile layer collision (tile-based by nature), at both
 	// endpoints' feet tiles. Movement is < 1 tile/tick so if either endpoint
 	// is in a blocked tile, the segment crossed it.
-	if s.mapData != nil {
-		if s.mapData.IsBlocked(int(oldX+0.5), int(ofy+0.5)) {
+	if md != nil {
+		if md.IsBlocked(int(oldX+0.5), int(ofy+0.5)) {
 			return true
 		}
-		if s.mapData.IsBlocked(int(newX+0.5), int(nfy+0.5)) {
+		if md.IsBlocked(int(newX+0.5), int(nfy+0.5)) {
 			return true
 		}
 	}
@@ -1600,9 +1854,10 @@ func (s *Simulator) isMoveBlocked(oldX, oldY, newX, newY float32) bool {
 // Extensions subscribe to these subjects to observe zone transitions.
 // clientID is the player's client_id (empty for base entities without a
 // NetworkSession); extensions like ext-av use it to address token replies.
-func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID string) {
+// mapID is the map the entity is on when the zone event fires.
+func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID string) {
 	subject := event // event already contains the full subject (e.g. "zone.enter")
-	data := fmt.Sprintf(`{"entity_id":"%s","client_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, clientID, zoneID, s.mapID)
+	data := fmt.Sprintf(`{"entity_id":"%s","client_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, clientID, zoneID, mapID)
 	if err := s.nc.Publish(subject, []byte(data)); err != nil {
 		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
 	}
@@ -1623,16 +1878,17 @@ type proximityEventPayload struct {
 // graph, then publishes edge-triggered proximity.join/proximity.leave events
 // when a player's group assignment changes. Caller must hold s.mu.
 func (s *Simulator) runProximityClustering(ctx context.Context) {
-	if s.zoneReg == nil {
-		return
-	}
-
-	// Build a set of av_enabled zone IDs. Players inside these zones get
-	// zone-based A/V instead of proximity A/V (zones override proximity).
+	// Build a set of av_enabled zone IDs across all maps. Players inside
+	// these zones get zone-based A/V instead of proximity A/V.
 	avZones := make(map[string]bool)
-	for _, z := range s.zoneReg.zones {
-		if z.AvEnabled {
-			avZones[z.ID] = true
+	for _, zr := range s.zones {
+		if zr == nil {
+			continue
+		}
+		for _, z := range zr.zones {
+			if z.AvEnabled {
+				avZones[z.ID] = true
+			}
 		}
 	}
 
@@ -1752,12 +2008,12 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 
 		// Leave old group (if any).
 		if old != "" {
-			s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientID, old, nil)
+			s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientID, old, e.Position.MapId, nil)
 		}
 
 		// Join new group (if any).
 		if newG != "" {
-			s.publishProximityEvent(ctx, "proximity.join", e.ID, clientID, newG, groupMembers[newG])
+			s.publishProximityEvent(ctx, "proximity.join", e.ID, clientID, newG, e.Position.MapId, groupMembers[newG])
 		}
 
 		e.currentProximityGroup = newG
@@ -1770,7 +2026,7 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 		}
 		if e.currentProximityGroup != "" {
 			clientID := e.NetworkSession.ClientID
-			s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientID, e.currentProximityGroup, nil)
+			s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientID, e.currentProximityGroup, e.Position.MapId, nil)
 			e.currentProximityGroup = ""
 		}
 	}
@@ -1779,12 +2035,12 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 // publishProximityEvent publishes a proximity.join or proximity.leave event
 // to NATS. ext-av subscribes to these to mint LiveKit tokens for proximity
 // A/V rooms.
-func (s *Simulator) publishProximityEvent(ctx context.Context, event, entityID, clientID, groupID string, members []string) {
+func (s *Simulator) publishProximityEvent(ctx context.Context, event, entityID, clientID, groupID, mapID string, members []string) {
 	payload := proximityEventPayload{
 		EntityID: entityID,
 		ClientID: clientID,
 		GroupID:  groupID,
-		MapID:    s.mapID,
+		MapID:    mapID,
 		Members:  members,
 	}
 	data, err := json.Marshal(payload)

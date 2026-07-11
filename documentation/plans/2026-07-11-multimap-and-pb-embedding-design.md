@@ -7,7 +7,7 @@
 
 Two coupled changes:
 1. **Embed PocketBase in worldsim** — PB becomes a Go library inside worldsim, not a standalone container.
-2. **Multi-map support** — one worldsim instance loads and serves multiple maps grouped under a `worlds` collection.
+2. **Multi-map support** — one worldsim instance loads and serves multiple maps from PocketBase.
 
 These are coupled because PB embedding changes how worldsim accesses data, and multi-map changes what data worldsim loads. Doing both together avoids converting stores twice.
 
@@ -58,7 +58,7 @@ func main() {
     }
 
     // Create worldsim with PB app for data access
-    sim, err := worldsim.New(app, worldID, natsURL, tickHz, logger)
+    sim, err := worldsim.New(app, defaultMap, natsURL, tickHz, logger)
     if err != nil {
         log.Fatal(err)
     }
@@ -102,7 +102,7 @@ func init() {
 
 The JS migration files in `pb_migrations/` are deleted. Go migrations are compiled into the worldsim binary.
 
-**New collections** (`worlds`, `world_id` on `maps`, player preference columns) are added as new Go migration files.
+**New collections** (player preference columns) are added as new Go migration files. The `worlds` collection was initially planned but later removed — the default map is now controlled by the `DEFAULT_MAP` env var instead.
 
 ### Store refactoring
 
@@ -152,8 +152,8 @@ if admin == nil {
 PB Go event hooks fire in-process when records change. Worldsim registers hooks for the collections it cares about:
 
 ```go
-app.OnRecordAfterUpdateSuccess("worlds").BindFunc(func(e *core.RecordEvent) error {
-    // Update in-memory world options
+app.OnRecordAfterUpdateSuccess("players").BindFunc(func(e *core.RecordEvent) error {
+    // Update in-memory player options
     // Publish WorldOptionsFrame to all connected clients
     return e.Next()
 })
@@ -176,13 +176,7 @@ The frontend fetches map assets from PB's `/api/files/` endpoint. With PB embedd
 
 ### What is a "world"?
 
-A "world" is a virtual space instance — one deployment of a virtual office. It groups maps (floors, rooms, outdoor areas) that share the same policy. Even if there is only one world, the `worlds` collection earns its keep because:
-
-1. **It's where world-level options live.** `allow_anonymous`, `day_night_enabled` need a record to sit on. Without a `worlds` collection, you'd need a singleton config record or env vars — both worse.
-2. **It's the parent in the data model.** Maps belong to a world. Players spawn in a world. The world has a default map and spawn point.
-3. **Forward-compatible.** If you ever want a second world (staging, test, a different office), the schema already supports it. No migration needed.
-
-The `world_id` on maps is a foreign key that's always the same value today, but it's the natural relationship and costs nothing.
+A "world" is a virtual space instance — one deployment of a virtual office. The original design grouped maps under a `worlds` collection, but this was **simplified**: the `worlds` collection was removed entirely. The default map is now controlled by the `DEFAULT_MAP` env var (default `main`). Worldsim loads all maps from PocketBase on startup — no world filter. This keeps the data model simpler while still supporting multiple maps and portal transitions between them.
 
 ### Current state
 
@@ -195,10 +189,9 @@ The `world_id` on maps is a foreign key that's always the same value today, but 
 
 ### Target state
 
-- Worldsim boots with a `WORLD_ID` env var.
-- `worlds` collection: one row per world, with `default_map_id`, `spawn_x`, `spawn_y`, and world options.
-- `maps` collection: multiple rows, each with `world_id` foreign key.
-- `Simulator` loads all maps belonging to the world on startup.
+- Worldsim boots with a `DEFAULT_MAP` env var (default `main`).
+- `maps` collection: multiple rows, each with a `name`.
+- `Simulator` loads all maps from PocketBase on startup.
 - Entities are tagged with their current map via `Position.MapId`.
 - Movement, collision, zone detection use the entity's current map's data.
 - Players can transition between maps via portal zones.
@@ -206,46 +199,33 @@ The `world_id` on maps is a foreign key that's always the same value today, but 
 
 ### Data model
 
-#### `worlds` collection (new)
-
-| Field | Type | Notes |
-|---|---|---|
-| `id` | string (PB auto) | |
-| `name` | text, required | World name (shown in browser title) |
-| `default_map_id` | relation → `maps` | Spawn map for new players |
-| `spawn_x` | int | Default spawn tile X |
-| `spawn_y` | int | Default spawn tile Y |
-
-World options columns (added later in the options phase):
-| Field | Type | Notes |
-|---|---|---|
-| `allow_anonymous` | bool, default true | |
-| `day_night_enabled` | bool, default false | |
-
-#### `maps` collection (existing, add `world_id`)
+#### `maps` collection (existing)
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string (PB auto) | |
 | `name` | text, required | Human-readable map name |
-| `world_id` | relation → `worlds`, required | Parent world |
 | `tiled_json` | file, required | Tiled JSON |
 | `tilesets` | file, required, multiple | Tileset PNGs |
+
+> The `worlds` collection was removed. The default map is controlled by
+> the `DEFAULT_MAP` env var (default `main`). World options
+> (`allow_anonymous`, `day_night_enabled`) will be handled by env vars
+> or a future singleton config collection if needed.
 
 #### `players` collection (existing, add `map_id`)
 
 | Field | Type | Notes |
 |---|---|---|
-| `map_id` | text | Current map name (or PB record ID). Defaults to world's `default_map_id` on first login. |
+| `map_id` | text | Current map name (or PB record ID). Defaults to the `DEFAULT_MAP` env var on first login. |
 
 ### Simulator struct changes
 
 ```go
 type Simulator struct {
     nc      *nats.Conn
-    app     core.App          // PB instance for data access
-    worldID string            // replaces mapID
-    world   *WorldConfig      // world record (default map, spawn point, options)
+    app        core.App          // PB instance for data access
+    defaultMap string            // default map name (from DEFAULT_MAP env var)
 
     // Per-map data — keyed by map name
     maps    map[string]*MapData       // mapName → MapData
@@ -263,27 +243,20 @@ type Simulator struct {
 ```
 
 Key changes:
-- `mapID string` → `worldID string`
+- `mapID string` → `defaultMap string`
 - `mapData *MapData` → `maps map[string]*MapData`
 - `zoneReg *ZoneRegistry` → `zones map[string]*ZoneRegistry`
 - `pocketbaseURL string` → `app core.App`
-- New: `world *WorldConfig`
 
 ### Boot sequence
 
 ```go
-func New(app core.App, worldID, natsURL string, tickHz int, logger *slog.Logger) (*Simulator, error) {
+func New(app core.App, defaultMap, natsURL string, tickHz int, logger *slog.Logger) (*Simulator, error) {
     // 1. Connect to NATS
     nc, _ := nats.Connect(natsURL, ...)
 
-    // 2. Load world record from PB
-    world, err := loadWorld(app, worldID)
-    if err != nil {
-        return nil, fmt.Errorf("load world: %w", err)
-    }
-
-    // 3. Load all maps for this world from PB
-    mapRecords, err := loadMapsForWorld(app, worldID)
+    // 2. Load all maps from PB
+    mapRecords, err := loadAllMaps(app)
     maps := make(map[string]*MapData)
     zones := make(map[string]*ZoneRegistry)
     for _, mr := range mapRecords {
@@ -296,15 +269,15 @@ func New(app core.App, worldID, natsURL string, tickHz int, logger *slog.Logger)
         zones[mr.Name] = NewZoneRegistry(md.Zones, md.Width, md.Height)
     }
 
-    // 4. Auto-seed default map if no maps exist (same pattern as today)
+    // 3. Auto-seed default map if no maps exist (same pattern as today)
     if len(maps) == 0 {
-        seedDefaultMap(app, worldID, mapDir)
+        seedDefaultMap(app, defaultMap, mapDir)
         // reload
     }
 
-    // 5. Create simulator
+    // 4. Create simulator
     s := &Simulator{
-        nc: nc, app: app, worldID: worldID, world: world,
+        nc: nc, app: app, defaultMap: defaultMap,
         maps: maps, zones: zones,
         // ...
     }
@@ -403,12 +376,17 @@ This is actually simpler than AOI filtering — just a map name string compariso
 Maps define "portal" zones in Tiled with properties:
 - `zone_type: "portal"`
 - `target_map: "map2"` (name of the destination map)
-- `target_x: 15` (spawn X on destination map)
-- `target_y: 10` (spawn Y on destination map)
+- `target_entity: "door-north"` (optional — name of a base entity on the destination map to teleport to)
 
-When a player enters a portal zone, worldsim:
+When a player enters a portal zone, worldsim resolves the spawn position:
+- If `target_entity` is set, teleport to that named base entity's position
+  (a "beacon") on the destination map. Fails if the entity doesn't exist.
+- If `target_entity` is omitted, pick a random `spawn` zone on the
+  destination map (same as initial login).
+
+Then worldsim:
 1. Changes `Position.MapId` to the target map.
-2. Changes `Position.X`/`Position.Y` to the target coordinates.
+2. Changes `Position.X`/`Position.Y` to the resolved spawn coordinates.
 3. Despawns the entity from the old map's clients (sends `DestroyEntity` to clients on the old map).
 4. Spawns the entity on the new map (sends `SpawnEntity` to clients on the new map).
 5. Updates the player's `map_id` in PB for persistence.
@@ -422,29 +400,27 @@ Extensions can also trigger map transitions via NATS. This enables use cases lik
 
 ```
 Subject: worldsim.entity.teleport
-Payload: { "entity_id": "e_abc", "map_id": "map2", "x": 15, "y": 10 }
+Payload: { "entity_id": "e_abc", "map_id": "map2", "target_entity": "door-north" }
 ```
 
-Worldsim subscribes to `worldsim.entity.teleport` and handles it the same way as a portal zone — change position, despawn from old map, spawn on new map, send `MapTransitionFrame`, persist `map_id` to PB. The transition logic is shared in a single `transitionEntity(entityID, targetMap, x, y)` method called from both the portal zone handler and the NATS subscription handler.
+`target_entity` is optional — if omitted, the player spawns at a random
+`spawn` zone on the destination map. Worldsim subscribes to
+`worldsim.entity.teleport` and handles it the same way as a portal zone.
+The transition logic is shared in a single
+`transitionEntity(entityID, targetMap, targetEntity)` method called from
+both the portal zone handler and the NATS subscription handler.
 
 #### New proto frame: `MapTransitionFrame`
 
 ```protobuf
 message MapTransitionFrame {
   string map_id = 1;        // new map name
-  float spawn_x = 2;        // spawn X on new map
-  float spawn_y = 3;        // spawn Y on new map
-  string tiled_json_url = 4; // URL to fetch the new map's Tiled JSON
-  repeated TilesetInfo tilesets = 5; // tileset URLs for the new map
-}
-
-message TilesetInfo {
-  string name = 1;
-  string url = 2;
+  float spawn_x = 2;        // resolved spawn X on new map
+  float spawn_y = 3;        // resolved spawn Y on new map
 }
 ```
 
-Added to `ServerFrame` oneof. Worldsim publishes it on `client.<id>.replication` (same as `WorldOptionsFrame`).
+Added to `ServerFrame` oneof. Worldsim publishes it on `client.<id>.replication`. The frontend fetches the new map's Tiled JSON and tilesets from PocketBase by map name (same as initial load), so no URLs need to be in the frame.
 
 ### Frontend changes
 
@@ -491,9 +467,9 @@ Extensions no longer read PB directly. Worldsim broadcasts zone metadata on `wor
 ```json
 // Subject: worldsim.ready
 {
-  "world_id": "world1",
+  "default_map": "main",
   "maps": {
-    "map1": {
+    "main": {
       "zones": [
         {"id": "wall_north", "properties": {"zone_type": "wall"}},
         {"id": "av_room1", "properties": {"av_enabled": true, "zone_type": "av"}},
@@ -571,46 +547,40 @@ Goal: PB runs inside worldsim as a Go library. No functional change from the use
 5. **Update Docker** — remove PB container, mount `pb_data` volume on worldsim, update nginx routing
    → verify: `make up` starts stack, frontend loads map assets from worldsim's PB port
 
-6. **Register PB realtime hooks** — `OnRecordAfterUpdateSuccess` for `worlds`, `players`, extension settings collections
+6. **Register PB realtime hooks** — `OnRecordAfterUpdateSuccess` for `players`, extension settings collections
    → verify: changing a record in PB admin GUI fires the hook
 
 **Merge gate:** full stack works identically to before, but with no separate PB container. All existing tests pass.
 
 ### Phase 2: Multi-Map Support — branch `feat/multi-map`
 
-Goal: worldsim loads multiple maps grouped under a world. Players can transition between maps via portal zones and extension-triggered teleports.
+Goal: worldsim loads multiple maps from PocketBase. Players can transition between maps via portal zones and extension-triggered teleports.
 
-7. **Create `worlds` collection migration** — Go migration with `name`, `default_map_id`, `spawn_x`, `spawn_y`
-   → verify: collection visible in PB admin GUI
-
-8. **Add `world_id` to `maps` collection** — Go migration adding the foreign key
-   → verify: existing maps get a `world_id` (backfill or default)
-
-9. **Add `map_id` to `players` collection** — Go migration adding the column
+7. **Add `map_id` to `players` collection** — Go migration adding the column
    → verify: column visible in PB admin GUI
 
-10. **Refactor Simulator for multi-map** — `maps map[string]*MapData`, `zones map[string]*ZoneRegistry`, boot with `WORLD_ID`, load all maps for the world
-    → verify: worldsim loads multiple maps, entities spawn on correct maps
+8. **Refactor Simulator for multi-map** — `maps map[string]*MapData`, `zones map[string]*ZoneRegistry`, boot with `DEFAULT_MAP`, load all maps from PocketBase
+   → verify: worldsim loads multiple maps, entities spawn on correct maps
 
-11. **Update movement/collision/zone for per-map** — use `e.Position.MapId` to look up the correct map data
-    → verify: unit test — entities on different maps don't collide with each other's walls
+9. **Update movement/collision/zone for per-map** — use `e.Position.MapId` to look up the correct map data
+   → verify: unit test — entities on different maps don't collide with each other's walls
 
-12. **Update replication for per-map filtering** — only replicate entities on the same map as the client
+10. **Update replication for per-map filtering** — only replicate entities on the same map as the client
     → verify: unit test — client on map A doesn't receive spawns for entities on map B
 
-13. **Implement portal zones** — parse `zone_type: "portal"` from Tiled, handle in zone enter detection, transition entity
+11. **Implement portal zones** — parse `zone_type: "portal"` from Tiled, handle in zone enter detection, transition entity
     → verify: unit test — entering portal zone changes entity's map and position
 
-14. **Implement extension-triggered transitions** — subscribe to `worldsim.entity.teleport`, shared `transitionEntity()` method
+12. **Implement extension-triggered transitions** — subscribe to `worldsim.entity.teleport`, shared `transitionEntity()` method
     → verify: unit test — NATS teleport request changes entity's map and position
 
-15. **Add `MapTransitionFrame` to proto** — new ServerFrame variant
+13. **Add `MapTransitionFrame` to proto** — new ServerFrame variant
     → verify: `make proto` generates code
 
-16. **Frontend map transition** — `loadMapAssets(mapName)`, handle `MapTransitionFrame`, destroy/recreate tilemap
+14. **Frontend map transition** — `loadMapAssets(mapName)`, handle `MapTransitionFrame`, destroy/recreate tilemap
     → verify: manual test — walking into portal loads new map
 
-17. **Add `map_id` to `AuthResultFrame`** — frontend knows initial map
+15. **Add `map_id` to `AuthResultFrame`** — frontend knows initial map
     → verify: frontend loads correct map on connect
 
 **Merge gate:** worldsim loads multiple maps, portal zones and extension teleports work, frontend transitions between maps, replication is per-map.

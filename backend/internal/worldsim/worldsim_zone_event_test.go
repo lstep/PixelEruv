@@ -34,9 +34,9 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:     pubNc,
-		mapID:  "test-map",
-		logger: logger,
+		nc:      pubNc,
+		defaultMap: "test-map",
+		logger:  logger,
 		tracer: otel.Tracer("test"),
 	}
 
@@ -55,8 +55,8 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 
 	// Publish a zone.enter for a player (with client_id) and a base entity
 	// (without client_id).
-	sim.publishZoneEvent(context.Background(), "zone.enter", "e_player", "c_abc", "z1")
-	sim.publishZoneEvent(context.Background(), "zone.enter", "e_base", "", "z1")
+	sim.publishZoneEvent(context.Background(), "zone.enter", "e_player", "c_abc", "z1", "test-map")
+	sim.publishZoneEvent(context.Background(), "zone.enter", "e_base", "", "z1", "test-map")
 	pubNc.Flush()
 
 	got := map[string]zoneEventPayload{}

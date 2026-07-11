@@ -133,18 +133,24 @@ does not implement trigger behavior itself.
    JetStream KV, and registers the entity in the ECS. See
    `08-auth-and-identity.md` §5.
 10. **Player position/status persistence** — periodically and on despawn,
-    writes the player avatar's position and status to JetStream KV so they
-    survive a kernel restart.
-11. **Cross-shard communication** — publishes volatile entity state on shared
+    writes the player avatar's position and status (including current
+    `map_id`) to JetStream KV so they survive a kernel restart.
+11. **Map transitions** — when a player enters a portal zone
+    (`zone_type=portal` with `target_map`/optional `target_entity`) or an
+    extension publishes `worldsim.entity.teleport`, the kernel resolves the
+    spawn position on the destination map, moves the entity, and sends a
+    `MapTransitionFrame` to the client. See `15-maps-and-tiled.md` § Portal
+    zones.
+12. **Cross-shard communication** — publishes volatile entity state on shared
     NATS Core subjects so other World Sim shards can relay to their interested
     clients.
-12. **Extension lifecycle management** — accepts registration from external
+13. **Extension lifecycle management** — accepts registration from external
     extension processes, hosts their entities in the ECS, validates their
     commands (same rules as its own), applies component updates, tracks
     heartbeats, and broadcasts client input events to registered extensions
     (input trigger model). See
     `18-extensions.md`.
-13. **Token revocation execution** — when an admin kick is requested (by an
+14. **Token revocation execution** — when an admin kick is requested (by an
     admin extension or authorized client), the kernel publishes
     `admin.revoke.<entity_id>` (the Pusher closes the WebSocket) and despawns
     the entity from the ECS. The *policy* (who can kick, under what
@@ -171,9 +177,9 @@ World Simulator process
 ├── NATS subscriber       (client input, connect/disconnect, extension updates, trigger replies)
 ├── NATS publisher        (per-client replication batches, cross-shard events, trigger queries)
 ├── JetStream KV client   (player positions, player status; reads zone state)
-├── PocketBase (embedded) (Go SDK DAO: user lookup/create, world config, audit)
+├── PocketBase (embedded) (Go SDK DAO: user lookup/create, map config, audit)
 ├── SpriteStore           (auto-seeds sprite_bases from SPRITES_DIR on first run)
-├── MapStore              (auto-seeds the default maps record from MAP_DIR on first run)
+├── MapStore              (auto-seeds the default maps record from MAP_DIR on first run; loads all maps from PocketBase)
 └── Extension manager     (registration, entity hosting, heartbeat, input trigger dispatch)
 ```
 
@@ -277,8 +283,11 @@ The tick rate is a trade-off:
 
 ### Tile grid
 
-The kernel loads the Tiled map (see `15-maps-and-tiled.md`) at startup. The tile
-grid provides:
+The kernel loads all Tiled maps from PocketBase
+(see `15-maps-and-tiled.md`) at startup. Each map has its own tile grid,
+spatial index, trigger registry, and zone registry — movement, collision,
+zone detection, and replication all operate **per-map**. The tile grid
+provides:
 
 - **Walkable tiles** — which tiles an entity can occupy.
 - **Base entities** — entities defined in the Tiled map (doors, decorations,
@@ -686,10 +695,11 @@ positions, user status) is in JetStream KV. On restart, the World Sim:
 1. Reads all JetStream KV keys for its shard(s) to reconstruct zone state and
    user positions.
 2. Reads world configuration from PocketBase (embedded, via Go SDK).
-3. Auto-seeds the default `maps` record from `MAP_DIR` if no record named
-   `MAP_ID` exists (idempotent; runs after `app.Bootstrap()` and
-   `app.RunAllMigrations()` complete). Mirrors the `SpriteStore.SeedIfEmpty`
-   pattern for `sprite_bases`.
+3. Auto-seeds the default `maps` record from `MAP_DIR` if no record
+   named after the configured `DEFAULT_MAP` exists (idempotent; runs after
+   `app.Bootstrap()` and `app.RunAllMigrations()` complete). Mirrors the
+   `SpriteStore.SeedIfEmpty` pattern for `sprite_bases`. Worldsim then
+   loads all maps from PocketBase.
 4. Re-registers all entities in the ECS.
 5. Resumes the tick loop.
 6. Sends a fresh initial snapshot to each connected client (via NATS → Pusher
@@ -762,6 +772,7 @@ shared memory.
 | `entity.<entity_id>.move` | Extension | Movement target | On demand |
 | `trigger.<trigger_id>.reply` | Extension | Gate trigger reply (for `ask`) | Async |
 | `input.<input_type>.reply.<req_id>` | Extension | Input trigger response (updates, consume_items) | Async |
+| `worldsim.entity.teleport` | Extension | `{"entity_id", "map_id", "target_entity"}` — teleport an entity to a map (portal-style transition triggered by an extension) | On demand |
 
 ### Outbound (published by the World Sim)
 

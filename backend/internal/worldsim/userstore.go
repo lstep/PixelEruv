@@ -15,6 +15,7 @@ type UserRecord struct {
 	PosX        float32
 	PosY        float32
 	SpriteBase  string
+	MapID       string
 }
 
 // UserStore handles PocketBase player lookups and persistence via the
@@ -29,7 +30,7 @@ func NewUserStore(app core.App) *UserStore {
 
 // FindOrCreateUser looks up a player by oidc_sub. If not found, creates a new
 // record with a generated entity_id and default spawn position.
-func (s *UserStore) FindOrCreateUser(sub, entityID string) (*UserRecord, error) {
+func (s *UserStore) FindOrCreateUser(sub, entityID, defaultMapID string) (*UserRecord, error) {
 	user, err := s.findBySub(sub)
 	if err != nil {
 		return nil, fmt.Errorf("find user: %w", err)
@@ -43,6 +44,7 @@ func (s *UserStore) FindOrCreateUser(sub, entityID string) (*UserRecord, error) 
 		EntityID: entityID,
 		PosX:     10,
 		PosY:     10,
+		MapID:    defaultMapID,
 	}
 	if err := s.create(user); err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
@@ -62,6 +64,20 @@ func (s *UserStore) SavePosition(entityID string, x, y float32) error {
 
 	record.Set("pos_x", x)
 	record.Set("pos_y", y)
+	return s.app.Save(record)
+}
+
+// SaveMapID updates the player's current map in PocketBase.
+func (s *UserStore) SaveMapID(entityID, mapID string) error {
+	record, err := s.findByEntityIDRecord(entityID)
+	if err != nil {
+		return fmt.Errorf("find user for map_id save: %w", err)
+	}
+	if record == nil {
+		return nil
+	}
+
+	record.Set("map_id", mapID)
 	return s.app.Save(record)
 }
 
@@ -126,6 +142,9 @@ func (s *UserStore) create(user *UserRecord) error {
 	record.Set("entity_id", user.EntityID)
 	record.Set("pos_x", user.PosX)
 	record.Set("pos_y", user.PosY)
+	if user.MapID != "" {
+		record.Set("map_id", user.MapID)
+	}
 	if err := s.app.Save(record); err != nil {
 		return err
 	}
@@ -143,5 +162,6 @@ func recordToUser(r *core.Record) *UserRecord {
 		PosX:        float32(r.GetFloat("pos_x")),
 		PosY:        float32(r.GetFloat("pos_y")),
 		SpriteBase:  r.GetString("sprite_base"),
+		MapID:       r.GetString("map_id"),
 	}
 }

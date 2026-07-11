@@ -20,7 +20,7 @@ func TestMovement_CornerSkipThinWall(t *testing.T) {
 	s := newMovementSim(zones)
 	e := &Entity{
 		ID:       "e_test",
-		Position: &pb.Position{X: 4.9, Y: 3.9}, // feet (4.9, 4.9)
+		Position: &pb.Position{X: 4.9, Y: 3.9, MapId: "map1"}, // feet (4.9, 4.9)
 		NetworkSession: &NetworkSession{
 			ClientID: "c_test",
 			Input:    &pb.InputState{Right: true, Down: true},
@@ -54,7 +54,7 @@ func TestMovement_PlayerRadius(t *testing.T) {
 	s := newMovementSim(zones)
 	e := &Entity{
 		ID:       "e_test",
-		Position: &pb.Position{X: 4.5, Y: 5.0}, // feet (4.5, 6.0)
+		Position: &pb.Position{X: 4.5, Y: 5.0, MapId: "map1"}, // feet (4.5, 6.0)
 		NetworkSession: &NetworkSession{
 			ClientID: "c_test",
 			Input:    &pb.InputState{Right: true},
@@ -78,12 +78,12 @@ func TestMovement_PlayerRadius(t *testing.T) {
 
 func newMovementSim(zones []*Zone) *Simulator {
 	s := &Simulator{
-		zoneReg: NewZoneRegistry(zones, 20, 20),
-		extMgr:  NewExtensionManager(slog.Default()),
-		mapData: &MapData{Width: 20, Height: 20, Collision: make([][]bool, 20)},
+		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		extMgr: NewExtensionManager(slog.Default()),
 	}
-	for y := range s.mapData.Collision {
-		s.mapData.Collision[y] = make([]bool, 20)
+	for y := range s.maps["map1"].Collision {
+		s.maps["map1"].Collision[y] = make([]bool, 20)
 	}
 	s.extMgr.Register([]byte(`{"extension_id":"ext-walls","heartbeat_interval_s":10}`))
 	s.extMgr.RegisterTriggers([]byte(`{

@@ -1,0 +1,71 @@
+{
+    "activeFile": "map2.tmx",
+    "expandedProjectPaths": [
+        "."
+    ],
+    "fileStates": {
+        "": {
+            "scaleInDock": 1,
+            "scaleInEditor": 1
+        },
+        "default-map.json": {
+            "scale": 0.8658854166666666,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 480.433082706767,
+                "y": 320.4812030075188
+            }
+        },
+        "default-map.json#modern-office": {
+            "scaleInDock": 1
+        },
+        "default-map.json#room-builder-office": {
+            "scaleInDock": 1
+        },
+        "main.tmx": {
+            "expandedObjectLayers": [
+                4
+            ],
+            "scale": 0.8312499999999999,
+            "selectedLayer": 0,
+            "viewCenter": {
+                "x": 454.7368421052632,
+                "y": 326.61654135338347
+            }
+        },
+        "main.tmx#modern-office": {
+            "scaleInDock": 1
+        },
+        "main.tmx#room-builder-office": {
+            "scaleInDock": 1
+        },
+        "map2.tmx": {
+            "expandedObjectLayers": [
+                4,
+                6
+            ],
+            "scale": 0.8658854166666666,
+            "selectedLayer": 6,
+            "viewCenter": {
+                "x": 487.36240601503766,
+                "y": 320.4812030075188
+            }
+        },
+        "map2.tmx#modern-office": {
+            "scaleInDock": 1
+        },
+        "map2.tmx#room-builder-office": {
+            "scaleInDock": 1
+        }
+    },
+    "openFiles": [
+        "main.tmx",
+        "map2.tmx",
+        "default-map.json"
+    ],
+    "recentFiles": [
+        "main.tmx",
+        "default-map.json",
+        "map2.tmx"
+    ]
+}

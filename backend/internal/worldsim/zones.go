@@ -21,10 +21,17 @@ type Zone struct {
 	W, H       float32       // width/height in tile coords (rect/circle bounding box)
 	Radius     float32       // circle radius in tile coords
 	Polygon    [][2]float32  // polygon vertices in tile coords (relative to X,Y)
-	ZoneType   string        // "meeting", "water", "work", "silent", etc.
+	ZoneType   string        // "meeting", "water", "work", "silent", "portal", etc.
 	IsExclusive bool
 	Mobility   string        // "static" or "mobile"
 	AvEnabled  bool          // zone has av_enabled Tiled property → zone-based A/V room
+	// Portal fields — set when ZoneType == "portal".
+	// PortalTargetMap is the target map name (required).
+	// PortalTargetEntity is the name of a base entity on the target map
+	// to teleport to (e.g. a "beacon"). If empty, the player spawns at a
+	// random "spawn" zone on the target map.
+	PortalTargetMap    string
+	PortalTargetEntity string
 }
 
 // Contains returns true if the point (px, py) in tile coords is inside the zone.

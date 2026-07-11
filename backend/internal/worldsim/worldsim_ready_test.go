@@ -56,12 +56,12 @@ func TestWorldsimReady_PublishedAfterSubscribe(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	// Build a minimal Simulator with only the fields subscribe() touches at
-	// setup time (nc, extMgr, mapID, logger, tracer). This avoids the
+	// setup time (nc, extMgr, defaultMap, logger, tracer). This avoids the
 	// LoadMap PocketBase retry (30s) that New() would trigger.
 	sim := &Simulator{
-		nc:     nc,
-		mapID:  "test-map",
-		extMgr: NewExtensionManager(logger),
+		nc:      nc,
+		defaultMap: "test-map",
+		extMgr:  NewExtensionManager(logger),
 		logger: logger,
 		tracer: otel.Tracer("test"),
 	}

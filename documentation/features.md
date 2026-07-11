@@ -374,7 +374,10 @@ Maps are authored in [Tiled](https://www.mapeditor.org/) and exported as
 JSON. Tile size is 32×32. The worldsim auto-seeds a default office map
 on first startup from the `maps/` directory — no manual upload needed
 for a fresh deploy. Maps can be replaced or added via the PocketBase
-admin dashboard.
+admin dashboard. Worldsim loads all maps from PocketBase on
+startup. Players transition between maps via **portal zones**
+(`zone_type=portal` with `target_map` and optional `target_entity`) —
+walk into a portal and the client seamlessly loads the destination map.
 
 **Storyboard:** Show the Tiled editor with the office map open. Switch
 to the browser running Pixel Eruv — the same map renders. Point at the
@@ -911,13 +914,12 @@ spent."
 
 On first startup, the worldsim auto-seeds the sprite catalog
 (`sprite_bases` collection) from the `SPRITES_DIR` directory and the
-default map from the `MAP_DIR` directory into PocketBase. Both seeds
-are idempotent — once a record exists, it is never overwritten. This
-means a fresh deploy boots with a playable world without any manual
-setup.
+default map from the `MAP_DIR` directory into PocketBase. Both seeds are idempotent — once a record
+exists, it is never overwritten. This means a fresh deploy boots with a
+playable world without any manual setup.
 
 **Storyboard:** Wipe the PocketBase volume. Start the stack. Show the
-worldsim logs: "seeding sprite_bases... done," "seeding map1... done."
+worldsim logs: "seeding sprite_bases... done," "seeding main... done."
 Open the browser — the world is fully populated with sprites and a
 map. No manual upload was needed.
 

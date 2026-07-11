@@ -216,7 +216,7 @@ rotated polygon rasterization for the MVP.
 | Property | Type | Required | Default | Notes |
 |---|---|---|---|---|
 | `is_exclusive` | bool | no | false | If true, AOI filter excludes entities inside from non-members' replication. Static zones only. |
-| `zone_type` | string | no | (none) | Hint for the owning extension: `"meeting"`, `"water"`, `"work"`, `"silent"`, etc. The kernel does not interpret this. |
+| `zone_type` | string | no | (none) | Hint for the owning extension: `"meeting"`, `"water"`, `"work"`, `"silent"`, etc. The kernel interprets `"spawn"` (player spawn point) and `"portal"` (map transition with `target_map`/`target_entity`) directly; other values are passed to extensions. |
 | `mobility` | string | no | `"static"` | `"static"` or `"mobile"`. Mobile zones must be circles (ellipses with `width == height`). |
 | `follows_entity_id` | string | only if `mobility: "mobile"` | — | The entity ID (or entity name from Tiled) the zone follows. |
 | `owner_ext` | string | no | (derived at runtime) | Which extension owns this zone. Can be left unset and claimed at init time. |

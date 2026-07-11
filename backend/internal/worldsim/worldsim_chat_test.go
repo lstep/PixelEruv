@@ -34,8 +34,8 @@ func newChatTestSim(t *testing.T) (*Simulator, *nats.Conn) {
 
 	sim := &Simulator{
 		nc:              pubNc,
-		mapID:           "test-map",
-		zoneReg:         NewZoneRegistry(nil, 20, 20),
+		defaultMap:      "test-map",
+		zones:           map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
 		extMgr:          NewExtensionManager(logger),
 		logger:          logger,
 		tracer:          otel.Tracer("test"),
@@ -272,7 +272,7 @@ func TestChat_GuestDisplayName(t *testing.T) {
 	// the real path. It needs a userStore == nil (no PocketBase in tests)
 	// so the guest branch is taken.
 	sim.userStore = nil
-	entityID := sim.provisionClient(t.Context(), "c_abc12345", "")
+	entityID, _ := sim.provisionClient(t.Context(), "c_abc12345", "")
 	if entityID == "" {
 		t.Fatal("provisionClient returned empty entity id")
 	}
