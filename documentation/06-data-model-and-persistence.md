@@ -59,6 +59,9 @@ Keyed by the Dex `sub` claim (stable OIDC subject identifier). Called
 | `pos_y` | float | Last saved Y position (tiles) |
 | `map_id` | string | Current map name. Defaults to the `DEFAULT_MAP` env var on first login. Updated on map transitions. |
 | `sprite_base` | string | PocketBase record ID in `sprite_bases` selecting the character sheet |
+| `ip` | string (max 64) | Last seen client IP. Updated on every connect. |
+| `last_seen_at` | number (unix) | Timestamp of last connection. Updated on every connect. |
+| `is_admin` | bool | Admin flag. Admins see IP/device info in name tags and are exempt from bans. |
 | `created_at` | datetime | Auto |
 | `updated_at` | datetime | Auto |
 
@@ -125,6 +128,21 @@ extension via NATS (`extension.<id>.options`).
 | `options` | json | JSON object of option name → value (e.g. `{"enabled": true}`) |
 | `created_at` | datetime | Auto |
 | `updated_at` | datetime | Auto |
+
+#### `bans`
+Ban records checked by the world simulator during entity provisioning.
+Each record bans a single identifier. To ban a user by multiple
+identifiers (e.g. both `oidc_sub` and `device_id`), add multiple
+records. See `08-auth-and-identity.md` §9 for the ban check flow.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string (PB auto) | PocketBase record ID |
+| `target_type` | string (required, max 20) | `oidc_sub`, `ip`, or `device_id` |
+| `target_value` | string (required, max 200) | The identifier value to match |
+| `reason` | string (max 500) | Human-readable ban reason, shown to the banned user |
+| `banned_until` | number (unix) | Expiry timestamp. 0 or empty = permanent. |
+| `banned_by` | string (max 200) | Optional: admin's `oidc_sub` who issued the ban |
 
 ---
 
