@@ -626,6 +626,36 @@ message in Global — it appears for all players. Switch to Nearby —
 show messages only from players in proximity range. Type in Nearby —
 only nearby players see it.
 
+### 2.11 Screen Sharing
+
+Players can share their screen with everyone in their current A/V group
+(zone or proximity). A "Screen" toggle button in the top menu calls
+`setScreenShareEnabled`, which uses `getDisplayMedia` with system audio
+capture enabled. The shared screen is published to the same LiveKit room
+as audio/video, so no backend changes are needed — the existing ext-av
+token grants already allow publishing any track type.
+
+The shared screen appears as a floating, draggable, resizable DOM window
+with three modes: windowed (default, with a bottom-right resize handle),
+fullscreen, and minimized (small thumbnail). Multiple simultaneous screen
+shares are supported — each gets its own cascaded window.
+
+A visibility relay hooks the `MediaStreamTrack`'s `mute`/`unmute` events
+(fired by the browser when the source window is minimized or hidden) and
+propagates them via LiveKit's `track.mute()`/`track.unmute()`. Without
+this, remote viewers would see a frozen black frame with no indication.
+With the relay, a "Screen share paused" overlay appears instead.
+
+**Storyboard:** Two browser tabs in the same zone. Click "Screen" in tab
+one — the browser's screen picker appears. Select a window — a floating
+window appears in tab two showing the shared content. Drag the window by
+its title bar — it moves. Drag the bottom-right corner — it resizes.
+Click "Fullscreen" — it fills the screen. Click "Minimize" — it shrinks
+to a thumbnail. Click the thumbnail — it restores. Minimize the shared
+window on the sharer's side — the remote viewer shows "Screen share
+paused." Click "Stop" — the floating window disappears in the remote
+viewer.
+
 ---
 
 ## Part 3 — Architecture
