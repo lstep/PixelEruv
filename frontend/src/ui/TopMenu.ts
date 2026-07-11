@@ -173,6 +173,21 @@ export class TopMenu {
       "width:100%;padding:6px 8px;font-size:14px;background:#1a1a2e;color:#fff;border:1px solid #555;border-radius:6px;";
     this.dropdown.appendChild(camSelect);
 
+    // Speaker (audio output) selector — only shown when the browser supports
+    // setSinkId (Chrome/Firefox/Edge). Safari and most mobile browsers don't.
+    let speakerSelect: HTMLSelectElement | null = null;
+    if ("setSinkId" in document.createElement("audio")) {
+      const speakerLabel = document.createElement("div");
+      speakerLabel.textContent = "Speakers";
+      speakerLabel.style.cssText = "color:#aaa;font-size:12px;margin-top:12px;margin-bottom:6px;";
+      this.dropdown.appendChild(speakerLabel);
+
+      speakerSelect = document.createElement("select");
+      speakerSelect.style.cssText =
+        "width:100%;padding:6px 8px;font-size:14px;background:#1a1a2e;color:#fff;border:1px solid #555;border-radius:6px;";
+      this.dropdown.appendChild(speakerSelect);
+    }
+
     // Populate device lists when the dropdown opens (labels may have
     // become available after the first permission grant).
     const refreshDevices = async () => {
@@ -193,6 +208,16 @@ export class TopMenu {
         opt.textContent = d.label;
         camSelect.appendChild(opt);
       }
+      if (speakerSelect) {
+        const speakers = await this.avClient.getDevices("audiooutput");
+        speakerSelect.innerHTML = "";
+        for (const d of speakers) {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.textContent = d.label;
+          speakerSelect.appendChild(opt);
+        }
+      }
     };
 
     micSelect.addEventListener("change", () => {
@@ -201,6 +226,11 @@ export class TopMenu {
     camSelect.addEventListener("change", () => {
       this.avClient?.switchDevice("videoinput", camSelect.value);
     });
+    if (speakerSelect) {
+      speakerSelect.addEventListener("change", () => {
+        this.avClient?.switchDevice("audiooutput", speakerSelect!.value);
+      });
+    }
 
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
