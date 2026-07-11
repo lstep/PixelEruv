@@ -1,26 +1,26 @@
 // ext-av is a first-party extension that bridges zone and proximity events
 // to LiveKit. It mints LiveKit tokens and publishes them to clients via
 // client.<id>.av_token NATS subjects (forwarded by the pusher as
-// AvTokenFrame). It reads the Tiled map from PocketBase to find zones with
-// the av_enabled property.
+// AvTokenFrame). It receives zone metadata from worldsim via NATS
+// (worldsim.zones broadcast + worldsim.zones.get request-reply) to find
+// zones with the av_enabled property.
 //
 // Subscriptions:
 //   - zone.enter / zone.exit: A/V-enabled zone rooms
 //   - proximity.join / proximity.leave: ad-hoc proximity rooms
-//   - map.updated: refresh A/V zone set
-//   - worldsim.ready: register on startup
+//   - worldsim.zones: live zone metadata updates (map reload)
+//   - worldsim.ready: fetch zone metadata + register on startup
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -34,18 +34,15 @@ type registerMsg struct {
 	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
 }
 
-type tiledMapJSON struct {
-	Layers []struct {
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Objects []struct {
-			Name       string `json:"name"`
-			Properties []struct {
-				Name  string      `json:"name"`
-				Value interface{} `json:"value"`
-			} `json:"properties"`
-		} `json:"objects"`
-	} `json:"layers"`
+// zoneMeta is the zone metadata entry from worldsim.zones.
+type zoneMeta struct {
+	ID        string `json:"id"`
+	AvEnabled bool   `json:"av_enabled"`
+}
+
+// zoneMetadataMsg is the payload of worldsim.zones / worldsim.zones.get.
+type zoneMetadataMsg struct {
+	Maps map[string][]zoneMeta `json:"maps"`
 }
 
 // zoneEventPayload is the NATS payload for zone.enter/zone.exit.
@@ -77,8 +74,6 @@ type avTokenMsg struct {
 func main() {
 	startTime := time.Now()
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
-	pbURL := envOr("POCKETBASE_URL", "http://localhost:8090")
-	mapID := envOr("MAP_ID", "main")
 	extID := envOr("EXTENSION_ID", "av")
 	livekitURL := envOr("LIVEKIT_URL", "ws://localhost:7880")
 	// LIVEKIT_PUBLIC_URL is the URL the browser uses to reach LiveKit.
@@ -111,27 +106,44 @@ func main() {
 	}
 	defer nc.Close()
 
-	// avZones is the set of zone IDs with av_enabled=true. Updated on
-	// startup and on map.updated.
-	var avZones []string
+	var mu sync.Mutex
+	avZones := make(map[string]bool) // zone_id -> true
 
-	refreshAVZones := func() {
-		zones, err := findAVZones(pbURL, mapID, logger)
-		if err != nil {
-			logger.Warn("find A/V zones failed", "err", err)
+	// updateAVZones parses a zoneMetadataMsg and updates the local A/V zone set.
+	updateAVZones := func(data []byte) {
+		var msg zoneMetadataMsg
+		if err := json.Unmarshal(data, &msg); err != nil {
+			logger.Warn("parse zone metadata", "err", err)
 			return
 		}
-		avZones = zones
-		logger.Info("found A/V zones", "count", len(avZones), "zones", avZones)
+		mu.Lock()
+		avZones = make(map[string]bool)
+		for _, zones := range msg.Maps {
+			for _, z := range zones {
+				if z.AvEnabled {
+					avZones[z.ID] = true
+				}
+			}
+		}
+		mu.Unlock()
+		logger.Info("A/V zones updated", "count", len(avZones))
 	}
 
 	isAVZone := func(zoneID string) bool {
-		for _, z := range avZones {
-			if z == zoneID {
-				return true
-			}
+		mu.Lock()
+		defer mu.Unlock()
+		return avZones[zoneID]
+	}
+
+	// fetchZoneMetadata requests zone metadata from worldsim via NATS
+	// request-reply.
+	fetchZoneMetadata := func() {
+		reply, err := nc.Request("worldsim.zones.get", nil, 5*time.Second)
+		if err != nil {
+			logger.Warn("request zone metadata", "err", err)
+			return
 		}
-		return false
+		updateAVZones(reply.Data)
 	}
 
 	// mintToken creates a LiveKit JWT for the given room and identity.
@@ -239,10 +251,10 @@ func main() {
 		logger.Info("proximity A/V leave", "entity", ev.EntityID, "group", ev.GroupID)
 	})
 
-	// --- Subscribe to map.updated ---
-	nc.Subscribe("map.updated", func(m *nats.Msg) {
-		logger.Info("map.updated received, refreshing A/V zones", "map", string(m.Data))
-		refreshAVZones()
+	// --- Subscribe to worldsim.zones for live zone updates (map reload) ---
+	nc.Subscribe("worldsim.zones", func(m *nats.Msg) {
+		logger.Info("worldsim.zones received, updating A/V zones")
+		updateAVZones(m.Data)
 	})
 
 	// --- Extension registration protocol ---
@@ -260,8 +272,8 @@ func main() {
 
 	readyCh := make(chan struct{}, 1)
 	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
-		logger.Info("worldsim ready, registering", "map", string(m.Data))
-		refreshAVZones()
+		logger.Info("worldsim ready, fetching zone metadata", "map", string(m.Data))
+		fetchZoneMetadata()
 		publishReg()
 		select {
 		case readyCh <- struct{}{}:
@@ -269,22 +281,12 @@ func main() {
 		}
 	})
 
-	// Wait for PocketBase to be up.
-	for i := 0; i < 30; i++ {
-		_, err := findAVZones(pbURL, mapID, logger)
-		if err == nil {
-			break
-		}
-		logger.Warn("waiting for pocketbase", "attempt", i+1, "err", err)
-		time.Sleep(time.Second)
-	}
-
 	// Wait for worldsim.ready before initial registration.
 	select {
 	case <-readyCh:
 	case <-time.After(10 * time.Second):
-		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
-		refreshAVZones()
+		logger.Warn("worldsim.ready not received, fetching zone metadata anyway", "id", extID)
+		fetchZoneMetadata()
 		publishReg()
 	}
 
@@ -307,69 +309,6 @@ func main() {
 			ticks++
 		}
 	}
-}
-
-// findAVZones reads the Tiled map from PocketBase and returns zone IDs
-// that have the av_enabled property set to true.
-func findAVZones(pbURL, mapName string, logger *slog.Logger) ([]string, error) {
-	pbURL = strings.TrimRight(pbURL, "/")
-
-	resp, err := http.Get(fmt.Sprintf("%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1", pbURL, mapName))
-	if err != nil {
-		return nil, fmt.Errorf("fetch map record: %w", err)
-	}
-	defer resp.Body.Close()
-	var record struct {
-		Items []struct {
-			ID           string `json:"id"`
-			CollectionID string `json:"collectionId"`
-			TiledJSON    string `json:"tiled_json"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-		return nil, fmt.Errorf("decode map record: %w", err)
-	}
-	if len(record.Items) == 0 {
-		return nil, fmt.Errorf("no map found: %s", mapName)
-	}
-
-	r := record.Items[0]
-	jsonURL := fmt.Sprintf("%s/api/files/%s/%s/%s", pbURL, r.CollectionID, r.ID, r.TiledJSON)
-
-	jresp, err := http.Get(jsonURL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch tiled json: %w", err)
-	}
-	defer jresp.Body.Close()
-	body, err := io.ReadAll(jresp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read tiled json: %w", err)
-	}
-
-	var tiled tiledMapJSON
-	if err := json.Unmarshal(body, &tiled); err != nil {
-		return nil, fmt.Errorf("parse tiled json: %w", err)
-	}
-
-	var avZones []string
-	for _, layer := range tiled.Layers {
-		if strings.ToLower(layer.Name) != "zones" || layer.Type != "objectgroup" {
-			continue
-		}
-		for _, obj := range layer.Objects {
-			if obj.Name == "" {
-				continue
-			}
-			for _, prop := range obj.Properties {
-				if prop.Name == "av_enabled" {
-					if b, ok := prop.Value.(bool); ok && b {
-						avZones = append(avZones, obj.Name)
-					}
-				}
-			}
-		}
-	}
-	return avZones, nil
 }
 
 // slugify replaces non-alphanumeric characters with hyphens, since LiveKit

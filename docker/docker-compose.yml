@@ -115,8 +115,6 @@ services:
       - worldsim
     environment:
       NATS_URL: "nats://nats:4222"
-      POCKETBASE_URL: "http://worldsim:8090"
-      MAP_ID: "main"
     restart: unless-stopped
 
   ext-props:
@@ -160,8 +158,6 @@ services:
       - livekit
     environment:
       NATS_URL: "nats://nats:4222"
-      POCKETBASE_URL: "http://worldsim:8090"
-      MAP_ID: "main"
       LIVEKIT_URL: "ws://livekit:7880"
       # Browser-facing URL (host-exposed port, not Docker-internal). Defaults
       # to ws://<PUBLIC_HOST>:7880; override in .env to proxy through nginx

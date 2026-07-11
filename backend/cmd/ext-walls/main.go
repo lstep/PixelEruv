@@ -1,18 +1,17 @@
 // ext-walls is a first-party extension that registers block gate triggers
-// on wall zones. It reads the Tiled map from PocketBase, finds zones with
-// zone_type "wall", and tells the worldsim to block movement into them.
+// on wall zones. It receives zone metadata from worldsim via NATS
+// (worldsim.zones broadcast + worldsim.zones.get request-reply), finds zones
+// with zone_type "wall", and tells the worldsim to block movement into them.
 package main
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
-	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,38 +19,33 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-type tiledMapJSON struct {
-	Layers []struct {
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Objects []struct {
-			Name       string `json:"name"`
-			Properties []struct {
-				Name  string      `json:"name"`
-				Value interface{} `json:"value"`
-			} `json:"properties"`
-		} `json:"objects"`
-	} `json:"layers"`
-}
-
 type registerMsg struct {
 	ExtensionID        string `json:"extension_id"`
 	HeartbeatIntervalS int    `json:"heartbeat_interval_s"`
 }
 
 type triggerMsg struct {
-	ExtensionID   string `json:"extension_id"`
-	GateTriggers  []struct {
+	ExtensionID  string `json:"extension_id"`
+	GateTriggers []struct {
 		ZoneID   string `json:"zone_id"`
 		Behavior string `json:"behavior"`
 	} `json:"gate_triggers"`
 }
 
+// zoneMeta is the zone metadata entry from worldsim.zones.
+type zoneMeta struct {
+	ID       string `json:"id"`
+	ZoneType string `json:"zone_type"`
+}
+
+// zoneMetadataMsg is the payload of worldsim.zones / worldsim.zones.get.
+type zoneMetadataMsg struct {
+	Maps map[string][]zoneMeta `json:"maps"`
+}
+
 func main() {
 	startTime := time.Now()
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
-	pbURL := envOr("POCKETBASE_URL", "http://localhost:8090")
-	mapID := envOr("MAP_ID", "main")
 	extID := "walls"
 	heartbeatS := 10
 
@@ -75,26 +69,50 @@ func main() {
 	trigSubject := fmt.Sprintf("extension.%s.register_triggers", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
 
-	// register reads wall zones from the map and publishes register + trigger
-	// messages. Called at startup, on map.updated, and periodically.
-	register := func() {
-		zones, err := findWallZones(pbURL, mapID, logger)
+	var mu sync.Mutex
+	wallZones := make(map[string]bool) // zone_id -> true
+
+	// fetchZoneMetadata requests zone metadata from worldsim via NATS
+	// request-reply and updates the local wall zone set.
+	fetchZoneMetadata := func() {
+		reply, err := nc.Request("worldsim.zones.get", nil, 5*time.Second)
 		if err != nil {
-			logger.Warn("find wall zones failed", "err", err)
+			logger.Warn("request zone metadata", "err", err)
 			return
 		}
-		logger.Info("found wall zones", "count", len(zones), "zones", zones)
+		var msg zoneMetadataMsg
+		if err := json.Unmarshal(reply.Data, &msg); err != nil {
+			logger.Warn("parse zone metadata", "err", err)
+			return
+		}
+		mu.Lock()
+		wallZones = make(map[string]bool)
+		for _, zones := range msg.Maps {
+			for _, z := range zones {
+				if z.ZoneType == "wall" {
+					wallZones[z.ID] = true
+				}
+			}
+		}
+		mu.Unlock()
+		logger.Info("fetched zone metadata", "wall_zones", len(wallZones))
+	}
 
+	// register publishes register + trigger messages based on the current
+	// wall zone set.
+	register := func() {
+		mu.Lock()
 		var gateTriggers []struct {
 			ZoneID   string `json:"zone_id"`
 			Behavior string `json:"behavior"`
 		}
-		for _, zid := range zones {
+		for zid := range wallZones {
 			gateTriggers = append(gateTriggers, struct {
 				ZoneID   string `json:"zone_id"`
 				Behavior string `json:"behavior"`
 			}{ZoneID: zid, Behavior: "block"})
 		}
+		mu.Unlock()
 
 		regData, _ := json.Marshal(registerMsg{
 			ExtensionID:        extID,
@@ -110,20 +128,33 @@ func main() {
 		logger.Info("registered walls extension", "triggers", len(gateTriggers))
 	}
 
-	// Subscribe to map.updated so we re-read the map when it changes.
-	if _, err := nc.Subscribe("map.updated", func(m *nats.Msg) {
-		logger.Info("map.updated received, re-reading map", "map", string(m.Data))
+	// Subscribe to worldsim.zones for live zone updates (e.g. map reload).
+	nc.Subscribe("worldsim.zones", func(m *nats.Msg) {
+		var msg zoneMetadataMsg
+		if err := json.Unmarshal(m.Data, &msg); err != nil {
+			logger.Warn("parse worldsim.zones", "err", err)
+			return
+		}
+		mu.Lock()
+		wallZones = make(map[string]bool)
+		for _, zones := range msg.Maps {
+			for _, z := range zones {
+				if z.ZoneType == "wall" {
+					wallZones[z.ID] = true
+				}
+			}
+		}
+		mu.Unlock()
+		logger.Info("zone metadata updated via broadcast", "wall_zones", len(wallZones))
 		register()
-	}); err != nil {
-		logger.Error("subscribe map.updated", "err", err)
-	}
+	})
 
 	// worldsim.ready fires when worldsim's subscriptions are live (on startup
-	// and on restart). Re-register whenever it fires so we never race the
-	// initial publish.
+	// and on restart). Fetch zone metadata and register.
 	readyCh := make(chan struct{}, 1)
 	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
-		logger.Info("worldsim ready, registering", "map", string(m.Data))
+		logger.Info("worldsim ready, fetching zone metadata", "map", string(m.Data))
+		fetchZoneMetadata()
 		register()
 		select {
 		case readyCh <- struct{}{}:
@@ -131,24 +162,14 @@ func main() {
 		}
 	})
 
-	// Wait until PocketBase is up (register() reads the map from it).
-	for i := 0; i < 30; i++ {
-		zones, err := findWallZones(pbURL, mapID, logger)
-		if err == nil {
-			_ = zones // register() will re-fetch, but we just need to know PB is up
-			break
-		}
-		logger.Warn("waiting for pocketbase", "attempt", i+1, "err", err)
-		time.Sleep(time.Second)
-	}
-
 	// Wait for worldsim.ready before the initial registration. Fall back to
-	// registering directly after a timeout (e.g. worldsim was already up and
-	// we missed the broadcast on extension restart).
+	// requesting zone metadata directly after a timeout (e.g. worldsim was
+	// already up and we missed the broadcast on extension restart).
 	select {
 	case <-readyCh:
 	case <-time.After(10 * time.Second):
-		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
+		logger.Warn("worldsim.ready not received, fetching zone metadata anyway", "id", extID)
+		fetchZoneMetadata()
 		register()
 	}
 
@@ -172,71 +193,6 @@ func main() {
 			ticks++
 		}
 	}
-}
-
-// findWallZones reads the Tiled map from PocketBase and returns zone IDs
-// that have zone_type "wall".
-func findWallZones(pbURL, mapName string, logger *slog.Logger) ([]string, error) {
-	pbURL = strings.TrimRight(pbURL, "/")
-
-	// Fetch map record.
-	resp, err := http.Get(fmt.Sprintf("%s/api/collections/maps/records?filter=(name=\"%s\")&perPage=1", pbURL, mapName))
-	if err != nil {
-		return nil, fmt.Errorf("fetch map record: %w", err)
-	}
-	defer resp.Body.Close()
-	var record struct {
-		Items []struct {
-			ID           string `json:"id"`
-			CollectionID string `json:"collectionId"`
-			TiledJSON    string `json:"tiled_json"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&record); err != nil {
-		return nil, fmt.Errorf("decode map record: %w", err)
-	}
-	if len(record.Items) == 0 {
-		return nil, fmt.Errorf("no map found: %s", mapName)
-	}
-
-	r := record.Items[0]
-	jsonURL := fmt.Sprintf("%s/api/files/%s/%s/%s", pbURL, r.CollectionID, r.ID, r.TiledJSON)
-
-	// Fetch Tiled JSON.
-	jresp, err := http.Get(jsonURL)
-	if err != nil {
-		return nil, fmt.Errorf("fetch tiled json: %w", err)
-	}
-	defer jresp.Body.Close()
-	body, err := io.ReadAll(jresp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read tiled json: %w", err)
-	}
-
-	var tiled tiledMapJSON
-	if err := json.Unmarshal(body, &tiled); err != nil {
-		return nil, fmt.Errorf("parse tiled json: %w", err)
-	}
-
-	var wallZones []string
-	for _, layer := range tiled.Layers {
-		if strings.ToLower(layer.Name) != "zones" || layer.Type != "objectgroup" {
-			continue
-		}
-		for _, obj := range layer.Objects {
-			if obj.Name == "" {
-				continue
-			}
-			for _, prop := range obj.Properties {
-				if prop.Name == "zone_type" {
-					if s, ok := prop.Value.(string); ok && s == "wall" {
-						wallZones = append(wallZones, obj.Name)
-					}
-				}
-			}
-		}
-	}
-	return wallZones, nil
 }
 
 func envOr(key, fallback string) string {

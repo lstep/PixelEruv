@@ -1,5 +1,40 @@
 # Dashboard
 
+## Extension NATS Zone Metadata (Phase 3, Part A complete)
+
+**Branch:** `feat/extension-nats`
+**Status:** Part A complete — extensions receive zone metadata from worldsim via NATS instead of hitting PocketBase's HTTP API directly. Build and tests pass.
+
+Extensions (ext-walls, ext-av) no longer read the Tiled map from PocketBase to find wall zones and A/V zones. Instead, worldsim broadcasts zone metadata (zone IDs + properties) via two NATS subjects:
+- `worldsim.zones.get` — request-reply: extensions fetch zone metadata on startup/reconnect.
+- `worldsim.zones` — broadcast: worldsim publishes updated zone metadata after a map reload so extensions can refresh without a request.
+
+The `POCKETBASE_URL` env var and `MAP_ID` env var are removed from ext-walls and ext-av Docker configs. The `findWallZones` and `findAVZones` functions (which fetched and parsed Tiled JSON from PB's HTTP API) are deleted. The "wait for PocketBase" startup loops are removed — extensions now wait for `worldsim.ready` and then request zone metadata via NATS.
+
+### What changed
+
+- **Worldsim:** New `zonemeta.go` — `buildZoneMetadata()` serializes all zones from all maps into JSON (`zoneMetadataMsg` with per-map zone arrays: id, zone_type, av_enabled, is_exclusive, mobility, portal fields). `subscribeZoneMetadata()` sets up the `worldsim.zones.get` request-reply handler. `broadcastZoneMetadata()` publishes on `worldsim.zones` (called after map reload in `checkMapReload`).
+- **ext-walls:** Rewritten — subscribes to `worldsim.zones` for live updates, requests `worldsim.zones.get` on startup/`worldsim.ready`. Filters for `zone_type == "wall"`. Removed `findWallZones()`, `tiledMapJSON` struct, `POCKETBASE_URL`/`MAP_ID` env vars, PB wait loop, `map.updated` subscription, `net/http`/`io`/`strings` imports.
+- **ext-av:** Rewritten — same NATS zone metadata pattern. Filters for `av_enabled == true`. Removed `findAVZones()`, `tiledMapJSON` struct, `POCKETBASE_URL`/`MAP_ID` env vars, PB wait loop, `map.updated` subscription, `net/http`/`io`/`strings` imports.
+- **Docker:** `POCKETBASE_URL` and `MAP_ID` removed from ext-walls and ext-av in both `docker-compose.yml` and `dist/docker-compose.yml`.
+- **Tests:** `zonemeta_test.go` — tests for request-reply and broadcast.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/internal/worldsim/zonemeta.go` | New — zone metadata serialization, request-reply handler, broadcast |
+| `backend/internal/worldsim/zonemeta_test.go` | New — tests for request-reply and broadcast |
+| `backend/internal/worldsim/worldsim.go` | `subscribeZoneMetadata()` call in `subscribe()`, `broadcastZoneMetadata()` in `checkMapReload()` |
+| `backend/cmd/ext-walls/main.go` | Rewritten — NATS zone metadata instead of PB HTTP |
+| `backend/cmd/ext-av/main.go` | Rewritten — NATS zone metadata instead of PB HTTP |
+| `docker/docker-compose.yml` | Removed `POCKETBASE_URL`/`MAP_ID` from ext-walls and ext-av |
+| `docker/dist/docker-compose.yml` | Same |
+
+### Next steps (Part B — not in this branch)
+
+- Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
+
 ## Multi-Map Support (Phase 2 complete)
 
 **Branch:** `feat/multi-map`
@@ -47,7 +82,8 @@ The `Simulator` loads all maps from PocketBase on startup and manages per-map `M
 
 ### Next phases
 
-- **Phase 3 (`feat/extension-nats`):** Extensions stop hitting PB directly; worldsim broadcasts zone metadata via NATS. Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
+- **Phase 3 Part A (`feat/extension-nats`):** ✅ Complete — extensions receive zone metadata via NATS instead of hitting PB.
+- **Phase 3 Part B:** Extension options schema declared in registration, worldsim creates PB collections. Hot-reload via PB hooks + NATS.
 
 ## PocketBase Embedding (Phase 1 complete)
 
@@ -60,7 +96,7 @@ PocketBase now runs as a Go library inside worldsim instead of as a separate con
 
 - **Migrations:** JS migrations in `pb_migrations/` replaced by Go migrations in `backend/migrations/` (compiled into the binary). `Bootstrap()` only runs system migrations, so `app.RunAllMigrations()` is called explicitly after bootstrap.
 - **Stores:** `MapStore`, `UserStore`, `SpriteStore` rewritten from HTTP API calls to PB Go SDK DAO calls (`app.FindFirstRecordByData`, `app.Save`, `app.NewFilesystem`, etc.).
-- **Docker:** `pocketbase` service removed from both `docker-compose.yml` and `dist/docker-compose.yml`. The `worldsim` container now mounts `pb_data` and exposes port 8090. Nginx proxies `/api/` to `worldsim:8090`. Extensions (ext-walls, ext-av) temporarily point `POCKETBASE_URL` at `http://worldsim:8090` (will be removed in Phase 3).
+- **Docker:** `pocketbase` service removed from both `docker-compose.yml` and `dist/docker-compose.yml`. The `worldsim` container now mounts `pb_data` and exposes port 8090. Nginx proxies `/api/` to `worldsim:8090`. Extensions (ext-walls, ext-av) previously pointed `POCKETBASE_URL` at `http://worldsim:8090` — removed in Phase 3 Part A.
 - **Map reload:** PB `OnRecordAfterUpdateSuccess("maps")` hook triggers instant map reload instead of the 30-second polling checker.
 - **Makefile:** `debug-pocketbase` target removed; `debug` target now passes `PB_DATA_DIR`/`PB_HTTP_ADDR` env vars to worldsim.
 
