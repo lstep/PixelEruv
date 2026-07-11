@@ -2,12 +2,17 @@ package migrations
 
 import (
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/types"
 	m "github.com/pocketbase/pocketbase/migrations"
+	"github.com/pocketbase/pocketbase/tools/types"
 )
 
 func init() {
 	m.Register(func(app core.App) error {
+		// Idempotent: skip if the collection already exists.
+		if existing, _ := app.FindCollectionByNameOrId("sprite_bases"); existing != nil {
+			return nil
+		}
+
 		collection := core.NewBaseCollection("sprite_bases")
 
 		collection.Fields.Add(

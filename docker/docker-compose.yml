@@ -74,6 +74,7 @@ services:
       dockerfile: docker/frontend.Dockerfile
     depends_on:
       - pusher
+      - worldsim
     ports:
       - "4080:80"
       # HTTPS for remote access. Browsers only expose crypto.subtle (PKCE auth)
