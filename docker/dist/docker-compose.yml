@@ -108,8 +108,6 @@ services:
       - worldsim
     environment:
       NATS_URL: "nats://nats:4222"
-      POCKETBASE_URL: "http://worldsim:8090"
-      MAP_ID: "main"
     restart: unless-stopped
 
   ext-props:
@@ -150,8 +148,6 @@ services:
       - livekit
     environment:
       NATS_URL: "nats://nats:4222"
-      POCKETBASE_URL: "http://worldsim:8090"
-      MAP_ID: "main"
       LIVEKIT_URL: "ws://livekit:7880"
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://${PUBLIC_HOST:-localhost}:7880}"
       LIVEKIT_API_KEY: "devkey"

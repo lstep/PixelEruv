@@ -497,6 +497,13 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe worldsim.entity.teleport: %w", err)
 	}
 
+	// Zone metadata request-reply handler: extensions fetch zone metadata on
+	// startup/reconnect via worldsim.zones.get so they don't need to read
+	// PocketBase directly.
+	if err := s.subscribeZoneMetadata(); err != nil {
+		return fmt.Errorf("subscribe worldsim.zones.get: %w", err)
+	}
+
 	// Announce readiness so extensions can register against a live subscriber
 	// instead of racing their initial publish (NATS Core drops publishes with
 	// no subscribers). Flush guarantees the broadcast is on the wire before
@@ -1640,6 +1647,9 @@ func (s *Simulator) checkMapReload(mapName string) {
 
 	// Notify extensions that the map has been updated.
 	s.nc.Publish("map.updated", []byte(mapName))
+	// Broadcast updated zone metadata so extensions can refresh their zone
+	// sets without reading PocketBase directly.
+	s.broadcastZoneMetadata()
 	s.logger.Info("map reloaded and map.updated event published", "map", mapName)
 }
 
