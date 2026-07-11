@@ -1,4 +1,4 @@
-### Why Phaser 4 is a "Game-Changer" for your Virtual Office
+### Why Phaser 4 fits large virtual offices
 
 Virtual offices (like Gather) are characterised by very large office maps,
 many static decoration elements, and dozens of collaborators connected

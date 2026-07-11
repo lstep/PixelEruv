@@ -377,7 +377,7 @@ for a fresh deploy. Maps can be replaced or added via the PocketBase
 admin dashboard. Worldsim loads all maps from PocketBase on
 startup. Players transition between maps via **portal zones**
 (`zone_type=portal` with `target_map` and optional `target_entity`) —
-walk into a portal and the client seamlessly loads the destination map.
+walk into a portal and the client loads the destination map.
 
 **Storyboard:** Show the Tiled editor with the office map open. Switch
 to the browser running Pixel Eruv — the same map renders. Point at the
@@ -1000,7 +1000,7 @@ sessions routing reconnecting clients to the same instance.
 **Storyboard (future):** Show two worldsim instances on the architecture
 diagram, each handling a different map. A player walks to a map boundary
 and crosses — the replication source shifts to the other shard
-seamlessly.
+without interrupting the player.
 
 ---
 

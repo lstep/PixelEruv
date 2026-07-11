@@ -46,50 +46,50 @@ flowchart TB
   %% =========================
   %% Client tier
   %% =========================
-  subgraph Client["💻 Client (browser)"]
+  subgraph Client["Client (browser)"]
     direction LR
     Phaser["Phaser 4<br/>world renderer<br/>+ local prediction"]
     LKJS["LiveKit JS SDK<br/>audio / video"]
   end
 
-  Edge["🛡️ Traefik<br/>TLS · sticky WS · routing"]
+  Edge["Traefik<br/>TLS · sticky WS · routing"]
   Client ==> Edge
 
   %% =========================
   %% Internal Docker Compose network
   %% =========================
-  subgraph Internal["🐳 Internal Docker Compose network"]
+  subgraph Internal["Internal Docker Compose network"]
     direction TB
 
     %% --- Simulation plane ---
-    subgraph Sim["🎮 Simulation plane (Go)"]
+    subgraph Sim["Simulation plane (Go)"]
       direction LR
-      Pusher["🚀 Pusher<br/>WebSocket proxy<br/>auth + session"]
-      WorldSim["🌍 World Simulator<br/>spatial authority<br/>ECS · triggers · replication<br/>+ embedded PocketBase"]
+      Pusher["Pusher<br/>WebSocket proxy<br/>auth + session"]
+      WorldSim["World Simulator<br/>spatial authority<br/>ECS · triggers · replication<br/>+ embedded PocketBase"]
     end
 
     %% --- Extensions (peer simulators) ---
-    Extensions["🔌 Extensions<br/>peer simulators · any language<br/>NPCs · custom zones · objects"]
+    Extensions["Extensions<br/>peer simulators · any language<br/>NPCs · custom zones · objects"]
 
     %% --- The bus ---
-    NATS[("📡 NATS<br/>Core pub/sub<br/>+ JetStream KV")]
+    NATS[("NATS<br/>Core pub/sub<br/>+ JetStream KV")]
 
     %% --- Identity ---
-    Dex["🔐 Dex<br/>OIDC + connectors"]
+    Dex["Dex<br/>OIDC + connectors"]
 
     %% --- Media plane ---
-    subgraph MediaPlane["🎥 Media plane"]
+    subgraph MediaPlane["Media plane"]
       direction LR
       LiveKit["LiveKit SFU<br/>(WebRTC)"]
-      Bridge["🔊 LiveKit Bridge<br/>zone ↔ room sync"]
-      Coturn["🌍 coturn<br/>TURN on TCP 443"]
+      Bridge["LiveKit Bridge<br/>zone ↔ room sync"]
+      Coturn["coturn<br/>TURN on TCP 443"]
     end
 
     %% --- Persistence ---
-    subgraph Persist["💾 Persistence"]
+    subgraph Persist["Persistence"]
       direction LR
-      Assets["📦 SeaweedFS / RustFS<br/>maps · tilesets (S3-compatible)"]
-      Redis[("⚡ Redis<br/>LiveKit only")]
+      Assets["SeaweedFS / RustFS<br/>maps · tilesets (S3-compatible)"]
+      Redis[("Redis<br/>LiveKit only")]
     end
   end
 
