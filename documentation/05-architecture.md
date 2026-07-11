@@ -22,7 +22,7 @@ flowchart TB
     %% ===========================
 
     subgraph Internet["Public Internet"]
-        Browser["🖥️ Browser<br/>Phaser 4 + LiveKit JS SDK"]
+        Browser["Browser<br/>Phaser 4 + LiveKit JS SDK"]
     end
 
     Browser -->|HTTPS / WebSocket / WebRTC| Edge
@@ -43,33 +43,33 @@ flowchart TB
 
         subgraph Core["Core Services"]
 
-            Pusher["🚀 Pusher<br/>WebSocket Gateway<br/>Session + Auth"]
+            Pusher["Pusher<br/>WebSocket Gateway<br/>Session + Auth"]
 
-            WorldSim["🌍 World Simulator<br/>ECS Host<br/>Spatial Authority + Replication<br/>+ embedded PocketBase"]
+            WorldSim["World Simulator<br/>ECS Host<br/>Spatial Authority + Replication<br/>+ embedded PocketBase"]
 
-            NATS["📡 NATS<br/>Pub/Sub<br/>JetStream"]
+            NATS["NATS<br/>Pub/Sub<br/>JetStream"]
 
         end
 
         subgraph Identity["Identity"]
 
-            Dex["🔐 Dex<br/>OIDC<br/>LDAP / AD Bridge"]
+            Dex["Dex<br/>OIDC<br/>LDAP / AD Bridge"]
 
         end
 
         subgraph Media["Media"]
 
-            LiveKit["🎥 LiveKit SFU"]
+            LiveKit["LiveKit SFU"]
 
-            Bridge["🔊 LiveKit Bridge<br/>Zone ⇄ SFU Sync"]
+            Bridge["LiveKit Bridge<br/>Zone ⇄ SFU Sync"]
 
-            Redis["⚡ Redis<br/>Presence<br/>Participants"]
+            Redis["Redis<br/>Presence<br/>Participants"]
 
-            Coturn["🌍 coturn<br/>TURN/STUN"]
+            Coturn["coturn<br/>TURN/STUN"]
 
         end
 
-        Assets["📦 SeaweedFS / RustFS<br/>Maps<br/>Sprites<br/>Object Storage"]
+        Assets["SeaweedFS / RustFS<br/>Maps<br/>Sprites<br/>Object Storage"]
 
     end
 
