@@ -463,18 +463,19 @@ tags follow the avatar each frame and sit at a fixed pixel offset above
 the sprite.
 
 Logged-in players also have their IP address and last-seen timestamp
-persisted in the `players` collection. Admins see the IP in an
-expandable pillbox below the name tag — regular players never see it.
-The pusher conditionally subscribes admin users to a dedicated NATS
-channel that carries an `AdminInfoFrame` with every player's IP, so
-the data only reaches clients that should see it.
+persisted in the `players` collection. Admins see the IP and a short
+device ID in an expandable pillbox below the name tag — regular
+players never see it. The pusher conditionally subscribes admin users
+to a dedicated NATS channel that carries an `AdminInfoFrame` with every
+player's IP, device ID, guest status, and OIDC subject, so the data
+only reaches clients that should see it.
 
 **Storyboard:** Two characters on screen, each with a name tag above.
 Walk one character around — the tag follows. Point out that guests get
 a generated name and logged-in users get their PocketBase display name.
 Switch to an admin account — click a name tag to expand it into a
-pillbox showing the player's IP. Switch back to a regular account —
-the pillbox is gone, no IP is visible.
+pillbox showing the player's IP and device ID. Switch back to a regular
+account — the pillbox is gone, no IP or device ID is visible.
 
 ### 1.6 Mobile Support with Virtual Joystick
 
@@ -876,6 +877,50 @@ people try the world without creating an account.
 appears in the top menu. The character spawns with a default sprite.
 Walk around, talk to people — everything works except persistence
 (positions are not restored for guests).
+
+### 4.4 Ban System
+
+Pixel Eruv supports a three-layer ban system so admins can block
+griefers by whichever identifier is most effective for the situation:
+
+- **OIDC subject** (`oidc_sub`): the strongest identifier. Bans a
+  logged-in user's Dex account. Evading it requires creating a new
+  account, which is real friction.
+- **IP address**: coarse but immediate. Stops a griefer right now.
+  Can have collateral damage on shared IPs (NAT, household), so use
+  judiciously.
+- **Device ID**: a client-generated UUID stored in the browser's
+  `localStorage`, sent in the `AuthFrame` on every connection. Stable
+  across sessions for the same browser. Evadable by clearing storage
+  or using incognito mode, but catches casual griefers. Useful when
+  IP-banning would hit innocent users on the same network.
+
+Bans are stored in a PocketBase `bans` collection and checked by the
+world simulator during entity provisioning, before the player enters
+the world. Both temporary bans (with a unix timestamp expiry) and
+permanent bans are supported. Admins are exempt — a player with the
+`is_admin` flag can always connect, regardless of any ban record
+matching their identifiers.
+
+When a banned client connects, the pusher sends the ban reason and
+expiry to the browser, then closes the WebSocket. The client displays
+the ban message in the disconnect overlay and does not attempt to
+reconnect.
+
+Ban records are currently issued via the PocketBase admin dashboard
+by adding a row to the `bans` collection with a `target_type`
+(`oidc_sub`, `ip`, or `device_id`), `target_value`, `reason`, and
+optional `banned_until` timestamp. An in-game admin ban command is
+planned as a follow-up.
+
+**Storyboard:** Open the PocketBase admin dashboard. Add a ban record
+targeting a guest's device ID (visible in the admin name tag pillbox).
+Switch to the banned guest's browser — reload the page. The disconnect
+overlay appears with the ban reason and "permanently" or an expiry
+date. The client does not reconnect. Remove the ban record in the
+admin dashboard — reload the guest's browser — the world loads
+normally. Narrate: "three ways to ban, checked before the player even
+enters the world. Admins are always exempt."
 
 ---
 
