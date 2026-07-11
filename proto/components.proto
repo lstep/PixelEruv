@@ -49,4 +49,5 @@ message Appearance {
 // documentation/plans/2026-07-07-avatar-name-tags-design.md.
 message DisplayName {
   string name = 1;
+  bool is_guest = 2;  // true for anonymous/guest sessions (no OIDC sub)
 }
