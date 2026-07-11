@@ -40,6 +40,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "seed-sprites: pocketbase bootstrap: %v\n", err)
 		os.Exit(1)
 	}
+	if err := app.RunAllMigrations(); err != nil {
+		fmt.Fprintf(os.Stderr, "seed-sprites: pocketbase migrations: %v\n", err)
+		os.Exit(1)
+	}
 
 	store := worldsim.NewSpriteStore(app)
 	if err := store.Seed(*dir, *force); err != nil {
