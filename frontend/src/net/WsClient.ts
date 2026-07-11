@@ -3,7 +3,7 @@ import { context, trace } from "@opentelemetry/api";
 import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
-import { getIdToken } from "../auth";
+import { getIdToken, clearIdToken } from "../auth";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
@@ -142,6 +142,15 @@ export class WsClient {
             connectSpan.setStatus({ code: 2, message: "auth failed" });
             connectSpan.end();
             console.error("auth failed");
+            // If auth failed with a stored token (e.g. PB DB was reset,
+            // making the token stale), clear it so the next reconnect
+            // falls back to guest mode instead of looping forever with
+            // the same invalid token.
+            if (getIdToken() !== null) {
+              clearIdToken();
+              this.reconnectAttempt = 0;
+              console.log("cleared stale token, will retry as guest");
+            }
           }
           break;
         }

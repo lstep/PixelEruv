@@ -131,8 +131,15 @@ export async function handleAuthCallback(): Promise<void> {
   window.location.href = "/";
 }
 
-export function logout(): void {
+// Clear stored credentials without redirecting. Used when the server
+// rejects a stale token (e.g. PB DB was reset) — the WS client clears
+// the token so the next reconnect falls back to guest mode.
+export function clearIdToken(): void {
   localStorage.removeItem("id_token");
   localStorage.removeItem("sub");
+}
+
+export function logout(): void {
+  clearIdToken();
   window.location.href = "/";
 }
