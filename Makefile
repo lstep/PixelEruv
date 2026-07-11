@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend debug-pocketbase
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -73,17 +73,13 @@ dist-stage:
 	@mkdir -p $(DIST_DIR)/docker/dex
 	cp docker/dist/backend.Dockerfile   $(DIST_DIR)/docker/backend.Dockerfile
 	cp docker/dist/frontend.Dockerfile  $(DIST_DIR)/docker/frontend.Dockerfile
-	cp docker/pocketbase.Dockerfile     $(DIST_DIR)/docker/pocketbase.Dockerfile
-	cp docker/pocketbase-entrypoint.sh  $(DIST_DIR)/docker/pocketbase-entrypoint.sh
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
 	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
 	cp docker/dex/config.yaml           $(DIST_DIR)/docker/dex/config.yaml
 	cp docker/dex-entrypoint.sh         $(DIST_DIR)/docker/dex-entrypoint.sh
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
-	@# --- stage compose + migrations ---
+	@# --- stage compose ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
-	rm -rf $(DIST_DIR)/pb_migrations
-	cp -R pb_migrations                 $(DIST_DIR)/pb_migrations
 	@# --- stage character spritesheets for worldsim auto-seed ---
 	@mkdir -p $(DIST_DIR)/sprites
 	cp -R frontend/public/sprites/.      $(DIST_DIR)/sprites/
@@ -108,7 +104,7 @@ dist-macos: GOOS := darwin
 dist-macos: GOARCH := arm64
 dist-macos: build web dist-stage
 	@echo "==> dist/ built for darwin/arm64. Binaries run natively on macOS."
-	@echo "    Run Go services directly from dist/bin/; use Docker for nats/pocketbase/dex/livekit."
+	@echo "    Run Go services directly from dist/bin/; use Docker for nats/dex/livekit."
 
 up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build
@@ -121,18 +117,19 @@ logs:
 	docker compose -f $(COMPOSE_FILE) logs -f
 
 # --- Debug with OpenTelemetry + motel ---
-# Starts motel (if not running), a standalone NATS container, PocketBase,
+# Starts motel (if not running), a standalone NATS container,
 # and the two Go services with OTEL_ENABLED=true so traces/logs ship to motel.
+# PocketBase is embedded in worldsim — no separate container needed.
 # Frontend is started separately via `make debug-frontend`.
 # Stop everything with `make debug-stop`.
-debug: debug-nats debug-pocketbase
+debug: debug-nats
 	@command -v motel >/dev/null 2>&1 || { echo "motel not found — install from https://github.com/kitlangton/motel"; exit 1; }
 	@motel start >/dev/null 2>&1 || true
 	@echo "==> motel: $(OTEL_ENDPOINT) (TUI at http://127.0.0.1:27686)"
 	@echo "==> starting worldsim + pusher with OTel enabled (Ctrl-C to stop)"
 	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
 		NATS_URL=nats://127.0.0.1:$(NATS_PORT) TICK_HZ=10 \
-		POCKETBASE_URL=http://127.0.0.1:8090 \
+		PB_DATA_DIR=./pb_data PB_HTTP_ADDR=127.0.0.1:8090 \
 		PB_ADMIN_EMAIL=admin@pixeleruv.local PB_ADMIN_PASSWORD=password123 \
 		./$(DIST_BIN)/worldsim &
 	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
@@ -147,15 +144,9 @@ debug-nats:
 	@docker run -d --name $(NATS_CONTAINER) -p $(NATS_PORT):4222 nats:2.10-alpine -js >/dev/null
 	@echo "==> NATS running on nats://127.0.0.1:$(NATS_PORT) (container: $(NATS_CONTAINER))"
 
-# Start the PocketBase container for the debug session (port 8090).
-debug-pocketbase:
-	@docker compose -f $(COMPOSE_FILE) up -d --build pocketbase
-	@echo "==> PocketBase on http://127.0.0.1:8090 (admin UI at /_/)"
-
-# Stop the debug NATS container and PocketBase. Go services exit on Ctrl-C.
+# Stop the debug NATS container. Go services exit on Ctrl-C.
 debug-stop:
 	@docker rm -f $(NATS_CONTAINER) >/dev/null 2>&1 || true
-	@docker compose -f $(COMPOSE_FILE) stop pocketbase >/dev/null 2>&1 || true
 	@echo "==> debug session stopped"
 
 # Start the Vite dev server with frontend OTel enabled.
