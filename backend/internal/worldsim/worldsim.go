@@ -109,6 +109,10 @@ type Entity struct {
 	// player currently belongs to (e.g. "proxgroup-<hash>"). Empty when not
 	// in a proximity group. Used to detect join/leave transitions.
 	currentProximityGroup string
+	// PlayerOptions is the JSON-encoded player options string (e.g.
+	// {"show_own_name_tag":true}). Persisted to PocketBase for logged-in
+	// users; session-only for guests. Updated via SetPlayerOptionsFrame.
+	PlayerOptions string
 }
 
 type NetworkSession struct {
@@ -399,12 +403,14 @@ func (s *Simulator) subscribe() error {
 		// connection and the browser can display the ban message.
 		if m.Reply != "" {
 			resp, _ := proto.Marshal(&pb.AuthResultFrame{
-				EntityId:  result.entityID,
-				MapId:     result.mapID,
-				IsAdmin:   result.isAdmin,
-				Banned:    result.banned,
-				BanReason: result.banReason,
-				BanUntil:  uint64(result.banUntil),
+				EntityId:      result.entityID,
+				MapId:         result.mapID,
+				IsAdmin:       result.isAdmin,
+				Banned:        result.banned,
+				BanReason:     result.banReason,
+				BanUntil:      uint64(result.banUntil),
+				MapOptions:    result.mapOptions,
+				PlayerOptions: result.playerOptions,
 			})
 			if err := s.nc.Publish(m.Reply, resp); err != nil {
 				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
@@ -516,6 +522,23 @@ func (s *Simulator) subscribe() error {
 		s.handleSetSpriteBase(ctx, clientID, &frame)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.set_sprite_base: %w", err)
+	}
+
+	// client.<id>.set_player_options — player options update request.
+	if _, err := s.nc.Subscribe("client.*.set_player_options", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.handle_set_player_options_sub")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "set_player_options")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var frame pb.SetPlayerOptionsFrame
+		if err := proto.Unmarshal(m.Data, &frame); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		s.handleSetPlayerOptions(ctx, clientID, &frame)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.set_player_options: %w", err)
 	}
 
 	// Extension lifecycle subscriptions.
@@ -653,12 +676,14 @@ func (s *Simulator) publishHealth() {
 // provisionResult is the return value of provisionClient. When banned is
 // true, the other fields are zero — no entity is created.
 type provisionResult struct {
-	entityID  string
-	mapID     string
-	isAdmin   bool
-	banned    bool
-	banReason string
-	banUntil  int64
+	entityID      string
+	mapID         string
+	isAdmin       bool
+	banned        bool
+	banReason     string
+	banUntil      int64
+	mapOptions    string
+	playerOptions string
 }
 
 // provisionClient creates a player avatar entity for the given client.
@@ -671,7 +696,17 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	defer s.mu.Unlock()
 
 	if existing, exists := s.clients[clientID]; exists {
-		return provisionResult{entityID: existing.ID, mapID: existing.Position.MapId, isAdmin: existing.IsAdmin}
+		mapOpts := ""
+		if md := s.maps[existing.Position.MapId]; md != nil {
+			mapOpts = string(md.Options)
+		}
+		return provisionResult{
+			entityID:      existing.ID,
+			mapID:         existing.Position.MapId,
+			isAdmin:       existing.IsAdmin,
+			mapOptions:    mapOpts,
+			playerOptions: existing.PlayerOptions,
+		}
 	}
 
 	defaultEntityID := "e_" + clientID[2:]
@@ -692,6 +727,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	displayName := ""
 	spriteBase := ""
 	isAdmin := false
+	playerOptions := ""
 
 	// Look up or create the user in PocketBase for persistent identity.
 	if s.userStore != nil && sub != "" && sub != "dev" {
@@ -704,6 +740,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			displayName = user.DisplayName
 			spriteBase = user.SpriteBase
 			isAdmin = user.IsAdmin
+			playerOptions = user.Options
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
@@ -762,14 +799,15 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			ClientID: clientID,
 			Input:    &pb.InputState{},
 		},
-		DisplayName:  displayName,
-		IsGuest:      sub == "" || sub == "dev",
-		IP:           ip,
-		DeviceID:     deviceID,
-		IsAdmin:      isAdmin,
-		SpriteBase:   spriteBase,
-		spawnedTo:    make(map[string]bool),
-		currentZones: make(map[string]bool),
+		DisplayName:   displayName,
+		IsGuest:       sub == "" || sub == "dev",
+		IP:            ip,
+		DeviceID:      deviceID,
+		IsAdmin:       isAdmin,
+		SpriteBase:    spriteBase,
+		PlayerOptions: playerOptions,
+		spawnedTo:     make(map[string]bool),
+		currentZones:  make(map[string]bool),
 	}
 	// Create a mobile proximity zone that follows this avatar. Other players
 	// entering it triggers zone.enter, which the proximity clustering step
@@ -794,10 +832,20 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	s.clients[clientID] = e
 	s.entityIDToClient[entityID] = clientID
 
+	mapOpts := ""
+	if md := s.maps[mapName]; md != nil {
+		mapOpts = string(md.Options)
+	}
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
 		"map", mapName, "x", e.Position.X, "y", e.Position.Y)
-	return provisionResult{entityID: entityID, mapID: mapName, isAdmin: isAdmin}
+	return provisionResult{
+		entityID:      entityID,
+		mapID:         mapName,
+		isAdmin:       isAdmin,
+		mapOptions:    mapOpts,
+		playerOptions: playerOptions,
+	}
 }
 
 func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
@@ -968,6 +1016,10 @@ func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, t
 	if e.NetworkSession != nil {
 		clientID = e.NetworkSession.ClientID
 	}
+	mapOpts := ""
+	if md := s.maps[targetMap]; md != nil {
+		mapOpts = string(md.Options)
+	}
 	s.mu.Unlock()
 
 	// Send MapTransitionFrame to the client so the frontend loads the new map.
@@ -975,9 +1027,10 @@ func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, t
 		frame := &pb.ServerFrame{
 			Payload: &pb.ServerFrame_MapTransition{
 				MapTransition: &pb.MapTransitionFrame{
-					MapId:  targetMap,
-					SpawnX: spawnX,
-					SpawnY: spawnY,
+					MapId:       targetMap,
+					SpawnX:      spawnX,
+					SpawnY:      spawnY,
+					MapOptions:  mapOpts,
 				},
 			},
 		}
@@ -1360,6 +1413,40 @@ func (s *Simulator) handleSetSpriteBase(ctx context.Context, clientID string, fr
 	}
 }
 
+// handleSetPlayerOptions processes a client-sent SetPlayerOptionsFrame: updates
+// Entity.PlayerOptions in memory and persists the full options JSON to
+// PocketBase for logged-in users. Guests have no PB record — options are
+// session-only. The options field is a full JSON replace (not a partial merge).
+func (s *Simulator) handleSetPlayerOptions(ctx context.Context, clientID string, frame *pb.SetPlayerOptionsFrame) {
+	ctx, span := s.tracer.Start(ctx, "worldsim.handle_set_player_options")
+	defer span.End()
+	span.SetAttributes(attribute.String("client.id", clientID))
+
+	options := frame.GetOptions()
+
+	s.mu.Lock()
+	entity, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown client")
+		return
+	}
+	entity.PlayerOptions = options
+	entityID := entity.ID
+	s.mu.Unlock()
+
+	// Persist to PocketBase for logged-in users. Guests have no
+	// PocketBase record, so findByEntityID returns nil and the update is
+	// a no-op — matching handleSetName's "guest names are session-only".
+	if s.userStore != nil {
+		if err := s.userStore.UpdateOptions(entityID, options); err != nil {
+			s.logger.WarnContext(ctx, "persist player options failed",
+				"err", err, "entity", entityID)
+			span.RecordError(err)
+		}
+	}
+}
+
 // lastN returns the last n characters of s, or s if shorter.
 func lastN(s string, n int) string {
 	r := []rune(s)
@@ -1729,7 +1816,9 @@ func (s *Simulator) startMapReloadChecker(ctx context.Context) {
 }
 
 // checkMapReload fetches the current map record info and compares the
-// filename. If it changed, reloads the map.
+// filename and options. If the filename changed, reloads the map. If only the
+// options changed, updates in-memory options and pushes a MapOptionsUpdateFrame
+// to connected clients on that map (hot-reload).
 func (s *Simulator) checkMapReload(mapName string) {
 	info, err := s.mapStore.FetchMapRecordInfo(mapName)
 	if err != nil || info == nil {
@@ -1738,10 +1827,54 @@ func (s *Simulator) checkMapReload(mapName string) {
 
 	s.mu.Lock()
 	oldFilename := s.mapFilenames[mapName]
+	oldOptions := ""
+	if md := s.maps[mapName]; md != nil {
+		oldOptions = string(md.Options)
+	}
 	s.mu.Unlock()
 
+	newOptions := string(info.Options)
+
+	// If only options changed (filename unchanged), hot-reload options without
+	// a full map reload.
 	if info.TiledJSONFilename == oldFilename {
-		return // no change
+		if newOptions == oldOptions {
+			return // no change
+		}
+		s.logger.Info("map options updated, hot-reloading",
+			"map", mapName, "old_options", oldOptions, "new_options", newOptions)
+
+		s.mu.Lock()
+		if md := s.maps[mapName]; md != nil {
+			md.Options = info.Options
+		}
+		// Collect client IDs of players on this map for hot-reload push.
+		var clientIDs []string
+		for _, e := range s.clients {
+			if e.Position != nil && e.Position.MapId == mapName {
+				if e.NetworkSession != nil {
+					clientIDs = append(clientIDs, e.NetworkSession.ClientID)
+				}
+			}
+		}
+		s.mu.Unlock()
+
+		// Push MapOptionsUpdateFrame to each connected client on this map.
+		frame := &pb.ServerFrame{
+			Payload: &pb.ServerFrame_MapOptionsUpdate{
+				MapOptionsUpdate: &pb.MapOptionsUpdateFrame{
+					MapOptions: newOptions,
+				},
+			},
+		}
+		frameBytes, _ := proto.Marshal(frame)
+		for _, cid := range clientIDs {
+			subject := fmt.Sprintf("client.%s.replication", cid)
+			if err := s.nc.Publish(subject, frameBytes); err != nil {
+				s.logger.Warn("map options hot-reload publish", "err", err, "client", cid)
+			}
+		}
+		return
 	}
 
 	s.logger.Info("map updated, reloading",

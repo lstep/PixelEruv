@@ -419,6 +419,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	entityID := ""
 	isAdmin := false
+	mapID := ""
+	mapOptions := ""
+	playerOptions := ""
 	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip, deviceID); err != nil {
 		s.logger.Warn("client.connected request-reply, using default entity ID", "client", clientID, "err", err)
 	} else {
@@ -447,6 +450,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			entityID = ar.EntityId
 			isAdmin = ar.IsAdmin
+			mapID = ar.MapId
+			mapOptions = ar.MapOptions
+			playerOptions = ar.PlayerOptions
 		}
 	}
 
@@ -469,14 +475,19 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Send AuthResultFrame with the entity ID and admin flag from worldsim.
+	// Send AuthResultFrame with the entity ID, map_id, admin flag, and options
+	// from worldsim. The client needs the map_id to load the correct map, and
+	// the map/player options to apply feature toggles (e.g. day/night, name tag).
 	result := &pb.ServerFrame{
 		Payload: &pb.ServerFrame_AuthResult{
 			AuthResult: &pb.AuthResultFrame{
-				Ok:       true,
-				ClientId: clientID,
-				EntityId: entityID,
-				IsAdmin:  isAdmin,
+				Ok:            true,
+				ClientId:      clientID,
+				EntityId:      entityID,
+				MapId:         mapID,
+				IsAdmin:       isAdmin,
+				MapOptions:    mapOptions,
+				PlayerOptions: playerOptions,
 			},
 		},
 	}
@@ -598,6 +609,25 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				pspan.RecordError(err)
 				pspan.SetStatus(codes.Error, "nats publish action")
 				s.logger.Warn("nats publish action", "client", clientID, "err", err)
+			}
+			pspan.End()
+		case *pb.ClientFrame_SetPlayerOptions:
+			// Forward player options update to worldsim on
+			// client.<id>.set_player_options. Worldsim updates the entity
+			// in memory and persists to PocketBase for logged-in users.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.SetPlayerOptions.GetTraceparent()),
+				"pusher.nats.publish.set_player_options",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID))
+			optsBytes, _ := proto.Marshal(p.SetPlayerOptions)
+			subject := fmt.Sprintf("client.%s.set_player_options", clientID)
+			msg := &nats.Msg{Subject: subject, Data: optsBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish set_player_options")
+				s.logger.Warn("nats publish set_player_options", "client", clientID, "err", err)
 			}
 			pspan.End()
 		}

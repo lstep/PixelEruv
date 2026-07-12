@@ -1,5 +1,43 @@
 # Dashboard
 
+## Map & Player Options System
+
+**Branch:** `main` (uncommitted)
+**Status:** Implemented — `make build`, `go test`, `tsc --noEmit`, and `vite build` all pass.
+
+A general options system with two dimensions, mirroring the `extension_options` pattern (JSON field on a PB collection, defaults applied in code):
+
+### Map options (per-map, admin-edited, hot-reload)
+- `options` JSON field on the `maps` PB collection.
+- First option: `day_night_enabled` (bool, default true). Controls whether the day/night overlay is active by default on that map. The player can always override locally via their own toggle (localStorage preference takes precedence).
+- Admin edits the JSON in the PB GUI → PB hook fires → `checkMapReload` detects options-only change → updates in-memory `MapData.Options` → pushes `MapOptionsUpdateFrame` to each connected client on that map. No full map reload needed.
+- Also sent on auth (`AuthResultFrame.map_options`) and map transitions (`MapTransitionFrame.map_options`).
+
+### Player options (per-player, user-edited, persisted)
+- `options` JSON field on the `players` PB collection.
+- First option: `show_own_name_tag` (bool, default false). Controls whether the local player's name tag is visible above their own avatar.
+- Player toggles via TopMenu dropdown checkbox → `SetPlayerOptionsFrame` → pusher forwards to worldsim on `client.<id>.set_player_options` → `handleSetPlayerOptions` updates `Entity.PlayerOptions` in memory + persists to PB. Guests have no PB record — session-only.
+- Sent on auth (`AuthResultFrame.player_options`).
+
+### Bug fix included
+The pusher was not forwarding `map_id` in the `AuthResultFrame` to the browser (only `EntityId` + `IsAdmin`). This is now fixed — the pusher forwards `MapId`, `MapOptions`, and `PlayerOptions` from worldsim's reply.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `proto/frames.proto` | `map_options`/`player_options` on AuthResultFrame, `map_options` on MapTransitionFrame, new `MapOptionsUpdateFrame`, new `SetPlayerOptionsFrame`, new ClientFrame variant |
+| `backend/migrations/1753000000_add_options_to_maps_and_players.go` | New — `options` JSON field on `maps` + `players` |
+| `backend/internal/worldsim/mapdata.go` | `Options` field on `MapData` + `MapRecordInfo` |
+| `backend/internal/worldsim/mapstore.go` | Read `options` in `ListAllMaps`, `FetchMapRecordInfo`, `loadMapOnce` |
+| `backend/internal/worldsim/userstore.go` | `Options` on `UserRecord`, `recordToUser`, new `UpdateOptions` method |
+| `backend/internal/worldsim/worldsim.go` | `PlayerOptions` on Entity, `provisionResult` fields, `provisionClient` reads options, `client.connected` reply includes options, `transitionEntity` includes map options, `set_player_options` sub+handler, `checkMapReload` options hot-reload |
+| `backend/internal/pusher/pusher.go` | Forward `MapId`/`MapOptions`/`PlayerOptions` in AuthResultFrame, forward `SetPlayerOptions` to NATS |
+| `frontend/src/net/WsClient.ts` | Store/get options, `setPlayerOptions()`, `mapOptionsUpdate` handler, `onMapOptionsUpdate` callback |
+| `frontend/src/scenes/GameScene.ts` | `applyMapOptions`/`applyPlayerOptions` helpers, apply on ready/transition/hot-reload, `showOwnNameTag` field, name tag visibility logic |
+| `frontend/src/ui/DayNightOverlay.ts` | `applyDefault()` method, `loadEnabled()` returns `null` when no preference |
+| `frontend/src/ui/TopMenu.ts` | "Show my name tag" checkbox, `setPlayerOptions`/`setSetPlayerOptionsHandler` |
+
 ## pb-collections export/import tool
 
 **Branch:** `fix/av-duplicate-identity-stuck` (uncommitted)

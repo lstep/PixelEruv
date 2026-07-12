@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -31,7 +31,10 @@ export interface ConnectHandlers {
   // Fired when a MapTransitionFrame is received — the server moved the
   // player to a different map. The frontend should load the new tilemap
   // and clear entities from the old map.
-  onMapTransition?: (msg: { mapId: string; spawnX: number; spawnY: number }) => void;
+  onMapTransition?: (msg: { mapId: string; spawnX: number; spawnY: number; mapOptions: string }) => void;
+  // Fired when a MapOptionsUpdateFrame is received — the map's options were
+  // edited in the PB admin GUI and hot-reloaded to connected clients.
+  onMapOptionsUpdate?: (msg: { mapOptions: string }) => void;
   // Fired when an AdminInfoFrame is received (admin clients only). Carries
   // admin-only data (IP, guest status) about entities spawned near the
   // admin. Non-admin clients never receive this. See
@@ -71,6 +74,8 @@ export class WsClient {
   private clientId: string | null = null;
   private entityId: string | null = null;
   private mapId: string | null = null;
+  private mapOptions: string = "";
+  private playerOptions: string = "";
   private admin = false;
   private seq = 0;
   private handlers!: ConnectHandlers;
@@ -136,6 +141,8 @@ export class WsClient {
             this.clientId = ar.clientId;
             this.entityId = ar.entityId || null;
             this.mapId = ar.mapId || null;
+            this.mapOptions = ar.mapOptions || "";
+            this.playerOptions = ar.playerOptions || "";
             this.admin = ar.isAdmin;
             this.reconnectAttempt = 0;
             connectSpan.setAttribute("client.id", ar.clientId);
@@ -240,10 +247,21 @@ export class WsClient {
           break;
         case "mapTransition": {
           const mt = serverFrame.payload.value;
+          this.mapId = mt.mapId || null;
+          this.mapOptions = mt.mapOptions || "";
           this.handlers.onMapTransition?.({
             mapId: mt.mapId,
             spawnX: Number(mt.spawnX),
             spawnY: Number(mt.spawnY),
+            mapOptions: mt.mapOptions || "",
+          });
+          break;
+        }
+        case "mapOptionsUpdate": {
+          const mo = serverFrame.payload.value;
+          this.mapOptions = mo.mapOptions || "";
+          this.handlers.onMapOptionsUpdate?.({
+            mapOptions: mo.mapOptions || "",
           });
           break;
         }
@@ -425,6 +443,26 @@ export class WsClient {
     }
   }
 
+  // setPlayerOptions sends a SetPlayerOptionsFrame to update the player's
+  // options JSON (e.g. show_own_name_tag). The server persists to PocketBase
+  // for logged-in users; guests are session-only. Fire-and-forget.
+  setPlayerOptions(options: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_set_player_options", {
+      attributes: { "client.id": this.clientId ?? "" },
+    });
+    try {
+      const spo = context.with(trace.setSpan(context.active(), span), () =>
+        create(SetPlayerOptionsFrameSchema, { options, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "setPlayerOptions", value: spo } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+      this.playerOptions = options;
+    } finally {
+      span.end();
+    }
+  }
+
   getClientId(): string | null {
     return this.clientId;
   }
@@ -435,6 +473,14 @@ export class WsClient {
 
   getMapId(): string | null {
     return this.mapId;
+  }
+
+  getMapOptions(): string {
+    return this.mapOptions;
+  }
+
+  getPlayerOptions(): string {
+    return this.playerOptions;
   }
 
   isAdmin(): boolean {
