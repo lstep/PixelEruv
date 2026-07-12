@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -45,6 +45,7 @@ build:
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pb-collections ./cmd/pb-collections
 
 # Sync root assets into frontend/public/ so Vite serves them in dev and bundles
 # them into dist/web/. The root maps/ and spritesheets/ directories are the

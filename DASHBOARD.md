@@ -1,5 +1,70 @@
 # Dashboard
 
+## pb-collections export/import tool
+
+**Branch:** `fix/av-duplicate-identity-stuck` (uncommitted)
+**Status:** Implemented + smoke-tested. `make build` produces `dist/bin/pb-collections`.
+
+A standalone Go binary (`backend/cmd/pb-collections`) that exports and imports
+all application PocketBase collections — schema, records, and file fields —
+between a PB data directory and a portable JSON + files directory. Works
+offline by bootstrapping PB directly on `PB_DATA_DIR` (same pattern as
+`seed-sprites`). Do not run while worldsim is using the same data dir (SQLite
+is single-writer).
+
+System collections (`_superusers`, `_externalAuths`, `_migrations`) are
+skipped — only app collections are exported (maps, players, sprite_bases,
+extension_options, bans, plus PB's default `users` auth collection).
+
+### Usage
+
+```bash
+# Export all app collections into <dir>:
+PB_DATA_DIR=./pb_data ./dist/bin/pb-collections -export ./pb_backup
+
+# Import into a (possibly fresh) PB_DATA_DIR:
+PB_DATA_DIR=./pb_data_fresh ./dist/bin/pb-collections -import ./pb_backup
+
+# -force: overwrite a non-empty export dir, or delete existing records before import
+./dist/bin/pb-collections -export ./pb_backup -force
+./dist/bin/pb-collections -import ./pb_backup -force
+```
+
+Export layout: `<dir>/collections.json` + `<dir>/files/<collection>/<recordId>/<filename>`.
+
+### Behavior notes
+
+- **Schema import** uses `app.ImportCollectionsByMarshaledJSON(..., false)` —
+  upserts exported collection definitions without deleting unrelated collections.
+- **Record IDs** are preserved on import for idempotency (re-imports skip
+  records that already exist by ID). In `-force` mode, fresh IDs are minted
+  instead, because PB deletes the old record storage dirs on delete and
+  re-uploading to the same path races on the removed directory.
+- **Records** are saved with `app.SaveNoValidate` — the export is trusted as a
+  valid PB snapshot, so field validations aren't re-run and non-standard record
+  IDs are preserved. File-upload interceptors still run.
+- **File fields** are re-uploaded via `filesystem.NewFileFromBytes`; PB's
+  `normalizeName` always appends a random suffix, so restored filenames differ
+  from the export but record references stay internally consistent and content
+  is byte-identical.
+- `created`/`updated` autodate timestamps are reset to import time (PB's
+  autodate hook fires on create). Not preserved.
+
+### Smoke test performed
+
+Seeded `sprite_bases` (4 records with PNG files) + a `players` + a `bans`
+record into a source data dir, exported, imported into a fresh dir, and
+verified: record counts match per collection, sprite PNG content is
+byte-identical (md5), and all plain fields round-trip. Idempotent re-import
+skips existing records; `-force` import wipes and restores cleanly.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/cmd/pb-collections/main.go` | New — export/import CLI binary |
+| `Makefile` | Added `pb-collections` to the `build` target |
+
 ## Name Tag Info Dropdown
 
 **Branch:** `main` (uncommitted)

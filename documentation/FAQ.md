@@ -117,6 +117,62 @@ spawn on that map at a random `spawn` zone.
 
 ---
 
+## Backup and restore
+
+### How do I back up PocketBase data?
+
+Two ways, depending on what you need:
+
+- **Volume snapshot** (fastest, full fidelity): stop worldsim, copy the whole
+  `PB_DATA_DIR`. In Docker:
+  ```bash
+  docker compose down
+  docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine tar czf /b/pb_data.tgz /d
+  docker compose up -d
+  ```
+- **`pb-collections` export** (portable, plain JSON): exports all app
+  collections — schema, records, and file fields — into a directory you can
+  inspect or move between hosts:
+  ```bash
+  make build   # produces dist/bin/pb-collections
+  PB_DATA_DIR=./pb_data ./dist/bin/pb-collections -export ./pb_backup
+  ```
+
+The volume snapshot is the right default for routine backups. Use
+`pb-collections` when you want a portable format, a selective restore, or to
+reproduce a production bug on a dev machine.
+
+See: [Backup and Restore](24-backup-and-restore.md)
+
+### How do I restore a backup?
+
+**Volume snapshot:**
+```bash
+docker compose down
+docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine \
+  sh -c "rm -rf /d/* && tar xzf /b/pb_data.tgz -C /"
+docker compose up -d
+```
+
+**`pb-collections` import** (into a fresh or existing data dir):
+```bash
+PB_DATA_DIR=./pb_data ./dist/bin/pb-collections -import ./pb_backup
+# Add -force to wipe existing records before import.
+```
+
+Re-importing without `-force` is idempotent — records that already exist (by
+ID) are skipped.
+
+See: [Backup and Restore](24-backup-and-restore.md#import)
+
+### Can I run `pb-collections` while worldsim is running?
+
+No. SQLite is single-writer and concurrent access will corrupt the database.
+Stop worldsim first, or point `pb-collections` at a copy of the `pb_data`
+directory.
+
+---
+
 ## Development
 
 ### How do I build and test?
