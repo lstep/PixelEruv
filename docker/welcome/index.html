@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelEruv</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem; }
+.container { max-width: 600px; text-align: center; }
+h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+p { color: var(--muted); line-height: 1.6; margin-bottom: 2rem; }
+.links { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+.links a { display: inline-block; padding: 0.75rem 1.5rem; border-radius: 6px; text-decoration: none; font-weight: 600; transition: transform 0.1s; }
+.links a:hover { transform: translateY(-1px); }
+.play { background: var(--accent); color: white; }
+.admin { background: var(--surface); color: var(--text); border: 1px solid var(--muted); }
+.community { margin-top: 3rem; color: var(--muted); font-size: 0.9rem; }
+.community a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>PixelEruv</h1>
+  <p>A pixel-art virtual world for our community. Move with arrow keys, chat with others, build together.</p>
+  <div class="links">
+    <a class="play" href="/">Enter the world</a>
+    <a class="admin" href="/admin/">Admin login</a>
+  </div>
+  <div class="community">
+    <p>Join us on <a href="#">Discord</a></p>
+    <!-- Community: customize this page with your own info, links, and branding. -->
+  </div>
+</div>
+</body>
+</html>

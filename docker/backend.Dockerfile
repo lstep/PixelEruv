@@ -22,6 +22,7 @@ RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Ve
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-props ./cmd/ext-props
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-av ./cmd/ext-av
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/audit ./cmd/audit
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/admin ./cmd/admin
 
 # --- Pusher image ---
 FROM alpine:3.20 AS pusher
@@ -70,3 +71,10 @@ FROM alpine:3.20 AS audit
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/audit /usr/local/bin/audit
 ENTRYPOINT ["audit"]
+
+# --- admin image ---
+# Templates are embedded in the binary via go:embed.
+FROM alpine:3.20 AS admin
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /out/admin /usr/local/bin/admin
+ENTRYPOINT ["admin"]

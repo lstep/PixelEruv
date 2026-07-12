@@ -23,6 +23,13 @@ staticClients:
       - "https://__PUBLIC_HOST__:4043/auth/callback"
     name: "PixelEruv"
     public: true
+  - id: pixeleruv-admin
+    redirectURIs:
+      - "http://localhost:4080/admin/callback"
+      - "https://__PUBLIC_HOST__/admin/callback"
+      - "https://__PUBLIC_HOST__:4043/admin/callback"
+    name: "PixelEruv Admin"
+    public: true
 
 # Local users (bcrypt hashes, cost 10).
 # admin / password123

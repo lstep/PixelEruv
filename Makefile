@@ -45,6 +45,7 @@ build:
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/audit ./cmd/audit
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/admin ./cmd/admin
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pb-collections ./cmd/pb-collections
 
@@ -81,6 +82,9 @@ dist-stage:
 	cp docker/dex/config.yaml           $(DIST_DIR)/docker/dex/config.yaml
 	cp docker/dex-entrypoint.sh         $(DIST_DIR)/docker/dex-entrypoint.sh
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
+	@# --- stage static welcome page ---
+	@mkdir -p $(DIST_DIR)/docker/welcome
+	cp docker/welcome/index.html        $(DIST_DIR)/docker/welcome/index.html
 	@# --- stage compose ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
 	@# --- stage character spritesheets for worldsim auto-seed ---

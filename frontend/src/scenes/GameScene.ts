@@ -392,9 +392,9 @@ export class GameScene extends Phaser.Scene {
   // listener knows not to close the dropdown on that same click.
   private _dropdownClickedThisFrame = false;
   // Player option: whether to show the local player's own name tag above their
-  // avatar. Defaults to false (hidden). Set from the player_options JSON sent
+  // avatar. Defaults to true (visible). Set from the player_options JSON sent
   // by the server on auth.
-  private showOwnNameTag = false;
+  private showOwnNameTag = true;
 
   constructor() {
     super("GameScene");
@@ -1134,10 +1134,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   // applyPlayerOptions parses the player options JSON and applies player-level
-  // preferences. Currently handles show_own_name_tag (default false). Updates
+  // preferences. Currently handles show_own_name_tag (default true). Updates
   // the local player's name tag visibility if it exists.
   private applyPlayerOptions(playerOptions: string): void {
-    let showOwnNameTag = false; // default
+    let showOwnNameTag = true; // default
     if (playerOptions) {
       try {
         const opts = JSON.parse(playerOptions) as { show_own_name_tag?: boolean };

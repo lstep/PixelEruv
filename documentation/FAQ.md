@@ -237,12 +237,28 @@ for how to add it on a compatible CPU.
 
 See: [Quick Start §10](quick-start.md#10-audit-and-observability)
 
+### How do I access the admin interfaces?
+
+Go to `https://<host>/admin/` and log in with your Dex admin account
+(`admin@pixeleruv.local` / `password123` by default). Only users with
+`is_admin=true` in PocketBase can log in. After authentication, you get
+a signed cookie (1h) and can access:
+
+- **PocketBase admin** — `/_/` (proxied and protected)
+- **Audit UI** — `/audit/` (proxied and protected)
+- **World status** — `/audit/world`
+
+The admin portal uses nginx `auth_request` — unauthenticated requests to
+`/_/` or `/audit/` are redirected to `/admin/login`.
+
+For direct access without the admin portal (e.g. localhost dev):
+`http://localhost:8082/` (audit) or `http://localhost:8090/_/` (PB admin).
+
 ### How do I access the audit UI?
 
-Open `http://localhost:8082/` (direct) or `http://localhost:4080/audit/`
-(through nginx). Basic auth is enabled when `AUDIT_AUTH_PASS` is set
-(credentials: `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS`, defaults to user
-`admin` with no password). `/healthz` and `/static/` are exempt.
+Via the admin portal at `/admin/` (see above), or directly at
+`http://localhost:8082/` in dev. Behind nginx, the audit UI is protected
+by the admin portal's auth_request — no separate basic auth needed.
 
 Pages:
 

@@ -22,6 +22,7 @@ Instead of switching between chat applications, video meetings and shared docume
 * ⚡ High-performance Go backend
 * 🌐 Self-hostable via Docker Compose (no Kubernetes required)
 * 🔍 Audit log + observability — searchable audit event history (HTMX UI) + OpenTelemetry traces (motel dev / OpenObserve optional)
+* 🔐 Admin portal — unified OIDC login via Dex, protects PB admin + audit UI behind a single auth gate
 
 🧭 Roadmap (post-MVP)
 
@@ -272,14 +273,22 @@ frontend registers no provider — zero overhead.
 A standalone audit service records lifecycle and interaction events (player
 connections, bans, chat messages, zone transitions, map reloads, extension
 registrations, A/V tokens) to its own SQLite database and serves a searchable
-web UI at `/audit/` (basic auth via `AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`).
-The `/audit/world` page shows live world state: per-map overview, connected
-players (linked to their events), zone occupancy, and extension status.
-Each audit event carries an optional trace ID linking to the corresponding
-OpenObserve trace — audit tells you *what* happened, OTel tells you *why*.
-See the
+web UI at `/audit/`. The `/audit/world` page shows live world state: per-map
+overview, connected players (linked to their events), zone occupancy, and
+extension status. Each audit event carries an optional trace ID linking to
+the corresponding OpenObserve trace — audit tells you *what* happened, OTel
+tells you *why*. See the
 [audit & observability design](documentation/plans/2026-07-12-audit-observability-design.md)
 for the full event catalog and storage upgrade path.
+
+🔐 Admin portal
+
+A standalone Go service (`backend/cmd/admin`) provides OIDC login via Dex
+and a signed cookie session. nginx uses `auth_request` to protect PB admin
+(`/_/`) and the audit UI (`/audit/`) — log in once at `/admin/` and access
+all admin services without re-authenticating. Only users with `is_admin=true`
+in PocketBase can log in. A public welcome page at `/welcome` provides
+community-customizable landing content.
 
 Project layout
 
@@ -287,6 +296,7 @@ Project layout
     backend/cmd/pusher      WebSocket ↔ NATS proxy (no game logic)
     backend/cmd/worldsim    Authoritative simulation: tick loop, ECS, movement, replication
     backend/cmd/audit       Audit log service (NATS sub + SQLite + HTMX UI)
+    backend/cmd/admin       Admin portal (OIDC login + auth_request endpoint)
     backend/internal/audit  Audit event types + Emit helper (shared by all services)
     frontend/               Phaser 4 client + generated TS protobuf
     docker/                 Dockerfiles for pusher, worldsim, frontend
