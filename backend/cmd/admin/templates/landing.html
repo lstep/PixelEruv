@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin - PixelEruv</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 2rem; }
+h1 { margin-bottom: 0.5rem; }
+.user { color: var(--muted); margin-bottom: 2rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.5rem; max-width: 900px; width: 100%; }
+.card { background: var(--surface); border-radius: 8px; padding: 1.5rem; text-decoration: none; color: var(--text); transition: transform 0.1s, box-shadow 0.1s; }
+.card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+.card h3 { color: var(--accent); margin-bottom: 0.5rem; }
+.card p { color: var(--muted); font-size: 0.9rem; }
+.logout { margin-top: 2rem; }
+.logout a { color: var(--muted); text-decoration: none; }
+.logout a:hover { color: var(--text); }
+.version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<h1>PixelEruv Admin</h1>
+<p class="user">Logged in as {{.Email}}</p>
+<div class="grid">
+  <a class="card" href="/_/">
+    <h3>PocketBase Admin</h3>
+    <p>Manage maps, players, sprite bases, and collections.</p>
+  </a>
+  <a class="card" href="/audit/">
+    <h3>Audit Dashboard</h3>
+    <p>Search audit events, view player timelines, check service health.</p>
+  </a>
+  <a class="card" href="/audit/world">
+    <h3>World Status</h3>
+    <p>Live world overview: maps, players, zones, extensions.</p>
+  </a>
+</div>
+<div class="logout">
+  <a href="/admin/logout">Logout</a>
+</div>
+<p class="version">v{{.Version}}</p>
+</body>
+</html>

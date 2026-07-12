@@ -196,7 +196,9 @@ docker compose up --build -d
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:27686` | all backend services | OTLP/HTTP endpoint for traces and logs. Points at motel for `make debug`. OpenObserve is not included in the stack by default (requires AES-NI CPU). |
 | `AUDIT_RETENTION_HOURS` | `720` (30 days) | `audit` in compose | How long audit events are kept before automatic cleanup. |
 | `AUDIT_BASE_PATH` | `/audit` | `audit` in compose | URL prefix when proxied under a path. Must match the nginx `location` block. |
-| `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI. Set `AUDIT_AUTH_PASS` in `.env` to enable. |
+| `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI (fallback when not behind nginx auth_request). Not set by default — admin portal handles auth. |
+| `ADMIN_SESSION_SECRET` | `changeme` | `admin` in compose | HMAC-SHA256 signing key for admin session cookies. **Change in `.env`.** |
+| `DEX_BROWSER_URL` | `/dex` | `admin` in compose | Browser-facing Dex URL for OIDC login redirects (must match nginx `/dex/` proxy). |
 
 > Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
 > deploy. The rest have working defaults; override them for production
@@ -504,17 +506,22 @@ players are near each other or inside an `av_enabled` zone.
 
 ### Admin backends
 
+All admin services are behind a unified login at `/admin/`. Log in once
+with a Dex admin account, then access PB admin, audit, and world status
+without re-authenticating.
+
 | Service     | URL                                  | Use |
 |-------------|--------------------------------------|-----|
-| PocketBase  | `http://<host-ip>:8090/_/` (admin UI, served by worldsim) or `https://<host-ip>/api/` (API, proxied) | Manage `maps` and `players` collections, upload map files |
+| Admin portal | `https://<host-ip>/admin/` | OIDC login via Dex, landing page with links to all admin services |
+| Welcome page | `https://<host-ip>/welcome` | Public community landing page (static HTML, customizable) |
+| PocketBase  | `https://<host-ip>/_/` (proxied, admin-protected) | Manage `maps` and `players` collections, upload map files |
 | Dex         | `https://<host-ip>/dex/` | OIDC issuer (same-origin via container nginx) |
-| Audit UI    | `https://<host-ip>/audit/` (proxied) or `http://<host-ip>:8082/` (direct) | Search audit events, view world status, check service health. Basic auth (`AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`). |
+| Audit UI    | `https://<host-ip>/audit/` (proxied, admin-protected) | Search audit events, view world status, check service health |
 
-> The container nginx proxies `/api/` → worldsim (so the frontend can fetch
-> maps same-origin), but the **admin UI** at `/_/` is not proxied. For remote
-> admin access either proxy `:8090` through a host nginx, or SSH tunnel:
-> `ssh -L 8090:127.0.0.1:8090 admin@<host-ip>`. The audit UI (`/audit/`) is
-> proxied same-origin through the container nginx.
+> The admin portal (`/admin/`) handles OIDC login via Dex and sets a signed
+> cookie. nginx uses `auth_request` to check the cookie before proxying to
+> `/_/` (PB admin) and `/audit/`. Unauthenticated requests are redirected to
+> `/admin/login`. Only users with `is_admin=true` in PocketBase can log in.
 
 ---
 

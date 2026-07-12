@@ -74,6 +74,7 @@ services:
       - pusher
       - worldsim
       - audit
+      - admin
     ports:
       - "4080:80"
       # HTTPS for remote access. Browsers only expose crypto.subtle (PKCE auth)
@@ -195,14 +196,32 @@ services:
       AUDIT_DB: "/data/audit.db"
       AUDIT_HTTP_ADDR: ":8082"
       AUDIT_BASE_PATH: "/audit"
-      AUDIT_AUTH_USER: "${AUDIT_AUTH_USER:-admin}"
-      AUDIT_AUTH_PASS: "${AUDIT_AUTH_PASS:-}"
       PUSHER_HEALTHZ: "http://pusher:8081/healthz"
       OTEL_BASE_URL: "http://localhost:5080"
     volumes:
       - audit_data:/data
     ports:
       - "8082:8082"
+    restart: unless-stopped
+
+  # Admin portal — OIDC login via Dex, signed cookie session,
+  # auth_request endpoint for nginx. Protects PB admin and audit UI.
+  admin:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: admin
+    depends_on:
+      - dex
+      - worldsim
+    environment:
+      ADMIN_HTTP_ADDR: ":8083"
+      ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:-changeme}"
+      DEX_ISSUER: "http://dex:5556/dex"
+      DEX_BROWSER_URL: "/dex"
+      DEX_CLIENT_ID: "pixeleruv-admin"
+      DEX_REDIRECT_URL: "https://${PUBLIC_HOST:-localhost}/admin/callback"
+      PB_API_URL: "http://worldsim:8090/api"
     restart: unless-stopped
 
 volumes:

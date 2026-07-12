@@ -30,6 +30,7 @@ backend/ext-walls
 backend/ext-props
 backend/ext-av
 backend/audit
+backend/admin
 
 # Node
 node_modules/
