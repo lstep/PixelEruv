@@ -272,9 +272,12 @@ frontend registers no provider — zero overhead.
 A standalone audit service records lifecycle and interaction events (player
 connections, bans, chat messages, zone transitions, map reloads, extension
 registrations, A/V tokens) to its own SQLite database and serves a searchable
-web UI at `/audit/`. Each audit event carries an optional trace ID linking to
-the corresponding OpenObserve trace — audit tells you *what* happened, OTel
-tells you *why*. See the
+web UI at `/audit/` (basic auth via `AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`).
+The `/audit/world` page shows live world state: per-map overview, connected
+players (linked to their events), zone occupancy, and extension status.
+Each audit event carries an optional trace ID linking to the corresponding
+OpenObserve trace — audit tells you *what* happened, OTel tells you *why*.
+See the
 [audit & observability design](documentation/plans/2026-07-12-audit-observability-design.md)
 for the full event catalog and storage upgrade path.
 

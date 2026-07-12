@@ -225,6 +225,9 @@ The **audit service** ships with the stack and records lifecycle and
 interaction events: player connections, bans, chat messages, zone
 transitions, map reloads, extension registrations, A/V tokens. Good for
 "who did what and when". Open it at `/audit/` or `http://localhost:8082`.
+The `/audit/world` page shows live world state: per-map overview, connected
+players (linked to their events), zone occupancy, and extension status.
+Basic auth is enabled when `AUDIT_AUTH_PASS` is set.
 
 For **OpenTelemetry traces and logs** ("why was this slow"), use
 `make debug` with motel (dev TUI). OpenObserve (production OTel backend)

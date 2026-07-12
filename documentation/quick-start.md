@@ -195,6 +195,8 @@ docker compose up --build -d
 | `OTEL_ENABLED` | `false` | all backend services | Set to `true` to export OpenTelemetry traces and logs to the configured OTLP endpoint. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:27686` | all backend services | OTLP/HTTP endpoint for traces and logs. Points at motel for `make debug`. OpenObserve is not included in the stack by default (requires AES-NI CPU). |
 | `AUDIT_RETENTION_HOURS` | `720` (30 days) | `audit` in compose | How long audit events are kept before automatic cleanup. |
+| `AUDIT_BASE_PATH` | `/audit` | `audit` in compose | URL prefix when proxied under a path. Must match the nginx `location` block. |
+| `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI. Set `AUDIT_AUTH_PASS` in `.env` to enable. |
 
 > Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
 > deploy. The rest have working defaults; override them for production
@@ -506,7 +508,7 @@ players are near each other or inside an `av_enabled` zone.
 |-------------|--------------------------------------|-----|
 | PocketBase  | `http://<host-ip>:8090/_/` (admin UI, served by worldsim) or `https://<host-ip>/api/` (API, proxied) | Manage `maps` and `players` collections, upload map files |
 | Dex         | `https://<host-ip>/dex/` | OIDC issuer (same-origin via container nginx) |
-| Audit UI    | `https://<host-ip>/audit/` (proxied) or `http://<host-ip>:8082/` (direct) | Search audit events, view player timelines, check service health |
+| Audit UI    | `https://<host-ip>/audit/` (proxied) or `http://<host-ip>:8082/` (direct) | Search audit events, view world status, check service health. Basic auth (`AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`). |
 
 > The container nginx proxies `/api/` → worldsim (so the frontend can fetch
 > maps same-origin), but the **admin UI** at `/_/` is not proxied. For remote
@@ -743,14 +745,19 @@ https://<host-ip>/audit/      # proxied (same-origin)
 http://<host-ip>:8082/         # direct (port exposed in compose)
 ```
 
+If `AUDIT_AUTH_PASS` is set, the browser prompts for basic auth
+(`AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS`). `/healthz` and `/static/` are
+exempt so health checks and CSS load without credentials.
+
 **Pages:**
 
 | Route | Purpose |
 |-------|---------|
 | `/audit/` | Dashboard: service health cards, event severity counts (24h), event type counts, recent events |
-| `/audit/events` | Searchable event table — filter by type, severity, or actor. HTMX partial reload on filter. |
+| `/audit/events` | Searchable event table — filter by type, severity, actor, or entity ID. HTMX partial reload on filter. |
 | `/audit/events/<id>` | Event detail: full payload, actor info, trace ID (if OTel is enabled) |
 | `/audit/players/<sub>` | Player timeline: all events for one player, chronological |
+| `/audit/world` | World status: per-map overview (dimensions, entity/zone counts), zone table with occupancy, connected players (linked to their events), extension status (alive/dead, heartbeat age, triggers) |
 | `/audit/health` | Service health detail (from pusher's `/healthz`) |
 
 Events are retained for 30 days by default (`AUDIT_RETENTION_HOURS` env
