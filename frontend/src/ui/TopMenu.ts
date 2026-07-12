@@ -4,7 +4,7 @@
 // field. Styled as dark rounded pills, matching AvOverlay's previous HUD
 // look.
 
-import { isLoggedIn, redirectToLogin, logout } from "../auth";
+import { isLoggedIn, redirectToLogin, redirectToRegister, logout } from "../auth";
 import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
 import type { ChatPanel } from "./ChatPanel";
@@ -97,6 +97,15 @@ export class TopMenu {
       else redirectToLogin();
     });
     this.container.appendChild(authBtn);
+
+    // Show a Register button when not logged in.
+    if (!loggedIn) {
+      const registerBtn = document.createElement("button");
+      registerBtn.textContent = "Register";
+      registerBtn.style.cssText = PILL_STYLE + "background:#2ecc71;";
+      registerBtn.addEventListener("click", () => redirectToRegister());
+      this.container.appendChild(registerBtn);
+    }
 
     const menuWrap = document.createElement("div");
     menuWrap.style.cssText = "position:relative;";

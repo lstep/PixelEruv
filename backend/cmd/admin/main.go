@@ -1,15 +1,13 @@
-// admin is the admin portal service. It provides OIDC login via Dex,
-// a signed cookie session, an auth_request endpoint for nginx, and a
-// landing page with links to admin services (PocketBase admin, audit UI).
+// admin is the admin portal service. It provides email/password login
+// via PocketBase, a signed cookie session, an auth_request endpoint for
+// nginx, and a landing page with links to admin services (PocketBase
+// admin, audit UI).
 //
 // Env vars:
 //
 //	ADMIN_HTTP_ADDR       HTTP listen address (default: :8083)
 //	ADMIN_SESSION_SECRET  HMAC-SHA256 signing key for session cookies (required)
-//	DEX_ISSUER            Dex issuer URL (default: http://dex:5556/dex)
-//	DEX_CLIENT_ID         Dex client ID (default: pixeleruv-admin)
-//	DEX_REDIRECT_URL      OIDC redirect URL (default: https://localhost/admin/callback)
-//	PB_API_URL            PocketBase API URL for is_admin check (default: http://worldsim:8090/api)
+//	PB_API_URL            PocketBase API URL (default: http://worldsim:8090/api)
 package main
 
 import (
@@ -26,13 +24,8 @@ import (
 func main() {
 	addr := envOr("ADMIN_HTTP_ADDR", ":8083")
 	cfg := Config{
-		SessionSecret:  os.Getenv("ADMIN_SESSION_SECRET"),
-		DexIssuer:      envOr("DEX_ISSUER", "http://localhost:5556/dex"),
-		DexInternalURL: envOr("DEX_INTERNAL_URL", "http://dex:5556/dex"),
-		DexBrowserURL:  envOr("DEX_BROWSER_URL", "/dex"),
-		DexClientID:    envOr("DEX_CLIENT_ID", "pixeleruv-admin"),
-		DexRedirectURL: envOr("DEX_REDIRECT_URL", "https://localhost/admin/callback"),
-		PBApiURL:       envOr("PB_API_URL", "http://worldsim:8090/api"),
+		SessionSecret: os.Getenv("ADMIN_SESSION_SECRET"),
+		PBApiURL:      envOr("PB_API_URL", "http://worldsim:8090/api"),
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

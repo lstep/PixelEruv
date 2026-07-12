@@ -1,185 +1,88 @@
 package pusher
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
-
-	"crypto/rsa"
-
-	"github.com/golang-jwt/jwt/v5"
 )
 
-// AuthValidator validates OIDC id_tokens against Dex's JWKS.
+// AuthValidator validates PocketBase auth tokens by calling the
+// PocketBase API. PocketBase JWTs are signed with a per-user token key
+// combined with the collection's AuthToken secret, so local validation
+// would require DB access. Instead, we make one HTTP call per WebSocket
+// connection to PocketBase's API, which validates the token server-side.
 type AuthValidator struct {
-	issuer   string // expected iss claim (matches Dex config)
-	jwksURL  string // URL to fetch JWKS from (may differ from issuer in Docker)
-	clientID string
-	keys     map[string]*rsa.PublicKey
-	mu       sync.RWMutex
+	pbAPIURL string
+	client   *http.Client
 }
 
-type jwkKey struct {
-	Kid string `json:"kid"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-	Kty string `json:"kty"`
-	Alg string `json:"alg"`
+type jwtpayload struct {
+	ID   string `json:"id"`
+	Type string `json:"type"`
 }
 
-type jwksResponse struct {
-	Keys []jwkKey `json:"keys"`
-}
-
-func NewAuthValidator(issuer, jwksURL, clientID string) *AuthValidator {
+func NewAuthValidator(pbAPIURL string) *AuthValidator {
 	return &AuthValidator{
-		issuer:   issuer,
-		jwksURL:  jwksURL,
-		clientID: clientID,
-		keys:     make(map[string]*rsa.PublicKey),
+		pbAPIURL: strings.TrimRight(pbAPIURL, "/"),
+		client:   &http.Client{Timeout: 5 * time.Second},
 	}
 }
 
-// fetchKeys fetches the JWKS from Dex and caches the RSA public keys.
-func (a *AuthValidator) fetchKeys() error {
-	resp, err := http.Get(a.jwksURL)
+// extractIDFromJWT decodes the JWT payload (without signature verification)
+// to get the "id" claim. This is used to construct the PocketBase API URL
+// for token validation — the actual signature validation happens server-side.
+func extractIDFromJWT(token string) (string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid JWT format")
+	}
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return fmt.Errorf("fetch jwks: %w", err)
+		return "", fmt.Errorf("decode JWT payload: %w", err)
+	}
+	var payload jwtpayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return "", fmt.Errorf("parse JWT payload: %w", err)
+	}
+	if payload.ID == "" {
+		return "", fmt.Errorf("empty id claim in token")
+	}
+	return payload.ID, nil
+}
+
+// ValidateToken validates a PocketBase auth token by calling the PocketBase
+// API. Returns the user record ID (used as the sub/oidc_sub throughout the
+// system).
+func (a *AuthValidator) ValidateToken(idToken string) (string, error) {
+	userID, err := extractIDFromJWT(idToken)
+	if err != nil {
+		return "", fmt.Errorf("extract id from token: %w", err)
+	}
+
+	// Call the PocketBase API with the token as Bearer auth. PocketBase
+	// validates the JWT signature and expiration server-side. A 200 response
+	// means the token is valid.
+	url := fmt.Sprintf("%s/collections/users/records/%s", a.pbAPIURL, userID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+idToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("pocketbase api call: %w", err)
 	}
 	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("jwks responded %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read jwks: %w", err)
+		return "", fmt.Errorf("pocketbase rejected token: status %d", resp.StatusCode)
 	}
 
-	var jwks jwksResponse
-	if err := json.Unmarshal(body, &jwks); err != nil {
-		return fmt.Errorf("parse jwks: %w", err)
-	}
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.keys = make(map[string]*rsa.PublicKey)
-	for _, k := range jwks.Keys {
-		if k.Kty != "RSA" {
-			continue
-		}
-		key, err := rsaKeyFromJWK(k)
-		if err != nil {
-			continue
-		}
-		a.keys[k.Kid] = key
-	}
-	return nil
-}
-
-// rsaKeyFromJWK builds an rsa.PublicKey from the base64url-encoded n and e.
-func rsaKeyFromJWK(k jwkKey) (*rsa.PublicKey, error) {
-	nBytes, err := base64.RawURLEncoding.DecodeString(k.N)
-	if err != nil {
-		return nil, fmt.Errorf("decode n: %w", err)
-	}
-	eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
-	if err != nil {
-		return nil, fmt.Errorf("decode e: %w", err)
-	}
-	e := 0
-	for _, b := range eBytes {
-		e = e<<8 | int(b)
-	}
-	return &rsa.PublicKey{
-		N: new(big.Int).SetBytes(nBytes),
-		E: e,
-	}, nil
-}
-
-// startKeyRefresh refreshes the JWKS every 10 minutes.
-func (a *AuthValidator) startKeyRefresh(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			_ = a.fetchKeys()
-		}
-	}
-}
-
-// ValidateToken validates an id_token and returns the sub claim.
-func (a *AuthValidator) ValidateToken(idToken string) (string, error) {
-	token, err := jwt.Parse(idToken, func(t *jwt.Token) (interface{}, error) {
-		if t.Method.Alg() != "RS256" {
-			return nil, fmt.Errorf("unexpected alg: %v", t.Method.Alg())
-		}
-		kid, ok := t.Header["kid"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing kid in token header")
-		}
-		a.mu.RLock()
-		key, exists := a.keys[kid]
-		a.mu.RUnlock()
-		if !exists {
-			// Key might have rotated — try refreshing once.
-			if err := a.fetchKeys(); err != nil {
-				return nil, fmt.Errorf("key not found and refresh failed: %w", err)
-			}
-			a.mu.RLock()
-			key, exists = a.keys[kid]
-			a.mu.RUnlock()
-			if !exists {
-				return nil, fmt.Errorf("kid %s not in jwks", kid)
-			}
-		}
-		return key, nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("parse token: %w", err)
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return "", fmt.Errorf("invalid claims type")
-	}
-
-	// Verify issuer.
-	iss, _ := claims["iss"].(string)
-	if iss != a.issuer {
-		return "", fmt.Errorf("invalid issuer: %s", iss)
-	}
-
-	// Verify audience.
-	aud, _ := claims["aud"].(string)
-	if aud != a.clientID {
-		audList, ok := claims["aud"].([]interface{})
-		if !ok {
-			return "", fmt.Errorf("invalid audience: %v", claims["aud"])
-		}
-		found := false
-		for _, v := range audList {
-			if s, ok := v.(string); ok && s == a.clientID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return "", fmt.Errorf("audience does not include %s", a.clientID)
-		}
-	}
-
-	sub, _ := claims["sub"].(string)
-	if sub == "" {
-		return "", fmt.Errorf("empty sub claim")
-	}
-	return sub, nil
+	return userID, nil
 }
