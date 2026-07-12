@@ -1056,7 +1056,6 @@ export class GameScene extends Phaser.Scene {
         this.displayNameByEntity.clear();
         this.isGuestByEntity.clear();
         this.adminInfoByEntity.clear();
-        this.closeDropdown();
         // Restart the scene to reload the map.
         this.scene.restart();
       })
