@@ -53,6 +53,17 @@ export class AvClient {
   // Increments on each join attempt so stale retry loops can bail out
   // when a newer token frame supersedes them.
   private connectGeneration = 0;
+  // Serializes handleTokenFrame calls. Without this, two concurrent "join"
+  // frames (e.g. player oscillating on a proximity edge after a disconnect)
+  // can both pass the "already connected?" guard — this.currentRoom is set
+  // inside connect() after an await, so the second frame sees it still null.
+  // Both then call connect(), creating two Room objects that connect to the
+  // same LiveKit room with the same identity, triggering a DUPLICATE_IDENTITY
+  // server kick and leaving AvClient referencing the dead room.
+  private frameQueue: Promise<void> = Promise.resolve();
+  // True while disconnect() is in progress. Suppresses the Disconnected event
+  // listener so it doesn't double-clean state that disconnect() already clears.
+  private disconnecting = false;
   // Notifies the UI when browser autoplay policy blocks audio playback.
   private onAudioBlocked: AvAudioBlockedHandler | null = null;
   // Debounce timer for "leave" events — delays disconnect so momentary
@@ -399,7 +410,27 @@ export class AvClient {
   // it connects to the new room (skipping if already connected to the same
   // room). On "leave", it disconnects after a short debounce so momentary
   // proximity zone exits don't thrash the LiveKit connection.
-  async handleTokenFrame(msg: {
+  //
+  // Calls are serialized via frameQueue: each frame waits for the previous
+  // one to finish before processing. Without serialization, two concurrent
+  // "join" frames (player oscillating on a proximity edge after a disconnect)
+  // can both pass the "already connected?" guard — this.currentRoom is set
+  // inside connect() after an await, so the second frame sees it still null.
+  // Both create Room objects connecting to the same LiveKit room with the
+  // same identity, triggering a DUPLICATE_IDENTITY server kick.
+  handleTokenFrame(msg: {
+    action: string;
+    room: string;
+    token: string;
+    url: string;
+    members: string[];
+  }): Promise<void> {
+    const run = () => this.processTokenFrame(msg);
+    this.frameQueue = this.frameQueue.then(run, run);
+    return this.frameQueue;
+  }
+
+  private async processTokenFrame(msg: {
     action: string;
     room: string;
     token: string;
@@ -580,6 +611,24 @@ export class AvClient {
       const blocked = !this.room?.canPlaybackAudio;
       this.onAudioBlocked?.(blocked);
     });
+    // Clean up state when the room disconnects unexpectedly (server kick,
+    // network drop, ICE failure). Without this, this.room and this.currentRoom
+    // stay set after the room dies, so all future "join" frames for the same
+    // room are skipped by the guard in processTokenFrame — the player is stuck
+    // with no A/V until a page reload. The disconnecting flag suppresses this
+    // handler during a client-initiated disconnect() (which already cleans up).
+    this.room.on(lk.RoomEvent.Disconnected, () => {
+      if (this.disconnecting) return;
+      if (!this.room) return;
+      console.warn(`AvClient: room ${this.currentRoom} disconnected unexpectedly`);
+      this.detachScreenSourceVisibilityRelay();
+      this.screenShareEnabled = false;
+      this.room = null;
+      this.currentRoom = null;
+      this.participants.clear();
+      this.onAudioBlocked?.(false);
+      this.notifyChange();
+    });
 
     // Upgrade the LiveKit signaling URL to a secure scheme when the page is
     // served over HTTPS. Browsers block insecure ws:// from an HTTPS page
@@ -642,15 +691,20 @@ export class AvClient {
       this.leaveTimer = null;
     }
     if (this.room) {
+      this.disconnecting = true;
       this.detachScreenSourceVisibilityRelay();
       this.screenShareEnabled = false;
-      await this.room.disconnect();
-      console.log(`AvClient: disconnected from room ${this.currentRoom}`);
-      this.room = null;
-      this.currentRoom = null;
-      this.participants.clear();
-      this.onAudioBlocked?.(false);
-      this.notifyChange();
+      try {
+        await this.room.disconnect();
+        console.log(`AvClient: disconnected from room ${this.currentRoom}`);
+      } finally {
+        this.room = null;
+        this.currentRoom = null;
+        this.participants.clear();
+        this.onAudioBlocked?.(false);
+        this.notifyChange();
+        this.disconnecting = false;
+      }
     }
   }
 
