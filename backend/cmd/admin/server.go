@@ -240,8 +240,8 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clear PKCE cookies.
-	http.SetCookie(w, &http.Cookie{Name: "pkce_verifier", MaxAge: -1, Path: "/"})
-	http.SetCookie(w, &http.Cookie{Name: "oauth_state", MaxAge: -1, Path: "/"})
+	http.SetCookie(w, &http.Cookie{Name: "pkce_verifier", MaxAge: -1, Path: "/", Secure: true})
+	http.SetCookie(w, &http.Cookie{Name: "oauth_state", MaxAge: -1, Path: "/", Secure: true})
 
 	// Exchange code for id_token.
 	tokenParams := url.Values{
