@@ -252,7 +252,14 @@ func importCollectionRecords(app core.App, ec exportCollection, filesRoot string
 		id := fmt.Sprintf("%v", data["id"])
 
 		// Idempotent: skip records that already exist (unless -force cleared them).
-		if existing, _ := app.FindRecordById(ec.Name, id); existing != nil {
+		// FindRecordById returns a non-nil error when the record is absent (the
+		// expected case here), but also on real failures (DB issue, missing
+		// collection). Log the latter so they're not silently swallowed.
+		existing, findErr := app.FindRecordById(ec.Name, id)
+		if findErr != nil {
+			log.Printf("import: lookup %s/%s: %v (treating as not found)", ec.Name, id, findErr)
+		}
+		if existing != nil {
 			continue
 		}
 
