@@ -240,17 +240,19 @@ See: [Quick Start §10](quick-start.md#10-audit-and-observability)
 ### How do I access the audit UI?
 
 Open `http://localhost:8082/` (direct) or `http://localhost:4080/audit/`
-(through nginx). No login required — it relies on network-level
-restriction (restrict access via nginx auth or firewall in production).
+(through nginx). Basic auth is enabled when `AUDIT_AUTH_PASS` is set
+(credentials: `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS`, defaults to user
+`admin` with no password). `/healthz` and `/static/` are exempt.
 
 Pages:
 
 | Route | Purpose |
 |-------|---------|
 | `/audit/` | Dashboard: health cards, severity counts, recent events |
-| `/audit/events` | Searchable table — filter by type, severity, actor |
-| `/audit/events/<id>` | Event detail with trace deep-link to OpenObserve |
+| `/audit/events` | Searchable table — filter by type, severity, actor, entity |
+| `/audit/events/<id>` | Event detail with trace deep-link |
 | `/audit/players/<sub>` | Per-player timeline |
+| `/audit/world` | Live world status: per-map overview, players, extensions, zones |
 | `/audit/health` | Service health detail |
 
 ### How do I access OpenObserve?
