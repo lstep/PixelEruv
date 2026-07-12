@@ -675,6 +675,13 @@ Persistent data lives in two Docker volumes: `pb_data` (PocketBase, mounted
 into worldsim via `PB_DATA_DIR`) and `dex_data` (Dex). Back them up with
 `docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine tar czf /b/pb_data.tgz /d`.
 
+For a portable JSON export of PB collections (schema + records + file fields),
+build the `pb-collections` binary (`make build` → `dist/bin/pb-collections`)
+and run it against a copy of the `pb_data` directory. See
+[Backup and Restore](24-backup-and-restore.md) for the full export/import
+flow, trade-offs between volume snapshots and `pb-collections`, and restore
+instructions.
+
 ---
 
 ## 9. Common pitfalls
