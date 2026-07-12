@@ -334,6 +334,9 @@ interface Avatar {
   predY: number;
   // Name tag above the avatar (null for props and local player's own avatar).
   nameTag: Phaser.GameObjects.Container | null;
+  // IP text shown below the name in the name tag (admin viewers only).
+  // Null for non-admins or when admin info hasn't arrived yet.
+  ipText: Phaser.GameObjects.Text | null;
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
@@ -383,14 +386,6 @@ export class GameScene extends Phaser.Scene {
   private dayNightOverlay: DayNightOverlay | null = null;
   // Floating on-screen joystick for touch devices. Null on desktop.
   private joystick: VirtualJoystick | null = null;
-  // Info dropdown opened by clicking a name tag's status dot. Only one open
-  // at a time. Shows "Hello world" for regular users, IP + device ID for
-  // admins, plus stub "Invite" and (admin-only) "Ban" buttons.
-  private openDropdownEntityId: string | null = null;
-  private dropdownContainer: Phaser.GameObjects.Container | null = null;
-  // Set by the dot/button pointerdown handlers so the scene-level pointerdown
-  // listener knows not to close the dropdown on that same click.
-  private _dropdownClickedThisFrame = false;
 
   constructor() {
     super("GameScene");
@@ -871,7 +866,6 @@ export class GameScene extends Phaser.Scene {
         this.displayNameByEntity.clear();
         this.isGuestByEntity.clear();
         this.adminInfoByEntity.clear();
-        this.closeDropdown();
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
         this.inputDirty = true;
@@ -898,8 +892,11 @@ export class GameScene extends Phaser.Scene {
       onAdminInfo: (msg) => {
         for (const e of msg.entities) {
           this.adminInfoByEntity.set(e.entityId, { ip: e.ip, isGuest: e.isGuest, deviceId: e.deviceId });
-          // Refresh the dropdown if open so new admin info is shown.
-          this.refreshDropdownIfOpen(e.entityId);
+          // If the avatar already has a name tag, update it to show the IP.
+          const av = this.avatars.get(e.entityId);
+          if (av?.nameTag) {
+            this.updateNameTagAdminInfo(e.entityId);
+          }
         }
       },
       onBanned: (reason, banUntil) => {
@@ -916,15 +913,6 @@ export class GameScene extends Phaser.Scene {
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
     topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
 
-    // Close the info dropdown when clicking outside it. The dot and buttons
-    // set _dropdownClickedThisFrame to suppress this on their own clicks.
-    this.input.on("pointerdown", () => {
-      if (!this._dropdownClickedThisFrame && this.dropdownContainer) {
-        this.closeDropdown();
-      }
-      this._dropdownClickedThisFrame = false;
-    });
-
     // Clean up A/V video bar + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.videoBar?.destroy();
@@ -933,7 +921,6 @@ export class GameScene extends Phaser.Scene {
       this.videoBar = null;
       this.screenShareOverlay = null;
       this.avClient = null;
-      this.closeDropdown();
       topMenu?.detachAvControls();
       window.removeEventListener("blur", clearMovementInput);
       document.removeEventListener("visibilitychange", onVisibilityChange);
@@ -1001,14 +988,6 @@ export class GameScene extends Phaser.Scene {
         avatar.nameTag.y = avatar.sprite.y - 52 / zoom;
         avatar.nameTag.setScale(1 / zoom);
         avatar.nameTag.setDepth(avatar.sprite.depth + 0.01);
-      }
-      // Reposition the info dropdown to follow the avatar it's attached to.
-      if (this.dropdownContainer && this.openDropdownEntityId === avatar.entityId) {
-        const zoom = this.cameras.main.zoom;
-        this.dropdownContainer.x = avatar.sprite.x;
-        this.dropdownContainer.y = avatar.sprite.y - 52 / zoom + 6 / zoom;
-        this.dropdownContainer.setScale(1 / zoom);
-        this.dropdownContainer.setDepth(avatar.sprite.depth + 0.02);
       }
       // Animate based on whether the avatar is actually moving on screen.
       const dx = avatar.sprite.x - prevX, dy = avatar.sprite.y - prevY;
@@ -1138,6 +1117,7 @@ export class GameScene extends Phaser.Scene {
             predX: 0,
             predY: 0,
             nameTag: null,
+            ipText: null,
           });
           console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid}`);
           continue;
@@ -1170,6 +1150,7 @@ export class GameScene extends Phaser.Scene {
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
         nameTag: null,
+        ipText: null,
       });
       // Create name tag if the server sent a DisplayName component. Hidden
       // for the local player's own avatar (you don't need a tag over your
@@ -1265,9 +1246,6 @@ export class GameScene extends Phaser.Scene {
     for (const dest of batch.destroys) {
       const avatar = this.avatars.get(dest.entityId);
       if (avatar) {
-        if (this.openDropdownEntityId === dest.entityId) {
-          this.closeDropdown();
-        }
         avatar.nameTag?.destroy();
         avatar.sprite.destroy();
         this.avatars.delete(dest.entityId);
@@ -1280,20 +1258,27 @@ export class GameScene extends Phaser.Scene {
   }
 
   // createNameTag builds a speech-bubble name tag above the avatar's sprite.
-  // A semi-transparent grey pillbox contains a green status pill (clickable —
-  // opens an info dropdown), the avatar's name in a scalable web font
-  // (Nunito), and optionally a "GUEST" badge for anonymous users. A small
-  // inverted triangle at the bottom points down at the avatar. The container
-  // is counter-scaled by 1/zoom each frame (see update) so it stays a
-  // constant screen size. Hidden for the local player's own avatar.
+  // A semi-transparent grey pillbox contains a green status pill, the
+  // avatar's name in a scalable web font (Nunito), and optionally a "GUEST"
+  // badge for anonymous users. For admin viewers, up to two pillboxes below
+  // the name pillbox show admin-only data: the IP pillbox and the device ID
+  // pillbox. A small inverted triangle at the bottom points down at the
+  // avatar. The container is counter-scaled by 1/zoom each frame (see update)
+  // so it stays a constant screen size. Hidden for the local player's own
+  // avatar.
   private createNameTag(entityId: string, name: string, isGuest: boolean): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
 
-    // Close any open dropdown for this entity — the old dot handler is gone.
-    if (this.openDropdownEntityId === entityId) {
-      this.closeDropdown();
+    // Collect admin-only data (admin viewers only). Each entry becomes its
+    // own pillbox below the name.
+    const adminPills: string[] = [];
+    if (this.ws?.isAdmin()) {
+      const info = this.adminInfoByEntity.get(entityId);
+      if (info?.ip) adminPills.push(info.ip);
+      if (info?.deviceId) adminPills.push("dev:" + info.deviceId.slice(0, 8));
     }
+    const adminPillCount = adminPills.length;
 
     const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
 
@@ -1320,21 +1305,10 @@ export class GameScene extends Phaser.Scene {
       guestBadge.setOrigin(0, 0.5);
     }
 
-    // --- Status pill (green circle — clickable, opens info dropdown) ---
+    // --- Status pill (green circle — status not yet implemented) ---
     const pillRadius = 4;
     const statusPill = this.add.circle(0, 0, pillRadius, 0x22c55e);
     statusPill.setStrokeStyle(1, 0x15803d);
-    // Enlarge the hit area so the dot is easy to click despite counter-scaling.
-    statusPill.setInteractive(
-      new Phaser.Geom.Circle(0, 0, 14),
-      Phaser.Geom.Circle.Contains,
-    );
-    statusPill.on("pointerover", () => statusPill.setScale(1.3));
-    statusPill.on("pointerout", () => statusPill.setScale(1));
-    statusPill.on("pointerdown", () => {
-      this._dropdownClickedThisFrame = true;
-      this.toggleDropdown(entityId);
-    });
 
     // --- Layout ---
     const padding = 10;
@@ -1342,14 +1316,20 @@ export class GameScene extends Phaser.Scene {
     const pillBoxHeight = 22;
     const tailW = 8;
     const tailH = 5;
+    const adminPillHeight = 18; // single-line pillbox
+    const adminGap = 2; // gap between name pillbox and admin pillboxes
+    const adminInterGap = 1; // gap between stacked admin pillboxes
+    const adminStackHeight = adminPillCount > 0
+      ? adminPillCount * adminPillHeight + (adminPillCount - 1) * adminInterGap
+      : 0;
     const badgeGap = guestBadge ? 6 : 0;
     const contentWidth =
       pillRadius * 2 + gap + text.width + badgeGap + (guestBadge ? guestBadge.width : 0);
     const pillBoxWidth = contentWidth + padding * 2;
 
     // (0, 0) in container space = tip of the speech-bubble tail, pointing
-    // down at the avatar. Stack grows upward: tail → name.
-    const bgCenterY = -tailH - pillBoxHeight / 2;
+    // down at the avatar. Stack grows upward: tail → admin pillboxes → name.
+    const bgCenterY = -tailH - adminStackHeight - adminGap - pillBoxHeight / 2;
 
     // --- Pillbox background (semi-transparent grey, rounded) ---
     const bg = this.add.graphics();
@@ -1381,6 +1361,52 @@ export class GameScene extends Phaser.Scene {
     const children: Phaser.GameObjects.GameObject[] = [bg, tail, statusPill, text];
     if (guestBadge) children.push(guestBadge);
 
+    // --- Admin pillboxes (admin viewers only) ---
+    // Each admin data point gets its own pillbox, stacked between the name
+    // pillbox and the tail. The first (IP) is closest to the name; the last
+    // is closest to the tail.
+    if (adminPillCount > 0) {
+      const adminTexts: Phaser.GameObjects.Text[] = [];
+      let maxAdminWidth = 0;
+      for (const label of adminPills) {
+        const at = this.add.text(0, 0, label, {
+          fontFamily: "Nunito, sans-serif",
+          fontSize: "10px",
+          color: "#cbd5e1",
+          fontStyle: "bold",
+        });
+        at.setOrigin(0.5, 0.5);
+        if (at.width > maxAdminWidth) maxAdminWidth = at.width;
+        adminTexts.push(at);
+      }
+      const adminPillBoxWidth = maxAdminWidth + padding * 2;
+
+      for (let i = 0; i < adminPillCount; i++) {
+        // i=0 is the first admin pill (IP), closest to the name pillbox.
+        // Stack grows downward toward the tail.
+        const pillTop = -tailH - adminStackHeight + i * (adminPillHeight + adminInterGap);
+        const pillCenterY = pillTop + adminPillHeight / 2;
+
+        const adminBg = this.add.graphics();
+        adminBg.fillStyle(0x333340, 0.78);
+        adminBg.fillRoundedRect(
+          -adminPillBoxWidth / 2,
+          pillCenterY - adminPillHeight / 2,
+          adminPillBoxWidth,
+          adminPillHeight,
+          8,
+        );
+        adminBg.setDepth(0);
+
+        children.push(adminBg);
+        adminTexts[i].setPosition(0, pillCenterY);
+        children.push(adminTexts[i]);
+      }
+      avatar.ipText = adminTexts[0] ?? null;
+    } else {
+      avatar.ipText = null;
+    }
+
     container.add(children);
     container.setDepth(avatar.sprite.depth + 0.01);
     // Hide for the local player's own avatar.
@@ -1390,151 +1416,18 @@ export class GameScene extends Phaser.Scene {
     avatar.nameTag = container;
   }
 
-  // refreshDropdownIfOpen rebuilds the dropdown for an entity if it is
-  // currently open, so admin info that arrives after the dropdown was opened
-  // is reflected. The name tag itself no longer depends on admin info.
-  private refreshDropdownIfOpen(entityId: string): void {
-    if (this.openDropdownEntityId === entityId) {
-      this.closeDropdown();
-      this.openDropdown(entityId);
-    }
-  }
-
-  // toggleDropdown opens or closes the info dropdown for an entity. Only one
-  // dropdown is open at a time — opening for a new entity closes the previous.
-  private toggleDropdown(entityId: string): void {
-    if (this.openDropdownEntityId === entityId) {
-      this.closeDropdown();
-      return;
-    }
-    this.closeDropdown();
-    this.openDropdown(entityId);
-  }
-
-  // openDropdown builds and shows the info dropdown for an entity. Content
-  // depends on the viewer: regular users see "Hello world", admins see the
-  // entity's IP and short device ID. Stub "Invite" and (admin-only) "Ban"
-  // buttons are included — they show "Not implemented" on click.
-  private openDropdown(entityId: string): void {
+  // updateNameTagAdminInfo recreates the name tag when admin info arrives or
+  // changes for an entity. The admin pillbox layout depends on the number of
+  // admin lines, so the simplest correct approach is to destroy and rebuild.
+  private updateNameTagAdminInfo(entityId: string): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
-
-    const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
-    const children: Phaser.GameObjects.GameObject[] = [];
-
-    const panelW = 130;
-    const pad = 8;
-    const lineHeight = 14;
-    const btnHeight = 18;
-    const btnGap = 4;
-    const isAdmin = this.ws?.isAdmin() ?? false;
-
-    // --- Info lines ---
-    // Regular-user info is always shown; admin-only lines are appended below.
-    const infoLines: { text: string; muted: boolean }[] = [
-      { text: "Hello world", muted: false },
-    ];
-    if (isAdmin) {
-      const info = this.adminInfoByEntity.get(entityId);
-      if (info?.ip) infoLines.push({ text: "IP: " + info.ip, muted: true });
-      if (info?.deviceId)
-        infoLines.push({ text: "dev: " + info.deviceId.slice(0, 8), muted: true });
-    }
-
-    // x origin = center of the panel (matches the name tag pillbox, whose
-    // bg is drawn at -pillBoxWidth/2). Content x-coords are offset by -panelW/2.
-    const x0 = -panelW / 2;
-
-    let y = pad;
-    for (const line of infoLines) {
-      const t = this.add.text(x0 + pad, y, line.text, {
-        fontFamily: "Nunito, sans-serif",
-        fontSize: "11px",
-        color: line.muted ? "#cbd5e1" : "#ffffff",
-      });
-      t.setOrigin(0, 0);
-      children.push(t);
-      y += lineHeight;
-    }
-
-    // --- Separator ---
-    y += 3;
-    const sep = this.add.graphics();
-    sep.fillStyle(0x6b7280, 0.4);
-    sep.fillRect(x0 + pad, y, panelW - pad * 2, 1);
-    children.push(sep);
-    y += 4;
-
-    // --- Buttons (stub — show "Not implemented" on click) ---
-    const makeButton = (label: string): void => {
-      const btn = this.add.text(x0 + pad, y, label, {
-        fontFamily: "Nunito, sans-serif",
-        fontSize: "10px",
-        color: "#ffffff",
-        fontStyle: "bold",
-        backgroundColor: "#3e3e4a",
-        padding: { left: 6, right: 6, top: 3, bottom: 3 },
-      });
-      btn.setOrigin(0, 0);
-      btn.setInteractive({ useHandCursor: true });
-      btn.on("pointerover", () => btn.setStyle({ backgroundColor: "#52525e" }));
-      btn.on("pointerout", () => btn.setStyle({ backgroundColor: "#3e3e4a" }));
-      btn.on("pointerdown", () => {
-        this._dropdownClickedThisFrame = true;
-        this.showDropdownStub(container, panelW);
-      });
-      children.push(btn);
-      y += btnHeight + btnGap;
-    };
-
-    makeButton("Invite");
-    if (isAdmin) makeButton("Ban");
-
-    y -= btnGap; // remove trailing gap
-    const panelH = y + pad;
-
-    // --- Background (drawn first so it sits behind content) ---
-    const bg = this.add.graphics();
-    bg.fillStyle(0x333340, 0.92);
-    bg.fillRoundedRect(x0, 0, panelW, panelH, 6);
-    bg.setDepth(-1);
-    children.unshift(bg);
-
-    container.add(children);
-    container.setScale(1 / this.cameras.main.zoom);
-    container.setDepth(avatar.sprite.depth + 0.02);
-    container.setData("panelH", panelH);
-    this.dropdownContainer = container;
-    this.openDropdownEntityId = entityId;
-  }
-
-  // showDropdownStub shows a temporary "Not implemented yet" text below the
-  // dropdown panel, fading out after 1.5 seconds.
-  private showDropdownStub(
-    container: Phaser.GameObjects.Container,
-    panelW: number,
-  ): void {
-    const panelH = container.getData("panelH") as number;
-    const stub = this.add.text(0, panelH + 2, "Not implemented yet", {
-      fontFamily: "Nunito, sans-serif",
-      fontSize: "9px",
-      color: "#fbbf24",
-    });
-    stub.setOrigin(0.5, 0);
-    container.add(stub);
-    this.tweens.add({
-      targets: stub,
-      alpha: { from: 1, to: 0 },
-      duration: 1500,
-      onComplete: () => stub.destroy(),
-    });
-  }
-
-  // closeDropdown destroys the current dropdown if any.
-  private closeDropdown(): void {
-    this.dropdownContainer?.destroy();
-    this.dropdownContainer = null;
-    this.openDropdownEntityId = null;
+    const name = this.displayNameByEntity.get(entityId) ?? "";
+    const isGuest = this.isGuestByEntity.get(entityId) ?? false;
+    avatar.nameTag?.destroy();
+    avatar.nameTag = null;
+    avatar.ipText = null;
+    this.createNameTag(entityId, name, isGuest);
   }
 
   // resolveDisplayName returns the display name for an entity, used by the

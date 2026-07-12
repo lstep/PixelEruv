@@ -1,30 +1,5 @@
 # Dashboard
 
-## Name Tag Info Dropdown
-
-**Branch:** `main` (uncommitted)
-**Status:** Implemented — admin pillboxes replaced by a clickable status dot that opens a dropdown panel. tsc + Vite build pass.
-
-The fixed secondary pillboxes (IP, device_id) below name tags have been
-removed. The green status dot on the left of the name is now clickable
-and opens a small dropdown panel. Regular users see "Hello world";
-admins see the player's IP and short device ID. Both see an "Invite"
-button; admins also see a "Ban" button. The buttons are stubs — they
-show "Not implemented yet" when clicked. Wiring the ban button to a
-server-side ban command (proto `BanFrame`, `BanStore.AddBan`, worldsim
-handler) is a planned future task.
-
-Only one dropdown is open at a time. Clicking another dot switches,
-clicking elsewhere closes it. The dropdown follows the avatar each
-frame, counter-scaled like the name tag.
-
-### Files
-
-| File | Changes |
-|---|---|
-| `frontend/src/scenes/GameScene.ts` | Removed admin pillboxes + `ipText` field; made status dot interactive; added `openDropdown`/`toggleDropdown`/`closeDropdown`/`showDropdownStub`/`refreshDropdownIfOpen` methods; per-frame dropdown positioning; click-outside-to-close listener; cleanup on destroy/reconnect/shutdown |
-| `documentation/features.md` | §1.5 updated — dropdown description + storyboard |
-
 ## Extension Options System (Phase 3, Part B complete)
 
 **Branch:** `feat/extension-options`

@@ -460,31 +460,22 @@ Each player's display name renders as a bitmap-text tag floating above
 their avatar. Names come from the replicated `DisplayName` component —
 the server stamps them, the client never authors them directly. Name
 tags follow the avatar each frame and sit at a fixed pixel offset above
-the sprite. A green status dot on the left of the name is clickable and
-opens a small info dropdown panel.
-
-The dropdown content depends on the viewer. Regular users see a
-placeholder line ("Hello world"). Admins see the player's IP address
-and a short device ID, delivered via a dedicated NATS channel that
-carries an `AdminInfoFrame` with every player's IP, device ID, guest
-status, and OIDC subject — the data only reaches admin clients. Both
-regular and admin viewers see an "Invite" button; admins additionally
-see a "Ban" button. These buttons are stubs — they show "Not
-implemented yet" when clicked. Wiring the ban button to a server-side
-ban command is a planned future task.
+the sprite.
 
 Logged-in players also have their IP address and last-seen timestamp
-persisted in the `players` collection.
+persisted in the `players` collection. Admins see the IP and a short
+device ID in an expandable pillbox below the name tag — regular
+players never see it. The pusher conditionally subscribes admin users
+to a dedicated NATS channel that carries an `AdminInfoFrame` with every
+player's IP, device ID, guest status, and OIDC subject, so the data
+only reaches clients that should see it.
 
 **Storyboard:** Two characters on screen, each with a name tag above.
 Walk one character around — the tag follows. Point out that guests get
 a generated name and logged-in users get their PocketBase display name.
-Click the green dot on a name tag — a dropdown panel appears with
-"Hello world" and an "Invite" button. Switch to an admin account —
-click the same dot — the dropdown now shows the player's IP and device
-ID, plus "Invite" and "Ban" buttons. Click elsewhere — the dropdown
-closes. Switch back to a regular account — no IP or device ID is
-visible.
+Switch to an admin account — click a name tag to expand it into a
+pillbox showing the player's IP and device ID. Switch back to a regular
+account — the pillbox is gone, no IP or device ID is visible.
 
 ### 1.6 Mobile Support with Virtual Joystick
 
