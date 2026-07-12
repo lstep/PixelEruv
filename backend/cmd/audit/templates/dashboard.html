@@ -1,0 +1,64 @@
+{{template "base" .}}
+{{define "title"}}Dashboard{{end}}
+{{define "content"}}
+<section class="dashboard">
+  <div class="cards">
+    <div class="card">
+      <h3>Info (24h)</h3>
+      <span class="big">{{index .SeverityCounts "info"}}</span>
+    </div>
+    <div class="card">
+      <h3>Warnings (24h)</h3>
+      <span class="big warn">{{index .SeverityCounts "warn"}}</span>
+    </div>
+    <div class="card">
+      <h3>Errors (24h)</h3>
+      <span class="big error">{{index .SeverityCounts "error"}}</span>
+    </div>
+    <div class="card">
+      <h3>Uptime</h3>
+      <span class="big">{{.Uptime}}</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h3>Service Health</h3>
+      <table>
+        <thead><tr><th>Service</th><th>Status</th><th>Version</th><th>Last Seen</th></tr></thead>
+        <tbody>
+        {{range .Health}}
+          <tr>
+            <td>{{.service}}</td>
+            <td class="status-{{.status}}">{{.status}}</td>
+            <td>{{.version}}</td>
+            <td>{{.last_seen}}</td>
+          </tr>
+        {{else}}
+          <tr><td colspan="4">No health data</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h3>Event Types (24h)</h3>
+      <table>
+        <thead><tr><th>Event Type</th><th>Count</th></tr></thead>
+        <tbody>
+        {{range $type, $count := .TypeCounts}}
+          <tr><td><a href="{{bp}}/events?type={{$type}}">{{$type}}</a></td><td>{{$count}}</td></tr>
+        {{else}}
+          <tr><td colspan="2">No events</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Recent Events</h3>
+    {{template "events_table_inner" .RecentEvents}}
+  </div>
+</section>
+{{end}}

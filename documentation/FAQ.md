@@ -217,6 +217,106 @@ spawn zone on the target map.
 
 ---
 
+## Audit and debugging
+
+### How do I see what's happening in the system?
+
+The **audit service** ships with the stack and records lifecycle and
+interaction events: player connections, bans, chat messages, zone
+transitions, map reloads, extension registrations, A/V tokens. Good for
+"who did what and when". Open it at `/audit/` or `http://localhost:8082`.
+
+For **OpenTelemetry traces and logs** ("why was this slow"), use
+`make debug` with motel (dev TUI). OpenObserve (production OTel backend)
+is not included by default — it requires AES-NI CPU instructions. See
+[Quick Start §10b](quick-start.md#10b-opentelemetry-traces-motel--openobserve)
+for how to add it on a compatible CPU.
+
+See: [Quick Start §10](quick-start.md#10-audit-and-observability)
+
+### How do I access the audit UI?
+
+Open `http://localhost:8082/` (direct) or `http://localhost:4080/audit/`
+(through nginx). No login required — it relies on network-level
+restriction (restrict access via nginx auth or firewall in production).
+
+Pages:
+
+| Route | Purpose |
+|-------|---------|
+| `/audit/` | Dashboard: health cards, severity counts, recent events |
+| `/audit/events` | Searchable table — filter by type, severity, actor |
+| `/audit/events/<id>` | Event detail with trace deep-link to OpenObserve |
+| `/audit/players/<sub>` | Per-player timeline |
+| `/audit/health` | Service health detail |
+
+### How do I access OpenObserve?
+
+OpenObserve is not included in the Docker stack by default (its x86 build
+requires AES-NI CPU instructions). To add it on a compatible CPU, see
+[Quick Start §10b](quick-start.md#10b-opentelemetry-traces-motel--openobserve).
+For local dev, use `make debug` with motel instead.
+
+### I enabled OTel but there are no traces. Why?
+
+Telemetry is off by default. Enable it by setting `OTEL_ENABLED=true` on
+the services you want to instrument:
+
+```bash
+# Enable for all services
+echo "OTEL_ENABLED=true" >> .env
+docker compose -f docker/docker-compose.yml up -d
+
+# Or enable for a single service to test
+docker compose -f docker/docker-compose.yml up -d -e OTEL_ENABLED=true worldsim
+```
+
+Once enabled, connect a client, move around, send a chat message — then
+refresh OpenObserve and search for traces under the `default` stream.
+
+### What's the difference between motel and OpenObserve?
+
+**motel** is a dev-only TUI collector for local debugging (`make debug`).
+**OpenObserve** is the production OTel backend with a web UI and SQL
+search. Both receive the same OTLP exports — the only difference is the
+endpoint:
+
+| Mode | Endpoint | UI |
+|------|----------|----|
+| Dev (`make debug`) | `http://127.0.0.1:27686` | motel TUI at `http://127.0.0.1:27686` |
+| Production (Docker) | `http://openobserve:5080/api/default` | OpenObserve at `http://localhost:5080` |
+
+### How long are audit events kept?
+
+30 days by default, configurable via `AUDIT_RETENTION_HOURS` on the
+`audit` service in `docker-compose.yml`. The audit service runs an hourly
+cleanup loop that deletes events older than the retention period.
+
+### Where does the audit service store its data?
+
+In its own SQLite database at `/data/audit.db` inside the container
+(backed by the `audit_data` Docker volume). It is independent of
+worldsim/PocketBase — it survives worldsim crashes and can audit the
+crash.
+
+### The audit UI shows no events. Why?
+
+Events are emitted only when something happens — a client connects,
+disconnects, sends chat, etc. Open the game in a browser, log in, move
+around, send a chat message, then refresh the audit dashboard. You
+should see `client.connected`, `player.provisioned`, `chat.message`,
+etc.
+
+If still nothing appears, check that the audit service is running and
+connected to NATS:
+
+```bash
+docker compose -f docker/docker-compose.yml logs audit
+# Should show: "audit store ready" + "audit service listening"
+```
+
+---
+
 ## Troubleshooting
 
 ### Black screen with `crypto.subtle` error
@@ -244,3 +344,37 @@ docker compose -f docker/docker-compose.yml up -d --force-recreate dex
 ```
 
 See: [Quick Start § Common pitfalls](quick-start.md#9-common-pitfalls)
+
+### nginx crashes with "host not found in upstream"
+
+The nginx config uses runtime DNS resolution for `/audit/` and `/otel/`
+proxies, so this should not happen. If you see it for other upstreams
+(`pusher`, `worldsim`, `dex`), it means a dependency container hasn't
+started yet. The `frontend` service has `depends_on` for all its
+upstreams — if you removed or renamed a service, update the
+`depends_on` list in `docker-compose.yml`.
+
+### OpenObserve keeps restarting (exit code 132)
+
+OpenObserve is not included in the stack by default. If you added it and
+it crashes with exit code 132 (SIGILL), the CPU lacks AES-NI instructions
+that OpenObserve's x86 build hard-requires via the `gxhash` crate. This
+affects older Xeons (pre-Sandy Bridge, 2011) and other CPUs without
+AES-NI. There is no official x86 build without it.
+
+Workarounds:
+- Use `make debug` with motel for local tracing (no AES-NI required).
+- Build OpenObserve from source with `gxhash` disabled (see
+  [openobserve#3910](https://github.com/openobserve/openobserve/issues/3910)).
+- On Apple Silicon (M1/M2/M3), use `openobserve/openobserve:latest-arm64`
+  (non-SIMD arm64 build).
+- Use a different OTel backend (Jaeger for traces, Grafana Loki for logs).
+
+If OpenObserve is running but crashing for other reasons, check its logs
+and common causes:
+- **Password too weak** — requires at least one lowercase, uppercase,
+  digit, and special character.
+- **`ZO_TRACING_ENABLED` without endpoint** — if you enable
+  `ZO_TRACING_ENABLED`, you must also set `ZO_TRACING_OTLP_ENDPOINT`
+  (or just leave tracing disabled — it's for self-tracing OpenObserve
+  itself, not required for receiving traces from other services).

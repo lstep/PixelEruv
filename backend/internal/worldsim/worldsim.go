@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/lstep/pixeleruv/backend/internal/audit"
 	otelinternal "github.com/lstep/pixeleruv/backend/internal/otel"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 	"github.com/lstep/pixeleruv/backend/internal/version"
@@ -570,6 +571,10 @@ func (s *Simulator) subscribe() error {
 			return
 		}
 		s.transitionEntity(ctx, req.EntityID, req.MapID, req.TargetEntity)
+		audit.Emit(s.nc, "player.teleport", audit.SeverityInfo,
+			audit.Actor{EntityID: req.EntityID},
+			audit.Details{"target_map": req.MapID, "target_entity": req.TargetEntity},
+			"")
 	}); err != nil {
 		return fmt.Errorf("subscribe worldsim.entity.teleport: %w", err)
 	}
@@ -579,6 +584,12 @@ func (s *Simulator) subscribe() error {
 	// PocketBase directly.
 	if err := s.subscribeZoneMetadata(); err != nil {
 		return fmt.Errorf("subscribe worldsim.zones.get: %w", err)
+	}
+
+	// Stats request-reply handler: the audit service queries this for the
+	// /world status page (per-map overview, players, extensions, zones).
+	if err := s.subscribeStats(); err != nil {
+		return fmt.Errorf("subscribe worldsim.stats.get: %w", err)
 	}
 
 	// Announce readiness so extensions can register against a live subscriber
@@ -773,6 +784,10 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			s.logger.InfoContext(ctx, "rejected banned client",
 				"client", clientID, "sub", sub, "ip", ip, "device", deviceID,
 				"reason", ban.Reason, "until", ban.BannedUntil)
+			audit.Emit(s.nc, "player.banned", audit.SeverityWarn,
+				audit.Actor{Sub: sub, ClientID: clientID, IP: ip, DeviceID: deviceID},
+				audit.Details{"reason": ban.Reason, "until": ban.BannedUntil},
+				"")
 			return provisionResult{
 				banned:    true,
 				banReason: ban.Reason,
@@ -839,6 +854,10 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	s.logger.InfoContext(ctx, "provisioned entity",
 		"entity", entityID, "client", clientID, "sub", sub,
 		"map", mapName, "x", e.Position.X, "y", e.Position.Y)
+	audit.Emit(s.nc, "player.provisioned", audit.SeverityInfo,
+		audit.Actor{Sub: sub, EntityID: entityID, ClientID: clientID, IP: ip, DeviceID: deviceID},
+		audit.Details{"map": mapName, "x": e.Position.X, "y": e.Position.Y, "is_admin": isAdmin},
+		"")
 	return provisionResult{
 		entityID:      entityID,
 		mapID:         mapName,
@@ -901,6 +920,10 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	}
 
 	s.logger.InfoContext(ctx, "despawned entity", "entity", entityID, "client", clientID)
+	audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Details{"map": mapID, "x": posX, "y": posY},
+		"")
 }
 
 // handlePortalZone checks if the entered zone is a portal and triggers a map
@@ -1051,6 +1074,10 @@ func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, t
 	s.logger.InfoContext(ctx, "entity transitioned to new map",
 		"entity", entityID, "old_map", oldMap, "new_map", targetMap,
 		"target_entity", targetEntity, "x", spawnX, "y", spawnY)
+	audit.Emit(s.nc, "player.map_transition", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID},
+		audit.Details{"old_map": oldMap, "new_map": targetMap, "target_entity": targetEntity, "x": spawnX, "y": spawnY},
+		"")
 }
 
 func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {
@@ -1290,6 +1317,11 @@ func (s *Simulator) handleChat(ctx context.Context, clientID string, chat *pb.Ch
 	}
 	s.mu.Unlock()
 
+	audit.Emit(s.nc, "chat.message", audit.SeverityInfo,
+		audit.Actor{EntityID: sender.ID, ClientID: clientID},
+		audit.Details{"channel": chat.GetChannel(), "text": text, "display_name": sender.DisplayName},
+		"")
+
 	if chat.GetChannel() == "global" {
 		if err := s.nc.Publish("chat.broadcast", frameBytes); err != nil {
 			s.logger.WarnContext(ctx, "chat broadcast publish", "err", err)
@@ -1346,6 +1378,11 @@ func (s *Simulator) handleSetName(ctx context.Context, clientID string, frame *p
 	entityID := entity.ID
 	s.mu.Unlock()
 
+	audit.Emit(s.nc, "player.set_name", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Details{"name": name},
+		"")
+
 	// Persist to PocketBase for logged-in users. Guests have no
 	// PocketBase record, so findByEntityID returns nil and the update is
 	// a no-op — matching the design's "guest names are session-only".
@@ -1401,6 +1438,11 @@ func (s *Simulator) handleSetSpriteBase(ctx context.Context, clientID string, fr
 	entityID := entity.ID
 	s.mu.Unlock()
 
+	audit.Emit(s.nc, "player.set_sprite_base", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Details{"sprite_base": spriteBase},
+		"")
+
 	// Persist to PocketBase for logged-in users. Guests have no
 	// PocketBase record, so findByEntityID returns nil and the update is
 	// a no-op — matching the design's "guests are session-only".
@@ -1434,6 +1476,11 @@ func (s *Simulator) handleSetPlayerOptions(ctx context.Context, clientID string,
 	entity.PlayerOptions = options
 	entityID := entity.ID
 	s.mu.Unlock()
+
+	audit.Emit(s.nc, "player.set_player_options", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Details{"options": options},
+		"")
 
 	// Persist to PocketBase for logged-in users. Guests have no
 	// PocketBase record, so findByEntityID returns nil and the update is
@@ -1781,6 +1828,27 @@ func (s *Simulator) runIntegrityCheck() {
 	for mapName, md := range s.maps {
 		results := CheckMapIntegrity(md)
 		LogIntegrityResults(s.logger, results, mapName)
+		errors, warnings, infos := 0, 0, 0
+		for _, r := range results {
+			switch r.Level {
+			case LevelError:
+				errors++
+			case LevelWarning:
+				warnings++
+			case LevelInfo:
+				infos++
+			}
+		}
+		sev := audit.SeverityInfo
+		if errors > 0 {
+			sev = audit.SeverityError
+		} else if warnings > 0 {
+			sev = audit.SeverityWarn
+		}
+		audit.Emit(s.nc, "map.integrity_check", sev,
+			audit.Actor{},
+			audit.Details{"map": mapName, "errors": errors, "warnings": warnings, "infos": infos},
+			"")
 	}
 }
 
@@ -1881,6 +1949,10 @@ func (s *Simulator) checkMapReload(mapName string) {
 		"map", mapName,
 		"old_file", oldFilename,
 		"new_file", info.TiledJSONFilename)
+	audit.Emit(s.nc, "map.reloaded", audit.SeverityInfo,
+		audit.Actor{},
+		audit.Details{"map": mapName, "old_file": oldFilename, "new_file": info.TiledJSONFilename},
+		"")
 
 	// Reload the map.
 	newMapData, err := s.mapStore.LoadMapData(mapName)
@@ -2134,6 +2206,10 @@ func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clien
 		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
 	}
 	s.logger.InfoContext(ctx, "zone event", "event", event, "entity", entityID, "zone", zoneID)
+	audit.Emit(s.nc, event, audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Details{"zone": zoneID, "map": mapID},
+		"")
 }
 
 // proximityEventPayload is the NATS payload for proximity.join/leave events.

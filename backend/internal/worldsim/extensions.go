@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lstep/pixeleruv/backend/internal/audit"
 	"github.com/nats-io/nats.go"
 )
 
@@ -96,6 +97,12 @@ func (m *ExtensionManager) Register(data []byte) error {
 	}
 	m.mu.Unlock()
 	m.logger.Info("extension registered", "id", msg.ExtensionID, "heartbeat", interval)
+	if m.nc != nil {
+		audit.Emit(m.nc, "extension.registered", audit.SeverityInfo,
+			audit.Actor{Extension: msg.ExtensionID},
+			audit.Details{"heartbeat_interval_s": msg.HeartbeatIntervalS},
+			"")
+	}
 
 	// If the extension declared an options schema, ensure a PB row exists
 	// with default values. Only publish options via NATS if a PB write
@@ -137,6 +144,12 @@ func (m *ExtensionManager) CheckStale() []string {
 			m.logger.Warn("extension stale, freezing", "id", id,
 				"last_heartbeat", ext.LastHeartbeat,
 				"missed", now.Sub(ext.LastHeartbeat))
+			if m.nc != nil {
+				audit.Emit(m.nc, "extension.stale", audit.SeverityWarn,
+					audit.Actor{Extension: id},
+					audit.Details{"last_heartbeat": ext.LastHeartbeat.Format(time.RFC3339), "missed": now.Sub(ext.LastHeartbeat).String()},
+					"")
+			}
 		}
 	}
 	return stale

@@ -24,6 +24,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/lstep/pixeleruv/backend/internal/audit"
 	otelinternal "github.com/lstep/pixeleruv/backend/internal/otel"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 	"github.com/lstep/pixeleruv/backend/internal/version"
@@ -292,6 +293,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				authSpan.RecordError(err)
 				authSpan.SetStatus(codes.Error, "token validation")
 				s.logger.Warn("token validation failed", "err", err)
+				audit.Emit(s.nc, "auth.failed", audit.SeverityWarn,
+					audit.Actor{IP: clientIP(r)},
+					audit.Details{"error": err.Error()},
+					"")
 				errResult := &pb.ServerFrame{
 					Payload: &pb.ServerFrame_AuthResult{
 						AuthResult: &pb.AuthResultFrame{Ok: false},
@@ -409,6 +414,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		s.sessions.Delete(clientID)
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
+		audit.Emit(s.nc, "client.disconnected", audit.SeverityInfo,
+			audit.Actor{Sub: sub, ClientID: clientID},
+			nil,
+			"")
 	}()
 
 	// Publish client.connected so World Sim provisions the entity. Use
@@ -446,6 +455,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				c.Write(authCtx, websocket.MessageBinary, banBytes)
 				c.Close(websocket.StatusPolicyViolation, "banned")
 				s.logger.Info("rejected banned client", "client", clientID, "sub", sub, "ip", ip, "device", deviceID)
+				audit.Emit(s.nc, "auth.banned", audit.SeverityWarn,
+					audit.Actor{Sub: sub, ClientID: clientID, IP: ip, DeviceID: deviceID},
+					audit.Details{"reason": ar.BanReason, "until": ar.BanUntil},
+					"")
 				return
 			}
 			entityID = ar.EntityId
@@ -500,6 +513,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logger.Info("client connected", "client", clientID, "entity", entityID)
+	audit.Emit(s.nc, "client.connected", audit.SeverityInfo,
+		audit.Actor{Sub: sub, EntityID: entityID, ClientID: clientID, IP: ip, DeviceID: deviceID},
+		audit.Details{"map": mapID, "is_admin": isAdmin},
+		"")
 
 	// Keepalive: send a WebSocket ping every PingInterval. The browser
 	// auto-responds with a pong, which keeps idle connections alive and lets
@@ -651,6 +668,10 @@ func (s *Server) keepalive(ctx context.Context, c *websocket.Conn, clientID stri
 			if err := c.Ping(pingCtx); err != nil {
 				cancel()
 				s.logger.Info("ws keepalive ping failed", "client", clientID, "err", err)
+				audit.Emit(s.nc, "ws.keepalive_timeout", audit.SeverityWarn,
+					audit.Actor{ClientID: clientID},
+					audit.Details{"error": err.Error()},
+					"")
 				c.Close(websocket.StatusPolicyViolation, "keepalive timeout")
 				return
 			}

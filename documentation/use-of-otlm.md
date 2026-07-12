@@ -12,6 +12,14 @@ frontend talks to the pusher over WebSocket. The same approach works for any
 service-to-service Go project — only the transport-specific propagation
 helpers change.
 
+> **Production backend:** motel is dev-only. For production, the Docker
+> Compose stack includes **OpenObserve** — a single Rust binary that serves
+> as the OTel backend with a SQL search UI at `/otel/`. The only difference
+> is the `OTEL_EXPORTER_OTLP_ENDPOINT` value (`http://openobserve:5080/api/default`
+> instead of `http://127.0.0.1:27686`). All code-level wiring is identical.
+> See [`plans/2026-07-12-audit-observability-design.md`](plans/2026-07-12-audit-observability-design.md)
+> for the full production setup.
+
 ---
 
 ## Table of contents

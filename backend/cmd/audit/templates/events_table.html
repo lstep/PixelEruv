@@ -1,0 +1,24 @@
+{{template "events_table_inner" .}}
+{{define "events_table_inner"}}
+<table class="event-table">
+  <thead>
+    <tr><th>Time</th><th>Type</th><th>Severity</th><th>Actor</th><th>Details</th></tr>
+  </thead>
+  <tbody>
+  {{range .}}
+    <tr class="sev-{{.Severity}}">
+      <td class="time">{{.Timestamp.Format "2006-01-02 15:04:05"}}</td>
+      <td><a href="{{bp}}/events/{{.ID}}">{{.EventType}}</a></td>
+      <td class="severity">{{.Severity}}</td>
+      <td>
+        {{if .Actor.Sub}}<a href="{{bp}}/players/{{.Actor.Sub}}">{{.Actor.Sub}}</a>{{end}}
+        {{if .Actor.EntityID}}<span class="muted">e:{{.Actor.EntityID}}</span>{{end}}
+      </td>
+      <td class="details-cell">{{printf "%s" .Details}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5">No events</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
