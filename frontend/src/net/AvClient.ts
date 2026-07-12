@@ -670,7 +670,7 @@ export class AvClient {
     // Apply the persisted speaker device if one was selected. Unlike mic/camera
     // (which are set via Room constructor defaults), audio output can only be
     // changed via switchActiveDevice after the room exists.
-    if (this.selectedSpeakerId) {
+    if (this.selectedSpeakerId && this.supportsAudioOutputSelection()) {
       this.room.switchActiveDevice("audiooutput", this.selectedSpeakerId).catch((err) =>
         console.warn("AvClient: speaker switchActiveDevice failed:", err),
       );
