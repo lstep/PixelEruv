@@ -1,26 +1,36 @@
-// Dex OIDC authentication using authorization code flow with PKCE.
+// PocketBase authentication using the JS SDK.
 //
 // Flow:
-// 1. User visits the app → check localStorage for id_token
-// 2. No token → redirect to Dex authorization endpoint with code_challenge
-// 3. Dex redirects back to /auth/callback with authorization code
-// 4. Exchange code + code_verifier for id_token via POST to token endpoint
-// 5. Store id_token in localStorage, redirect to /
-// 6. WsClient sends the stored id_token in the AUTH frame
+// 1. User visits the app → check PocketBase authStore for a valid token
+// 2. No token → user can register at /register or login at /login
+// 3. Login: pb.collection('users').authWithPassword() → token stored in authStore
+// 4. Register: pb.collection('users').create() → verification email sent
+// 5. WsClient sends the stored token in the AUTH frame
+// 6. Pusher validates the token by calling the PocketBase API
 
-const DEX_ISSUER = window.location.port === "5173"
-  ? (import.meta.env.VITE_DEX_URL ?? "http://localhost:5556/dex")
-  : `${window.location.origin}/dex`;
-const CLIENT_ID = "pixeleruv";
-const REDIRECT_URI = `${window.location.origin}/auth/callback`;
+import PocketBase from "pocketbase";
+
+// Determine the PocketBase API URL. In dev (vite dev server on :5173),
+// PocketBase is at localhost:8090. In Docker (nginx proxy), it's same-origin
+// via /api/.
+const PB_URL = window.location.port === "5173"
+  ? (import.meta.env.VITE_PB_URL ?? "http://localhost:8090")
+  : `${window.location.origin}/api`;
+
+export const pb = new PocketBase(PB_URL);
+
+// Auto-cancel any pending realtime subscriptions on page unload.
+pb.autoCancellation(false);
 
 export function getIdToken(): string | null {
-  const tok = localStorage.getItem("id_token");
-  return tok === "" ? null : tok;
+  const token = pb.authStore.token;
+  return token === "" ? null : token;
 }
 
 export function getSub(): string | null {
-  return localStorage.getItem("sub");
+  const record = pb.authStore.record;
+  if (!record) return null;
+  return record.id;
 }
 
 // Device ID is a client-generated UUID stored in localStorage, stable across
@@ -37,119 +47,83 @@ export function getDeviceId(): string {
 }
 
 export function isLoggedIn(): boolean {
-  return getIdToken() !== null;
+  return pb.authStore.isValid;
 }
 
-// Generate a random PKCE code verifier (43-128 chars, URL-safe).
-function generateCodeVerifier(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return base64url(bytes);
+// Redirect to the login page.
+export function redirectToLogin(): void {
+  window.location.href = "/login";
 }
 
-// Compute the code challenge (SHA-256 hash of verifier, base64url-encoded).
-async function computeCodeChallenge(verifier: string): Promise<string> {
-  const data = new TextEncoder().encode(verifier);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return base64url(new Uint8Array(hash));
+// Redirect to the registration page.
+export function redirectToRegister(): void {
+  window.location.href = "/register";
 }
 
-function base64url(bytes: Uint8Array): string {
-  let str = "";
-  for (const b of bytes) str += String.fromCharCode(b);
-  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-// Redirect to Dex login page with PKCE.
-export async function redirectToLogin(): Promise<void> {
-  const verifier = generateCodeVerifier();
-  const challenge = await computeCodeChallenge(verifier);
-  const state = crypto.randomUUID();
-
-  sessionStorage.setItem("pkce_verifier", verifier);
-  sessionStorage.setItem("oauth_state", state);
-
-  const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
-    response_type: "code",
-    scope: "openid profile email",
-    state,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
+// Register a new user with email and password. After registration,
+// PocketBase sends a verification email (if SMTP is configured).
+export async function register(
+  email: string,
+  password: string,
+  passwordConfirm: string,
+): Promise<void> {
+  await pb.collection("users").create({
+    email,
+    password,
+    passwordConfirm,
+    emailVisibility: true,
   });
-
-  window.location.href = `${DEX_ISSUER}/auth?${params.toString()}`;
-}
-
-// Handle the callback from Dex. Exchange the authorization code for an
-// id_token, store it, and redirect to /.
-export async function handleAuthCallback(): Promise<void> {
-  const params = new URLSearchParams(window.location.search);
-  const code = params.get("code");
-  const state = params.get("state");
-  const expectedState = sessionStorage.getItem("oauth_state");
-  const verifier = sessionStorage.getItem("pkce_verifier");
-
-  if (!code || !state || state !== expectedState || !verifier) {
-    console.error("auth callback: invalid state or missing code/verifier");
-    window.location.href = "/";
-    return;
-  }
-
-  sessionStorage.removeItem("oauth_state");
-  sessionStorage.removeItem("pkce_verifier");
-
-  // Exchange the code for an id_token.
-  const tokenParams = new URLSearchParams({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: REDIRECT_URI,
-    client_id: CLIENT_ID,
-    code_verifier: verifier,
-  });
-
+  // Request verification email.
   try {
-    const resp = await fetch(`${DEX_ISSUER}/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: tokenParams.toString(),
-    });
-    if (!resp.ok) {
-      const body = await resp.text();
-      console.error("token exchange failed:", resp.status, body);
-      window.location.href = "/";
-      return;
-    }
-    const tokens = await resp.json();
-    const idToken = tokens.id_token;
-    if (!idToken) {
-      console.error("no id_token in token response");
-      window.location.href = "/";
-      return;
-    }
-
-    // Extract sub from the id_token payload.
-    try {
-      const payload = JSON.parse(atob(idToken.split(".")[1]));
-      localStorage.setItem("sub", payload.sub ?? "");
-    } catch {
-      localStorage.setItem("sub", "");
-    }
-    localStorage.setItem("id_token", idToken);
-  } catch (err) {
-    console.error("token exchange error:", err);
+    await pb.collection("users").requestVerification(email);
+  } catch {
+    // Non-fatal — the user can request a new verification email later.
   }
+}
 
-  window.location.href = "/";
+// Login with email and password. The token is stored in pb.authStore.
+export async function login(email: string, password: string): Promise<void> {
+  await pb.collection("users").authWithPassword(email, password);
+}
+
+// Login with an OAuth2 provider (google, github, facebook). Uses the
+// popup-based flow — opens a popup window with the provider's login page.
+export async function loginWithProvider(provider: string): Promise<void> {
+  await pb.collection("users").authWithOAuth2({ provider });
+}
+
+// List configured OAuth2 providers. Returns provider names (e.g. ["google",
+// "github"]). Empty array if OAuth2 is not configured.
+export async function listAuthProviders(): Promise<
+  { name: string; displayName: string }[]
+> {
+  try {
+    const methods = await pb.collection("users").listAuthMethods();
+    return (methods.oauth2?.providers ?? []).map((p) => ({
+      name: p.name,
+      displayName: p.displayName,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// Request a verification email for the given email address.
+export async function requestVerification(email: string): Promise<void> {
+  await pb.collection("users").requestVerification(email);
+}
+
+// Confirm email verification from the redirect URL. PocketBase redirects to
+// /verify-email?token=... — this method confirms the token.
+export async function confirmVerification(token: string): Promise<void> {
+  await pb.collection("users").confirmVerification(token);
 }
 
 // Clear stored credentials without redirecting. Used when the server
 // rejects a stale token (e.g. PB DB was reset) — the WS client clears
 // the token so the next reconnect falls back to guest mode.
 export function clearIdToken(): void {
-  localStorage.removeItem("id_token");
-  localStorage.removeItem("sub");
+  pb.authStore.clear();
 }
 
 export function logout(): void {

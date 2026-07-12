@@ -9,17 +9,14 @@ services:
       - "8222:8222"
     restart: unless-stopped
 
-  dex:
-    image: ghcr.io/dexidp/dex:latest
-    entrypoint: ["/entrypoint.sh"]
-    environment:
-      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+  # MailHog — dev SMTP server that catches all emails in a web UI at :8025.
+  # Used for email verification during registration. Production should point
+  # SMTP_HOST/SMTP_PORT/SMTP_USERNAME/SMTP_PASSWORD at a real SMTP provider.
+  mailhog:
+    image: mailhog/mailhog:latest
     ports:
-      - "5556:5556"
-    volumes:
-      - ./dex/config.yaml:/etc/dex/config.yaml.template:ro
-      - ./dex-entrypoint.sh:/entrypoint.sh:ro
-      - dex_data:/var/dex
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
     restart: unless-stopped
 
   pusher:
@@ -32,9 +29,7 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       WS_ADDR: ":8081"
-      DEX_ISSUER: "http://localhost:5556/dex"
-      DEX_JWKS_URL: "http://dex:5556/dex/keys"
-      DEX_CLIENT_ID: "pixeleruv"
+      PB_API_URL: "http://worldsim:8090/api"
       # OpenTelemetry — off by default. Set OTEL_ENABLED=true and point
       # OTEL_EXPORTER_OTLP_ENDPOINT at OpenObserve to enable.
       OTEL_ENABLED: "false"
@@ -50,6 +45,7 @@ services:
       target: worldsim
     depends_on:
       - nats
+      - mailhog
     ports:
       - "127.0.0.1:8090:8090"
     volumes:
@@ -62,6 +58,18 @@ services:
       PB_HTTP_ADDR: "0.0.0.0:8090"
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
       PB_ADMIN_PASSWORD: "password123"
+      # SMTP for email verification (MailHog in dev).
+      SMTP_HOST: "mailhog"
+      SMTP_PORT: "1025"
+      SMTP_FROM: "noreply@pixeleruv.local"
+      SMTP_SENDER_NAME: "PixelEruv"
+      # OAuth2 providers — set client IDs/secrets in .env to enable.
+      OAUTH2_GOOGLE_CLIENT_ID: "${OAUTH2_GOOGLE_CLIENT_ID:-}"
+      OAUTH2_GOOGLE_SECRET: "${OAUTH2_GOOGLE_SECRET:-}"
+      OAUTH2_GITHUB_CLIENT_ID: "${OAUTH2_GITHUB_CLIENT_ID:-}"
+      OAUTH2_GITHUB_SECRET: "${OAUTH2_GITHUB_SECRET:-}"
+      OAUTH2_FACEBOOK_CLIENT_ID: "${OAUTH2_FACEBOOK_CLIENT_ID:-}"
+      OAUTH2_FACEBOOK_SECRET: "${OAUTH2_FACEBOOK_SECRET:-}"
       OTEL_ENABLED: "false"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
     restart: unless-stopped
@@ -204,28 +212,21 @@ services:
       - "8082:8082"
     restart: unless-stopped
 
-  # Admin portal — OIDC login via Dex, signed cookie session,
-  # auth_request endpoint for nginx. Protects PB admin and audit UI.
+  # Admin portal — email/password login via PocketBase, signed cookie
+  # session, auth_request endpoint for nginx. Protects PB admin and audit UI.
   admin:
     build:
       context: ..
       dockerfile: docker/backend.Dockerfile
       target: admin
     depends_on:
-      - dex
       - worldsim
     environment:
       ADMIN_HTTP_ADDR: ":8083"
       ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:-changeme}"
-      DEX_ISSUER: "http://localhost:5556/dex"
-      DEX_INTERNAL_URL: "http://dex:5556/dex"
-      DEX_BROWSER_URL: "/dex"
-      DEX_CLIENT_ID: "pixeleruv-admin"
-      DEX_REDIRECT_URL: "https://${PUBLIC_HOST:-localhost}/admin/callback"
       PB_API_URL: "http://worldsim:8090/api"
     restart: unless-stopped
 
 volumes:
   pb_data:
-  dex_data:
   audit_data:

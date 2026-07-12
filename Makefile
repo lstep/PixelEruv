@@ -73,14 +73,12 @@ dist-stage:
 	@# --- remove stale config from the old dist layout ---
 	@rm -rf $(DIST_DIR)/config
 	@# --- stage Docker support files into dist/docker/ ---
-	@mkdir -p $(DIST_DIR)/docker/dex
+	@mkdir -p $(DIST_DIR)/docker
 	cp docker/dist/backend.Dockerfile   $(DIST_DIR)/docker/backend.Dockerfile
 	cp docker/dist/frontend.Dockerfile  $(DIST_DIR)/docker/frontend.Dockerfile
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
 	cp docker/dist/example.nginx.conf   $(DIST_DIR)/example.nginx.conf
 	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
-	cp docker/dex/config.yaml           $(DIST_DIR)/docker/dex/config.yaml
-	cp docker/dex-entrypoint.sh         $(DIST_DIR)/docker/dex-entrypoint.sh
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
 	@# --- stage static welcome page ---
 	@mkdir -p $(DIST_DIR)/docker/welcome
@@ -111,7 +109,7 @@ dist-macos: GOOS := darwin
 dist-macos: GOARCH := arm64
 dist-macos: build web dist-stage
 	@echo "==> dist/ built for darwin/arm64. Binaries run natively on macOS."
-	@echo "    Run Go services directly from dist/bin/; use Docker for nats/dex/livekit."
+	@echo "    Run Go services directly from dist/bin/; use Docker for nats/mailhog/livekit."
 
 up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build
@@ -141,7 +139,7 @@ debug: debug-nats
 		./$(DIST_BIN)/worldsim &
 	@OTEL_ENABLED=true OTEL_EXPORTER_OTLP_ENDPOINT=$(OTEL_ENDPOINT) \
 		NATS_URL=nats://127.0.0.1:$(NATS_PORT) WS_ADDR=:8081 \
-		DEX_ISSUER=http://127.0.0.1:5556/dex DEX_CLIENT_ID=pixeleruv \
+		PB_API_URL=http://127.0.0.1:8090/api \
 		./$(DIST_BIN)/pusher
 	@$(MAKE) debug-stop
 

@@ -4,9 +4,9 @@ import { CharacterSelectScene, shouldShowCharacterSelect } from "./scenes/Charac
 import { initOtel } from "./otel";
 import { loadMapAssets } from "./mapLoader";
 import { loadSpriteBases } from "./spriteLoader";
-import { handleAuthCallback } from "./auth";
 import { TopMenu } from "./ui/TopMenu";
 import { ChatPanel } from "./ui/ChatPanel";
+import { renderRegisterPage, renderLoginPage, renderVerifyEmailPage } from "./ui/AuthPage";
 
 // Initialize OpenTelemetry before any instrumented code runs. No-op when
 // VITE_OTEL_ENABLED != "true".
@@ -47,10 +47,19 @@ const config: Phaser.Types.Core.GameConfig = {
 // preload() has the URLs ready. PocketBase must be available; there is no
 // static fallback.
 async function bootstrap(): Promise<void> {
-  // Handle OAuth callback from Dex.
-  if (window.location.pathname === "/auth/callback") {
-    handleAuthCallback();
-    return; // handleAuthCallback redirects
+  // Handle auth pages — render DOM forms instead of starting Phaser.
+  const path = window.location.pathname;
+  if (path === "/register") {
+    renderRegisterPage();
+    return;
+  }
+  if (path === "/login") {
+    renderLoginPage();
+    return;
+  }
+  if (path === "/verify-email") {
+    renderVerifyEmailPage();
+    return;
   }
 
   const topMenu = new TopMenu();

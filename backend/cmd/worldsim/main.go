@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/pocketbase/pocketbase"
+	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/migratecmd"
 	"github.com/pocketbase/pocketbase/tools/osutils"
 
@@ -65,6 +66,14 @@ func main() {
 		log.Fatalf("pocketbase migrations: %v", err)
 	}
 
+	// Configure SMTP settings from env vars so PocketBase can send
+	// verification emails. In dev, point SMTP_HOST at MailHog.
+	configureSMTP(app)
+
+	// Configure OAuth2 providers from env vars. Only providers with both
+	// client ID and secret set are enabled.
+	configureOAuth2(app)
+
 	// Start PB's HTTP server in a goroutine (admin GUI + file serving for
 	// the frontend). The HTTP server runs alongside worldsim's tick loop.
 	go func() {
@@ -98,4 +107,72 @@ func envInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+// configureSMTP sets PocketBase SMTP settings from env vars. In dev,
+// SMTP_HOST=mailhog + SMTP_PORT=1025 routes emails to MailHog's web UI.
+func configureSMTP(app core.App) {
+	host := os.Getenv("SMTP_HOST")
+	if host == "" {
+		return
+	}
+	port := envInt("SMTP_PORT", 587)
+	s := app.Settings()
+	s.SMTP.Enabled = true
+	s.SMTP.Host = host
+	s.SMTP.Port = port
+	s.SMTP.Username = os.Getenv("SMTP_USERNAME")
+	s.SMTP.Password = os.Getenv("SMTP_PASSWORD")
+	s.SMTP.TLS = os.Getenv("SMTP_TLS") == "true"
+	if from := os.Getenv("SMTP_FROM"); from != "" {
+		s.Meta.SenderAddress = from
+	}
+	if name := os.Getenv("SMTP_SENDER_NAME"); name != "" {
+		s.Meta.SenderName = name
+	}
+	if err := app.Save(s); err != nil {
+		log.Printf("configure SMTP: %v", err)
+	}
+}
+
+// configureOAuth2 enables OAuth2 providers on the users collection from
+// env vars. Only providers with both client ID and secret set are added.
+func configureOAuth2(app core.App) {
+	type providerEnv struct {
+		name   string
+		idKey  string
+		secKey string
+	}
+	providers := []providerEnv{
+		{"google", "OAUTH2_GOOGLE_CLIENT_ID", "OAUTH2_GOOGLE_SECRET"},
+		{"github", "OAUTH2_GITHUB_CLIENT_ID", "OAUTH2_GITHUB_SECRET"},
+		{"facebook", "OAUTH2_FACEBOOK_CLIENT_ID", "OAUTH2_FACEBOOK_SECRET"},
+	}
+
+	collection, err := app.FindCollectionByNameOrId("users")
+	if err != nil {
+		log.Printf("configure OAuth2: users collection not found: %v", err)
+		return
+	}
+
+	var configs []core.OAuth2ProviderConfig
+	for _, p := range providers {
+		clientID := os.Getenv(p.idKey)
+		clientSecret := os.Getenv(p.secKey)
+		if clientID == "" || clientSecret == "" {
+			continue
+		}
+		configs = append(configs, core.OAuth2ProviderConfig{
+			Name:         p.name,
+			ClientId:     clientID,
+			ClientSecret: clientSecret,
+		})
+	}
+
+	collection.OAuth2.Enabled = len(configs) > 0
+	collection.OAuth2.Providers = configs
+
+	if err := app.Save(collection); err != nil {
+		log.Printf("configure OAuth2: %v", err)
+	}
 }

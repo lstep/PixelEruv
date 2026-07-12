@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,33 +11,25 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/lstep/pixeleruv/backend/internal/version"
 )
 
 // Config holds the admin service configuration.
 type Config struct {
-	SessionSecret  string
-	DexIssuer      string // issuer claim in JWT (must match Dex config issuer)
-	DexInternalURL string // internal Docker URL for JWKS fetch + token exchange
-	DexBrowserURL  string // browser-facing Dex URL for login redirects (e.g. /dex)
-	DexClientID    string
-	DexRedirectURL string
-	PBApiURL       string
+	SessionSecret string
+	PBApiURL      string
 }
 
 // Server is the admin portal HTTP service.
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	validator *jwtValidator
-	tmpl     *template.Template
+	cfg    Config
+	logger *slog.Logger
+	tmpl   *template.Template
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
@@ -47,20 +37,14 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
-	s := &Server{
-		cfg:       cfg,
-		logger:    logger,
-		validator: newJWTValidator(cfg.DexIssuer, cfg.DexInternalURL, cfg.DexClientID),
-		tmpl:      tmpl,
-	}
-	return s, nil
+	return &Server{cfg: cfg, logger: logger, tmpl: tmpl}, nil
 }
 
 func (s *Server) Run(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/admin/", s.handleLanding)
 	mux.HandleFunc("/admin/login", s.handleLogin)
-	mux.HandleFunc("/admin/callback", s.handleCallback)
+	mux.HandleFunc("/admin/authenticate", s.handleAuthenticate)
 	mux.HandleFunc("/admin/logout", s.handleLogout)
 	mux.HandleFunc("/admin/auth-check", s.handleAuthCheck)
 
@@ -150,29 +134,6 @@ func (s *Server) getSession(r *http.Request) (sessionCookie, bool) {
 	return s.verifyCookie(cookie.Value)
 }
 
-// --- PKCE helpers ---
-
-func generateCodeVerifier() string {
-	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
-	b := make([]byte, 64)
-	for i := range b {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		b[i] = chars[n.Int64()]
-	}
-	return string(b)
-}
-
-func computeCodeChallenge(verifier string) string {
-	h := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-func randomState() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
 // --- Handlers ---
 
 func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
@@ -192,95 +153,70 @@ func (s *Server) handleLanding(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleLogin renders the email/password login form.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	verifier := generateCodeVerifier()
-	challenge := computeCodeChallenge(verifier)
-	state := randomState()
-
-	// Store verifier and state in short-lived cookies.
-	http.SetCookie(w, &http.Cookie{
-		Name: "pkce_verifier", Value: verifier, Path: "/",
-		MaxAge: 300, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name: "oauth_state", Value: state, Path: "/",
-		MaxAge: 300, HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
-
-	params := url.Values{
-		"client_id":             {s.cfg.DexClientID},
-		"redirect_uri":          {s.cfg.DexRedirectURL},
-		"response_type":         {"code"},
-		"scope":                 {"openid profile email"},
-		"state":                 {state},
-		"code_challenge":        {challenge},
-		"code_challenge_method": {"S256"},
+	// If already logged in, redirect to landing.
+	if _, ok := s.getSession(r); ok {
+		http.Redirect(w, r, "/admin/", http.StatusFound)
+		return
 	}
-	http.Redirect(w, r, s.cfg.DexBrowserURL+"/auth?"+params.Encode(), http.StatusFound)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, loginHTML)
 }
 
-func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-	if code == "" || state == "" {
-		http.Error(w, "missing code or state", http.StatusBadRequest)
+// handleAuthenticate handles the POST from the login form. It calls
+// PocketBase's auth-with-password endpoint to validate credentials,
+// then checks the is_admin flag on the players collection.
+func (s *Server) handleAuthenticate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Verify state.
-	stateCookie, err := r.Cookie("oauth_state")
-	if err != nil || stateCookie.Value != state {
-		http.Error(w, "invalid state", http.StatusBadRequest)
+	email := r.FormValue("email")
+	password := r.FormValue("password")
+	if email == "" || password == "" {
+		http.Error(w, "email and password are required", http.StatusBadRequest)
 		return
 	}
-	verifierCookie, err := r.Cookie("pkce_verifier")
+
+	// Call PocketBase auth-with-password.
+	form := url.Values{
+		"identity": {email},
+		"password": {password},
+	}
+	resp, err := http.Post(
+		s.cfg.PBApiURL+"/collections/users/auth-with-password",
+		"application/x-www-form-urlencoded",
+		strings.NewReader(form.Encode()),
+	)
 	if err != nil {
-		http.Error(w, "missing verifier", http.StatusBadRequest)
-		return
-	}
-
-	// Clear PKCE cookies.
-	http.SetCookie(w, &http.Cookie{Name: "pkce_verifier", MaxAge: -1, Path: "/", Secure: true})
-	http.SetCookie(w, &http.Cookie{Name: "oauth_state", MaxAge: -1, Path: "/", Secure: true})
-
-	// Exchange code for id_token.
-	tokenParams := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {s.cfg.DexRedirectURL},
-		"client_id":     {s.cfg.DexClientID},
-		"code_verifier": {verifierCookie.Value},
-	}
-	resp, err := http.Post(s.cfg.DexInternalURL+"/token", "application/x-www-form-urlencoded", strings.NewReader(tokenParams.Encode()))
-	if err != nil {
-		s.logger.Warn("token exchange", "err", err)
-		http.Error(w, "token exchange failed", http.StatusBadGateway)
+		s.logger.Warn("pb auth call", "err", err)
+		http.Error(w, "authentication failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		s.logger.Warn("token exchange status", "code", resp.StatusCode, "body", string(body))
-		http.Error(w, "token exchange failed", http.StatusBadGateway)
+		s.logger.Warn("pb auth rejected", "status", resp.StatusCode)
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	var tokens struct {
-		IDToken string `json:"id_token"`
+	var authResult struct {
+		Record struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"record"`
 	}
-	if err := json.Unmarshal(body, &tokens); err != nil || tokens.IDToken == "" {
-		s.logger.Warn("no id_token in response", "err", err)
-		http.Error(w, "no id_token", http.StatusBadGateway)
+	if err := json.Unmarshal(body, &authResult); err != nil {
+		s.logger.Warn("parse auth result", "err", err)
+		http.Error(w, "authentication failed", http.StatusBadGateway)
 		return
 	}
 
-	// Validate the JWT.
-	sub, email, err := s.validator.validate(tokens.IDToken)
-	if err != nil {
-		s.logger.Warn("jwt validation", "err", err)
-		http.Error(w, "invalid token", http.StatusUnauthorized)
-		return
-	}
+	sub := authResult.Record.ID
+	emailOut := authResult.Record.Email
 
 	// Check is_admin via PB API.
 	isAdmin, err := s.checkIsAdmin(sub)
@@ -290,7 +226,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isAdmin {
-		s.logger.Info("non-admin login attempt", "sub", sub, "email", email)
+		s.logger.Info("non-admin login attempt", "sub", sub, "email", emailOut)
 		http.Error(w, "not an admin user", http.StatusForbidden)
 		return
 	}
@@ -298,11 +234,11 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// Set session cookie.
 	s.setSessionCookie(w, sessionCookie{
 		Sub:    sub,
-		Email:  email,
+		Email:  emailOut,
 		Expiry: time.Now().Add(time.Hour).Unix(),
 	})
 
-	s.logger.Info("admin login", "sub", sub, "email", email)
+	s.logger.Info("admin login", "sub", sub, "email", emailOut)
 	http.Redirect(w, r, "/admin/", http.StatusFound)
 }
 
@@ -327,7 +263,6 @@ func (s *Server) checkIsAdmin(sub string) (bool, error) {
 		return false, nil
 	}
 	// Query PB players collection filtered by oidc_sub.
-	// PB filter syntax: oidc_sub="value" — quotes must be URL-encoded as %22.
 	filter := fmt.Sprintf("oidc_sub=%q", sub)
 	u := fmt.Sprintf("%s/collections/players/records?filter=%s", s.cfg.PBApiURL, url.QueryEscape(filter))
 	resp, err := http.Get(u)
@@ -352,133 +287,48 @@ func (s *Server) checkIsAdmin(sub string) (bool, error) {
 	return result.Items[0].IsAdmin, nil
 }
 
-// --- JWT validation (simplified from pusher/auth.go) ---
-
-type jwtValidator struct {
-	issuer     string
-	internalURL string
-	clientID   string
-	keys       map[string]interface{} // kid -> public key
+// loginHTML is the email/password login form for the admin portal.
+const loginHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin Login - PixelEruv</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+  --error: #e74c3c;
 }
-
-func newJWTValidator(issuer, internalURL, clientID string) *jwtValidator {
-	return &jwtValidator{
-		issuer:     issuer,
-		internalURL: internalURL,
-		clientID:   clientID,
-		keys:       make(map[string]interface{}),
-	}
-}
-
-func (v *jwtValidator) fetchKeys() error {
-	resp, err := http.Get(v.internalURL + "/keys")
-	if err != nil {
-		return fmt.Errorf("fetch jwks: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-
-	var jwks struct {
-		Keys []struct {
-			Kid string `json:"kid"`
-			N   string `json:"n"`
-			E   string `json:"e"`
-			Kty string `json:"kty"`
-		} `json:"keys"`
-	}
-	if err := json.Unmarshal(body, &jwks); err != nil {
-		return fmt.Errorf("parse jwks: %w", err)
-	}
-
-	v.keys = make(map[string]interface{})
-	for _, k := range jwks.Keys {
-		if k.Kty != "RSA" {
-			continue
-		}
-		key, err := rsaKeyFromJWK(k.Kid, k.N, k.E)
-		if err != nil {
-			continue
-		}
-		v.keys[k.Kid] = key
-	}
-	return nil
-}
-
-func (v *jwtValidator) validate(idToken string) (sub, email string, err error) {
-	token, err := jwt.Parse(idToken, func(t *jwt.Token) (interface{}, error) {
-		if t.Method.Alg() != "RS256" {
-			return nil, fmt.Errorf("unexpected alg: %v", t.Method.Alg())
-		}
-		kid, ok := t.Header["kid"].(string)
-		if !ok {
-			return nil, fmt.Errorf("missing kid")
-		}
-		key, exists := v.keys[kid]
-		if !exists {
-			if err := v.fetchKeys(); err != nil {
-				return nil, err
-			}
-			key, exists = v.keys[kid]
-			if !exists {
-				return nil, fmt.Errorf("kid %s not found", kid)
-			}
-		}
-		return key, nil
-	})
-	if err != nil {
-		return "", "", err
-	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok {
-		return "", "", fmt.Errorf("invalid claims")
-	}
-
-	iss, _ := claims["iss"].(string)
-	if iss != v.issuer {
-		return "", "", fmt.Errorf("invalid issuer: %s", iss)
-	}
-
-	// Check audience (may be string or array).
-	aud, _ := claims["aud"].(string)
-	if aud != v.clientID {
-		if audList, ok := claims["aud"].([]interface{}); ok {
-			found := false
-			for _, a := range audList {
-				if s, ok := a.(string); ok && s == v.clientID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return "", "", fmt.Errorf("audience mismatch")
-			}
-		} else {
-			return "", "", fmt.Errorf("audience mismatch")
-		}
-	}
-
-	sub, _ = claims["sub"].(string)
-	email, _ = claims["email"].(string)
-	return sub, email, nil
-}
-
-// rsaKeyFromJWK builds an RSA public key from base64url-encoded n and e.
-func rsaKeyFromJWK(kid, nStr, eStr string) (interface{}, error) {
-	nBytes, err := base64.RawURLEncoding.DecodeString(nStr)
-	if err != nil {
-		return nil, err
-	}
-	eBytes, err := base64.RawURLEncoding.DecodeString(eStr)
-	if err != nil {
-		return nil, err
-	}
-	e := 0
-	for _, b := range eBytes {
-		e = e<<8 | int(b)
-	}
-	return &rsa.PublicKey{
-		N: new(big.Int).SetBytes(nBytes),
-		E: e,
-	}, nil
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+.card { background: var(--surface); border-radius: 12px; padding: 2rem; max-width: 400px; width: 100%; }
+h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+p.subtitle { color: var(--muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.3rem; margin-top: 1rem; }
+input { width: 100%; padding: 0.6rem 0.8rem; font-size: 0.95rem; background: var(--bg); color: var(--text); border: 1px solid #444; border-radius: 6px; }
+input:focus { outline: none; border-color: var(--accent); }
+button { width: 100%; padding: 0.7rem; margin-top: 1.5rem; font-size: 1rem; font-weight: 600; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; }
+button:hover { opacity: 0.9; }
+.back { display: block; margin-top: 1.5rem; text-align: center; color: var(--muted); text-decoration: none; font-size: 0.85rem; }
+.back:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Admin Login</h1>
+  <p class="subtitle">Sign in with your PixelEruv account.</p>
+  <form method="POST" action="/admin/authenticate">
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" required autofocus>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required>
+    <button type="submit">Log in</button>
+  </form>
+  <a class="back" href="/">← Back to PixelEruv</a>
+</div>
+</body>
+</html>`

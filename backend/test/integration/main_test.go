@@ -14,7 +14,8 @@ import (
 // pusherAddr is the address of the in-process pusher started by TestMain.
 // It connects to the docker-exposed NATS at localhost:4222 so that
 // worldsim (also in docker) receives auth/input events and publishes
-// replication back. No Dex is configured, so IdToken="dev" is accepted.
+// replication back. No PB API URL is configured, so IdToken="dev" is
+// accepted as dummy auth.
 var pusherAddr string
 
 func TestMain(m *testing.M) {
@@ -31,7 +32,7 @@ func TestMain(m *testing.M) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	srv, err := pusher.New(addr, natsURL, "", "", "", slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	srv, err := pusher.New(addr, natsURL, "", slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	if err != nil {
 		panic(err)
 	}

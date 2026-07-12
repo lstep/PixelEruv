@@ -74,7 +74,7 @@ type session struct {
 	closeOnce sync.Once
 }
 
-func New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID string, logger *slog.Logger) (*Server, error) {
+func New(wsAddr, natsURL, pbAPIURL string, logger *slog.Logger) (*Server, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("pusher"),
 		nats.ReconnectWait(2*time.Second),
@@ -84,11 +84,8 @@ func New(wsAddr, natsURL, dexIssuer, dexJwksURL, dexClientID string, logger *slo
 		return nil, fmt.Errorf("nats connect: %w", err)
 	}
 	var auth *AuthValidator
-	if dexIssuer != "" {
-		if dexJwksURL == "" {
-			dexJwksURL = dexIssuer + "/keys"
-		}
-		auth = NewAuthValidator(dexIssuer, dexJwksURL, dexClientID)
+	if pbAPIURL != "" {
+		auth = NewAuthValidator(pbAPIURL)
 	}
 	srv := &Server{
 		wsAddr:    wsAddr,
@@ -143,11 +140,6 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/healthz", s.handleHealthz)
 
 	srv := &http.Server{Addr: s.wsAddr, Handler: mux}
-
-	// Start JWKS refresh loop if Dex is configured.
-	if s.auth != nil && s.auth.issuer != "" {
-		go s.auth.startKeyRefresh(ctx)
-	}
 
 	// Publish the pusher's own health to "healthz" every 10 seconds.
 	go s.startHealthPublisher(ctx)
@@ -280,13 +272,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	)
 	defer authSpan.End()
 
-	// Validate the id_token via Dex JWKS. If DEX_URL is not set, fall back
-	// to dummy auth for local dev without Dex. An empty id_token is an
-	// intentional guest connection (no Login performed) and is let through
-	// with sub == "" — worldsim treats that as a non-persistent session. A
-	// non-empty but invalid/expired token is still rejected.
+	// Validate the id_token via PocketBase API. If PB_API_URL is not set,
+	// fall back to dummy auth for local dev without PocketBase. An empty
+	// id_token is an intentional guest connection (no Login performed) and
+	// is let through with sub == "" — worldsim treats that as a non-
+	// persistent session. A non-empty but invalid/expired token is rejected.
 	var sub string
-	if s.auth != nil && s.auth.issuer != "" {
+	if s.auth != nil {
 		if idToken := auth.GetIdToken(); idToken != "" {
 			sub, err = s.auth.ValidateToken(idToken)
 			if err != nil {

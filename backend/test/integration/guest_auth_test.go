@@ -14,11 +14,11 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// startPusherWithDex starts an in-process pusher with a (fake) Dex issuer
-// configured, so the "Dex configured" auth branch is exercised without
-// needing a real Dex instance reachable — the guest path never calls the
-// JWKS endpoint, and the invalid-token path fails fast on JWT parsing.
-func startPusherWithDex(t *testing.T) string {
+// startPusherWithPB starts an in-process pusher with a (fake) PocketBase
+// API URL configured, so the auth branch is exercised without needing a
+// real PocketBase instance reachable — the guest path never calls the
+// API, and the invalid-token path fails fast on JWT parsing.
+func startPusherWithPB(t *testing.T) string {
 	t.Helper()
 	natsURL := os.Getenv("NATS_URL")
 	if natsURL == "" {
@@ -32,7 +32,7 @@ func startPusherWithDex(t *testing.T) string {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	srv, err := pusher.New(addr, natsURL, "https://fake-issuer.test", "https://fake-issuer.test/keys", "pixeleruv",
+	srv, err := pusher.New(addr, natsURL, "http://fake-pb.test/api",
 		slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})))
 	if err != nil {
 		t.Fatalf("pusher.New: %v", err)
@@ -55,9 +55,9 @@ func startPusherWithDex(t *testing.T) string {
 }
 
 // TestGuestAuthAllowed verifies that an empty id_token is accepted as a
-// guest session when Dex is configured, rather than being rejected.
+// guest session when PocketBase auth is configured, rather than being rejected.
 func TestGuestAuthAllowed(t *testing.T) {
-	addr := startPusherWithDex(t)
+	addr := startPusherWithPB(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -88,10 +88,10 @@ func TestGuestAuthAllowed(t *testing.T) {
 }
 
 // TestInvalidTokenRejected verifies that a non-empty, unparsable id_token is
-// still rejected when Dex is configured (only an intentionally empty token
-// is treated as a guest).
+// still rejected when PocketBase auth is configured (only an intentionally
+// empty token is treated as a guest).
 func TestInvalidTokenRejected(t *testing.T) {
-	addr := startPusherWithDex(t)
+	addr := startPusherWithPB(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
