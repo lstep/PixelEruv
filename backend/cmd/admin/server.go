@@ -26,7 +26,8 @@ import (
 // Config holds the admin service configuration.
 type Config struct {
 	SessionSecret  string
-	DexIssuer      string // internal issuer URL for JWT validation + token exchange
+	DexIssuer      string // issuer claim in JWT (must match Dex config issuer)
+	DexInternalURL string // internal Docker URL for JWKS fetch + token exchange
 	DexBrowserURL  string // browser-facing Dex URL for login redirects (e.g. /dex)
 	DexClientID    string
 	DexRedirectURL string
@@ -49,7 +50,7 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	s := &Server{
 		cfg:       cfg,
 		logger:    logger,
-		validator: newJWTValidator(cfg.DexIssuer, cfg.DexClientID),
+		validator: newJWTValidator(cfg.DexIssuer, cfg.DexInternalURL, cfg.DexClientID),
 		tmpl:      tmpl,
 	}
 	return s, nil
@@ -250,7 +251,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		"client_id":     {s.cfg.DexClientID},
 		"code_verifier": {verifierCookie.Value},
 	}
-	resp, err := http.Post(s.cfg.DexIssuer+"/token", "application/x-www-form-urlencoded", strings.NewReader(tokenParams.Encode()))
+	resp, err := http.Post(s.cfg.DexInternalURL+"/token", "application/x-www-form-urlencoded", strings.NewReader(tokenParams.Encode()))
 	if err != nil {
 		s.logger.Warn("token exchange", "err", err)
 		http.Error(w, "token exchange failed", http.StatusBadGateway)
@@ -326,8 +327,10 @@ func (s *Server) checkIsAdmin(sub string) (bool, error) {
 		return false, nil
 	}
 	// Query PB players collection filtered by oidc_sub.
-	u := fmt.Sprintf("%s/collections/players/records?filter=oidc_sub=%%22%%s%%22", s.cfg.PBApiURL)
-	resp, err := http.Get(fmt.Sprintf(u, url.QueryEscape(sub)))
+	// PB filter syntax: oidc_sub="value" — quotes must be URL-encoded as %22.
+	filter := fmt.Sprintf("oidc_sub=%q", sub)
+	u := fmt.Sprintf("%s/collections/players/records?filter=%s", s.cfg.PBApiURL, url.QueryEscape(filter))
+	resp, err := http.Get(u)
 	if err != nil {
 		return false, err
 	}
@@ -352,21 +355,23 @@ func (s *Server) checkIsAdmin(sub string) (bool, error) {
 // --- JWT validation (simplified from pusher/auth.go) ---
 
 type jwtValidator struct {
-	issuer   string
-	clientID string
-	keys     map[string]interface{} // kid -> public key
+	issuer     string
+	internalURL string
+	clientID   string
+	keys       map[string]interface{} // kid -> public key
 }
 
-func newJWTValidator(issuer, clientID string) *jwtValidator {
+func newJWTValidator(issuer, internalURL, clientID string) *jwtValidator {
 	return &jwtValidator{
-		issuer:   issuer,
-		clientID: clientID,
-		keys:     make(map[string]interface{}),
+		issuer:     issuer,
+		internalURL: internalURL,
+		clientID:   clientID,
+		keys:       make(map[string]interface{}),
 	}
 }
 
 func (v *jwtValidator) fetchKeys() error {
-	resp, err := http.Get(v.issuer + "/keys")
+	resp, err := http.Get(v.internalURL + "/keys")
 	if err != nil {
 		return fmt.Errorf("fetch jwks: %w", err)
 	}

@@ -27,7 +27,8 @@ func main() {
 	addr := envOr("ADMIN_HTTP_ADDR", ":8083")
 	cfg := Config{
 		SessionSecret:  os.Getenv("ADMIN_SESSION_SECRET"),
-		DexIssuer:      envOr("DEX_ISSUER", "http://dex:5556/dex"),
+		DexIssuer:      envOr("DEX_ISSUER", "http://localhost:5556/dex"),
+		DexInternalURL: envOr("DEX_INTERNAL_URL", "http://dex:5556/dex"),
 		DexBrowserURL:  envOr("DEX_BROWSER_URL", "/dex"),
 		DexClientID:    envOr("DEX_CLIENT_ID", "pixeleruv-admin"),
 		DexRedirectURL: envOr("DEX_REDIRECT_URL", "https://localhost/admin/callback"),

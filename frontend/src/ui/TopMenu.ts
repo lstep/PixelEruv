@@ -289,7 +289,7 @@ export class TopMenu {
       if (this.dropdown.style.display === "block") {
         refreshDevices();
         // Sync the name tag checkbox with the current server-side value.
-        nameTagCheckbox.checked = parsePlayerOptions(this.playerOptions).show_own_name_tag ?? false;
+        nameTagCheckbox.checked = parsePlayerOptions(this.playerOptions).show_own_name_tag ?? true;
       }
     });
     document.addEventListener("click", () => {
