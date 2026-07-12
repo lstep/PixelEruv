@@ -170,10 +170,25 @@ shows full trace trees: WebSocket receive, NATS publish, worldsim tick,
 collision check, replication encode, NATS forward, WebSocket send. When
 something is slow, you see exactly which hop is slow.
 
+For production, the stack ships with **OpenObserve** — a single-binary
+OTel backend with a SQL search UI at `/otel/`. All services (including
+the four extensions) export traces and logs to it when `OTEL_ENABLED=true`.
+
+A standalone **audit service** records lifecycle and interaction events
+(player connections, bans, chat messages, zone transitions, extension
+registrations, map reloads, A/V token minting) to its own SQLite
+database and serves a searchable web UI at `/audit/`. Each audit event
+carries an optional trace ID that links to the corresponding trace in
+OpenObserve — audit tells you *what* happened, OTel tells you *why*.
+
 **Storyboard:** Run `make debug`. Show the motel TUI with a trace tree
 for a single player movement. Point at each span and its duration.
-Narrate: "no guessing. Every hop is traced. You see the exact
-millisecond the worldsim spent on collision."
+Then open `/audit/` in a browser — show the dashboard with event
+severity counts, the recent events table, and a player timeline. Click
+a `trace_id` link — it opens the trace in OpenObserve. Narrate: "no
+guessing. Every hop is traced, every event is recorded. You see the
+exact millisecond the worldsim spent on collision, and you can search
+the full history of who did what."
 
 ### 0.9 Easy Branding and Customization
 
@@ -961,18 +976,35 @@ cert. The world loads, auth works, audio works — all from one variable.
 
 ### 5.3 OpenTelemetry Observability
 
-The backend (pusher, worldsim) and frontend are instrumented with
-OpenTelemetry traces and logs. Telemetry is off by default. `make debug`
-starts NATS, motel (a local OTel collector with a TUI), the pusher, and
-the worldsim with `OTEL_ENABLED=true`. Traces span the full
+The backend (pusher, worldsim) and all four extensions are instrumented
+with OpenTelemetry traces and logs. Telemetry is off by default. `make
+debug` starts NATS, motel (a local OTel collector with a TUI), the
+pusher, and the worldsim with `OTEL_ENABLED=true`. Traces span the full
 request path: browser → pusher → NATS → worldsim → replication →
 pusher → browser.
+
+For production, the Docker Compose stack includes **OpenObserve** — a
+single Rust binary that serves as the OTel backend. Set
+`OTEL_ENABLED=true` on any service to ship its traces and logs to
+OpenObserve at `http://openobserve:5080/api/default`. The UI is
+available at `/otel/` through the nginx proxy.
+
+A standalone **audit service** complements OTel by recording lifecycle
+and interaction events (connections, bans, chat, zone transitions,
+extension registrations, map reloads, A/V tokens) to its own SQLite
+database. The audit UI at `/audit/` provides a dashboard, searchable
+event table, event detail view with trace deep-links, and per-player
+timeline. See
+[`documentation/plans/2026-07-12-audit-observability-design.md`](plans/2026-07-12-audit-observability-design.md)
+for the full design.
 
 **Storyboard:** Run `make debug`. Show the motel TUI with a trace tree
 for a player movement: WebSocket receive → NATS publish → worldsim
 tick → collision check → replication encode → NATS publish → WebSocket
-send. Narrate: "every hop is traced. You can see exactly where time is
-spent."
+send. Then open `/audit/` — show the dashboard, filter events by type,
+click through to a player timeline. Narrate: "every hop is traced, every
+event is recorded. You can see exactly where time is spent and search
+the full history of who did what."
 
 ### 5.4 Auto-Seeding on First Boot
 
@@ -1019,6 +1051,31 @@ show the Cloudflare edge IP. In the second, swap to
 nginx — the admin pillbox now shows real visitor IPs. Narrate: "the
 right config for your topology. Cloudflare or direct — the admin sees
 the real IP either way."
+
+### 5.7 Audit Log and Event History
+
+A standalone audit service records lifecycle and interaction events —
+player connections, disconnects, bans, chat messages, name changes,
+sprite changes, zone transitions, map reloads, extension
+registrations, A/V token minting — to its own SQLite database,
+independent of worldsim or PocketBase. A Go templates + HTMX web UI at
+`/audit/` provides a dashboard with severity counts and service
+health, a searchable event table with filters (type, severity, actor),
+an event detail view with a deep-link to the corresponding OpenObserve
+trace, and a per-player timeline showing everything one player has
+done. Events are retained for 30 days (configurable) and the storage
+layer is behind an interface designed to upgrade to ClickHouse or
+TimescaleDB when volume grows.
+
+**Storyboard:** Open `/audit/` in a browser. Show the dashboard —
+service health cards, event type counts, recent events. Connect and
+disconnect a client — the events appear in real time. Filter by
+`event_type=chat.message` — only chat events show. Click a player's
+sub — their full timeline loads. Click a `trace_id` — it opens the
+trace in OpenObserve at `/otel/`. Narrate: "who did what, when, and
+why. The audit log records every event; OpenObserve shows every
+trace. Two clicks from a ban to the exact millisecond it was
+processed."
 
 ---
 
@@ -1136,7 +1193,8 @@ without interrupting the player.
 2. 5.2 Remote Configuration (one variable)
 3. 5.4 Auto-Seeding (zero setup)
 4. 5.3 OpenTelemetry (trace a movement)
-5. 4.1 Dex Authentication (swap connectors)
+5. 5.7 Audit Log (search event history, link to traces)
+6. 4.1 Dex Authentication (swap connectors)
 
 ### Arc E: "The Road Ahead" (5 minutes)
 

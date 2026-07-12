@@ -192,10 +192,17 @@ docker compose up --build -d
 | `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `worldsim` in compose | PocketBase superuser credentials (used by worldsim's initial-superuser migration, since PB is embedded). **Change before exposing to the internet.** |
 | `PB_DATA_DIR` | `/pb_data` | `worldsim` in compose | Directory worldsim mounts for PocketBase's SQLite data + uploaded files. Backed by the `pb_data` Docker volume. |
 | `PB_HTTP_ADDR` | `0.0.0.0:8090` | `worldsim` in compose | Address worldsim's embedded PocketBase listens on (admin UI + file API). |
+| `OTEL_ENABLED` | `false` | all backend services | Set to `true` to export OpenTelemetry traces and logs to the configured OTLP endpoint. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:27686` | all backend services | OTLP/HTTP endpoint for traces and logs. Points at motel for `make debug`. OpenObserve is not included in the stack by default (requires AES-NI CPU). |
+| `AUDIT_RETENTION_HOURS` | `720` (30 days) | `audit` in compose | How long audit events are kept before automatic cleanup. |
+| `AUDIT_BASE_PATH` | `/audit` | `audit` in compose | URL prefix when proxied under a path. Must match the nginx `location` block. |
+| `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI. Set `AUDIT_AUTH_PASS` in `.env` to enable. |
 
 > Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
 > deploy. The rest have working defaults; override them for production
 > hardening (secrets) or non-standard topologies (proxied LiveKit).
+> Set `OTEL_ENABLED=true` on all services to ship traces and logs to
+> a collector (motel for dev, or add OpenObserve to the stack — see section 10).
 
 ---
 
@@ -212,7 +219,7 @@ PUBLIC_HOST=192.168.1.10 LIVEKIT_NODE_IP=192.168.1.10 docker compose up --build 
 This starts: `nats`, `dex` (:5556), `pusher` (:8081),
 `worldsim` (embeds PocketBase on :8090), `frontend` (host **:4080** HTTP +
 **:4043** HTTPS), `ext-demo`, `ext-walls`, `ext-props`, `ext-av`, `livekit`
-(:7880 / :7881 / UDP 50000-50020).
+(:7880 / :7881 / UDP 50000-50020), `audit` (:8082, audit log UI).
 
 Check it came up:
 
@@ -501,11 +508,13 @@ players are near each other or inside an `av_enabled` zone.
 |-------------|--------------------------------------|-----|
 | PocketBase  | `http://<host-ip>:8090/_/` (admin UI, served by worldsim) or `https://<host-ip>/api/` (API, proxied) | Manage `maps` and `players` collections, upload map files |
 | Dex         | `https://<host-ip>/dex/` | OIDC issuer (same-origin via container nginx) |
+| Audit UI    | `https://<host-ip>/audit/` (proxied) or `http://<host-ip>:8082/` (direct) | Search audit events, view world status, check service health. Basic auth (`AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`). |
 
 > The container nginx proxies `/api/` → worldsim (so the frontend can fetch
 > maps same-origin), but the **admin UI** at `/_/` is not proxied. For remote
 > admin access either proxy `:8090` through a host nginx, or SSH tunnel:
-> `ssh -L 8090:127.0.0.1:8090 admin@<host-ip>`.
+> `ssh -L 8090:127.0.0.1:8090 admin@<host-ip>`. The audit UI (`/audit/`) is
+> proxied same-origin through the container nginx.
 
 ---
 
@@ -715,3 +724,94 @@ instructions.
   (`ext-av`) and `docker/livekit.yaml` (`keys:`) must be identical and ≥32
   chars. The dist ships with a valid shared dev placeholder; rotate it for
   production (section 3a).
+
+---
+
+## 10. Audit and Observability
+
+The stack ships with the **audit service** — it records *what happened*
+(lifecycle and interaction events). For *why/how* (OpenTelemetry traces
+and logs), use `make debug` with motel (dev), or add OpenObserve to the
+stack on a compatible CPU (see 10b below).
+
+### 10a. Audit UI (`/audit/`)
+
+The audit service subscribes to `audit.event` on NATS and persists events
+to its own SQLite database — independent of worldsim, so it survives
+worldsim crashes and can audit the crash. Open the UI at:
+
+```
+https://<host-ip>/audit/      # proxied (same-origin)
+http://<host-ip>:8082/         # direct (port exposed in compose)
+```
+
+If `AUDIT_AUTH_PASS` is set, the browser prompts for basic auth
+(`AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS`). `/healthz` and `/static/` are
+exempt so health checks and CSS load without credentials.
+
+**Pages:**
+
+| Route | Purpose |
+|-------|---------|
+| `/audit/` | Dashboard: service health cards, event severity counts (24h), event type counts, recent events |
+| `/audit/events` | Searchable event table — filter by type, severity, actor, or entity ID. HTMX partial reload on filter. |
+| `/audit/events/<id>` | Event detail: full payload, actor info, trace ID (if OTel is enabled) |
+| `/audit/players/<sub>` | Player timeline: all events for one player, chronological |
+| `/audit/world` | World status: per-map overview (dimensions, entity/zone counts), zone table with occupancy, connected players (linked to their events), extension status (alive/dead, heartbeat age, triggers) |
+| `/audit/health` | Service health detail (from pusher's `/healthz`) |
+
+Events are retained for 30 days by default (`AUDIT_RETENTION_HOURS` env
+var). The storage layer is behind an interface designed to upgrade to
+ClickHouse or TimescaleDB when volume grows.
+
+### 10b. OpenTelemetry traces (motel / OpenObserve)
+
+All backend services (pusher, worldsim, all four extensions) are
+instrumented with OpenTelemetry. Telemetry is **off by default**.
+
+**Dev** — `make debug` starts motel (a local TUI collector at
+`http://127.0.0.1:27686`). Set `OTEL_ENABLED=true` on the services you
+want to instrument:
+
+```bash
+# Enable for all services
+echo "OTEL_ENABLED=true" >> .env
+docker compose up -d
+
+# Or enable for a single service
+docker compose up -d -e OTEL_ENABLED=true worldsim
+```
+
+**Production** — OpenObserve is not included in the Docker stack by
+default because its x86 build requires AES-NI CPU instructions (not
+available on older Xeons like the L3426). To add it on a compatible CPU,
+add this service to `docker-compose.yml`:
+
+```yaml
+  openobserve:
+    image: openobserve/openobserve:latest
+    environment:
+      ZO_ROOT_USER_EMAIL: "admin@pixeleruv.local"
+      ZO_ROOT_USER_PASSWORD: "PixelEruv@2026!"  # requires upper+lower+digit+special
+      ZO_DATA_DIR: "/data"
+    volumes:
+      - o2_data:/data
+    ports:
+      - "5080:5080"
+    restart: unless-stopped
+```
+
+Then set `OTEL_EXPORTER_OTLP_ENDPOINT=http://openobserve:5080/api/default`
+on the backend services and add the `/otel/` nginx proxy (see the
+audit-observability design doc). On Apple Silicon, use
+`openobserve/openobserve:latest-arm64` instead.
+
+### 10c. Linking audit events to traces
+
+Each audit event carries an optional `trace_id`. When OTel is enabled,
+the audit UI's event detail view shows the trace ID — search for it in
+motel or OpenObserve to jump from *what* happened to *why*.
+
+See
+[`documentation/plans/2026-07-12-audit-observability-design.md`](plans/2026-07-12-audit-observability-design.md)
+for the full design, event type catalog, and storage upgrade path.

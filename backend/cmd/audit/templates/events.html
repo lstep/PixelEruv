@@ -1,0 +1,23 @@
+{{template "base" .}}
+{{define "title"}}Events{{end}}
+{{define "content"}}
+<section>
+  <form class="filters" hx-get="{{bp}}/events" hx-target="#results" hx-push-url="true">
+    <label>Type <input name="type" value="{{.Filter.EventType}}" placeholder="event type"></label>
+    <label>Severity
+      <select name="severity">
+        <option value="">All</option>
+        <option value="info" {{if eq .Filter.Severity "info"}}selected{{end}}>info</option>
+        <option value="warn" {{if eq .Filter.Severity "warn"}}selected{{end}}>warn</option>
+        <option value="error" {{if eq .Filter.Severity "error"}}selected{{end}}>error</option>
+      </select>
+    </label>
+    <label>Actor (sub) <input name="actor" value="{{.Filter.ActorSub}}" placeholder="oidc sub"></label>
+    <button type="submit">Filter</button>
+  </form>
+
+  <div id="results">
+    {{template "events_table_inner" .Events}}
+  </div>
+</section>
+{{end}}

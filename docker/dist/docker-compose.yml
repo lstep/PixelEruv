@@ -40,7 +40,7 @@ services:
       DEX_JWKS_URL: "http://dex:5556/dex/keys"
       DEX_CLIENT_ID: "pixeleruv"
       OTEL_ENABLED: "false"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
     ports:
       - "8081:8081"
     restart: unless-stopped
@@ -66,7 +66,7 @@ services:
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
       PB_ADMIN_PASSWORD: "password123"
       OTEL_ENABLED: "false"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:27686"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
     restart: unless-stopped
 
   frontend:
@@ -76,6 +76,7 @@ services:
     depends_on:
       - pusher
       - worldsim
+      - audit
     ports:
       - "4080:80"
       - "4043:443"
@@ -95,6 +96,8 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       EXTENSION_ID: "demo"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
     restart: unless-stopped
 
   ext-walls:
@@ -108,6 +111,8 @@ services:
       - worldsim
     environment:
       NATS_URL: "nats://nats:4222"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
     restart: unless-stopped
 
   ext-props:
@@ -120,6 +125,8 @@ services:
       - nats
     environment:
       NATS_URL: "nats://nats:4222"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
     restart: unless-stopped
 
   # LiveKit SFU server for A/V. API keys must match ext-av.
@@ -148,12 +155,44 @@ services:
       - livekit
     environment:
       NATS_URL: "nats://nats:4222"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
       LIVEKIT_URL: "ws://livekit:7880"
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://${PUBLIC_HOST:-localhost}:7880}"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
     restart: unless-stopped
 
+  # OpenObserve (OTel backend) is not included by default — it requires
+  # AES-NI CPU instructions. See the FAQ and audit-observability design doc.
+  # For local dev tracing, use `make debug` (motel TUI).
+
+  # Audit service — subscribes to "audit.event" on NATS, persists to its
+  # own SQLite database, serves a Go templates + HTMX web UI at :8082.
+  audit:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: audit
+    depends_on:
+      - nats
+    environment:
+      NATS_URL: "nats://nats:4222"
+      AUDIT_DB: "/data/audit.db"
+      AUDIT_HTTP_ADDR: ":8082"
+      AUDIT_BASE_PATH: "/audit"
+      AUDIT_AUTH_USER: "${AUDIT_AUTH_USER:-admin}"
+      AUDIT_AUTH_PASS: "${AUDIT_AUTH_PASS:-}"
+      PUSHER_HEALTHZ: "http://pusher:8081/healthz"
+      OTEL_BASE_URL: "http://localhost:5080"
+    volumes:
+      - audit_data:/data
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+
 volumes:
   pb_data:
   dex_data:
+  audit_data:

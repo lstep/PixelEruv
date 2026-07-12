@@ -21,6 +21,7 @@ Instead of switching between chat applications, video meetings and shared docume
 * 🔌 Extension system — add NPCs, custom behaviors, and objects as separate programs in any language
 * ⚡ High-performance Go backend
 * 🌐 Self-hostable via Docker Compose (no Kubernetes required)
+* 🔍 Audit log + observability — searchable audit event history (HTMX UI) + OpenTelemetry traces (motel dev / OpenObserve optional)
 
 🧭 Roadmap (post-MVP)
 
@@ -185,9 +186,14 @@ and will fail with `token signature is invalid` until refreshed).
 
 �🔍 Debugging with motel
 
-The backend (pusher, worldsim) and frontend are instrumented with
-OpenTelemetry traces and logs. Telemetry is **off by default**; flip it on
-when you want runtime evidence while debugging.
+The backend (pusher, worldsim, all four extensions) and frontend are
+instrumented with OpenTelemetry traces and logs. Telemetry is **off by
+default**; flip it on when you want runtime evidence while debugging.
+
+**Dev** uses motel (a local TUI collector). For production, OpenObserve
+can be added to the Docker stack on CPUs with AES-NI support — see the
+[FAQ](documentation/FAQ.md#openobserve-keeps-restarting-exit-code-132)
+for details.
 
 motel is a local OpenTelemetry collector with a query API and TUI. Install it
 from [github.com/kitlangton/motel](https://github.com/kitlangton/motel).
@@ -261,11 +267,27 @@ Env vars:
 When telemetry is disabled, the Go services use a no-op tracer/logger and the
 frontend registers no provider — zero overhead.
 
+📋 Audit log
+
+A standalone audit service records lifecycle and interaction events (player
+connections, bans, chat messages, zone transitions, map reloads, extension
+registrations, A/V tokens) to its own SQLite database and serves a searchable
+web UI at `/audit/` (basic auth via `AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`).
+The `/audit/world` page shows live world state: per-map overview, connected
+players (linked to their events), zone occupancy, and extension status.
+Each audit event carries an optional trace ID linking to the corresponding
+OpenObserve trace — audit tells you *what* happened, OTel tells you *why*.
+See the
+[audit & observability design](documentation/plans/2026-07-12-audit-observability-design.md)
+for the full event catalog and storage upgrade path.
+
 Project layout
 
     proto/                  Protobuf definitions (frames, replication, components)
     backend/cmd/pusher      WebSocket ↔ NATS proxy (no game logic)
     backend/cmd/worldsim    Authoritative simulation: tick loop, ECS, movement, replication
+    backend/cmd/audit       Audit log service (NATS sub + SQLite + HTMX UI)
+    backend/internal/audit  Audit event types + Emit helper (shared by all services)
     frontend/               Phaser 4 client + generated TS protobuf
     docker/                 Dockerfiles for pusher, worldsim, frontend
     dist/

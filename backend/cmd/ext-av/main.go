@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/livekit/protocol/auth"
+	"github.com/lstep/pixeleruv/backend/internal/audit"
+	"github.com/lstep/pixeleruv/backend/internal/otel"
 	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
@@ -109,6 +111,13 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	logger, otelShutdown, err := otel.Init(ctx, "ext-"+extID)
+	if err != nil {
+		logger.Error("otel init", "err", err)
+		os.Exit(1)
+	}
+	defer otelShutdown(context.Background())
 
 	nc, err := nats.Connect(natsURL,
 		nats.Name("ext-"+extID),
@@ -212,6 +221,10 @@ func main() {
 			URL:    livekitPublicURL,
 		})
 		logger.Info("zone A/V join", "entity", ev.EntityID, "zone", ev.ZoneID, "room", room)
+		audit.Emit(nc, "av.token_minted", audit.SeverityInfo,
+			audit.Actor{EntityID: ev.EntityID, ClientID: ev.ClientID, Extension: "av"},
+			audit.Details{"source": "zone", "room": room, "zone": ev.ZoneID},
+			"")
 	})
 
 	nc.Subscribe("zone.exit", func(m *nats.Msg) {
@@ -231,6 +244,10 @@ func main() {
 			Room:   room,
 		})
 		logger.Info("zone A/V leave", "entity", ev.EntityID, "zone", ev.ZoneID, "room", room)
+		audit.Emit(nc, "av.token_revoked", audit.SeverityInfo,
+			audit.Actor{EntityID: ev.EntityID, ClientID: ev.ClientID, Extension: "av"},
+			audit.Details{"source": "zone", "room": room, "zone": ev.ZoneID},
+			"")
 	})
 
 	// --- Subscribe to proximity.join / proximity.leave ---
@@ -259,6 +276,10 @@ func main() {
 			Members: ev.Members,
 		})
 		logger.Info("proximity A/V join", "entity", ev.EntityID, "group", ev.GroupID, "members", ev.Members)
+		audit.Emit(nc, "av.token_minted", audit.SeverityInfo,
+			audit.Actor{EntityID: ev.EntityID, ClientID: ev.ClientID, Extension: "av"},
+			audit.Details{"source": "proximity", "room": ev.GroupID, "members": ev.Members},
+			"")
 	})
 
 	nc.Subscribe("proximity.leave", func(m *nats.Msg) {
@@ -274,6 +295,10 @@ func main() {
 			Room:   ev.GroupID,
 		})
 		logger.Info("proximity A/V leave", "entity", ev.EntityID, "group", ev.GroupID)
+		audit.Emit(nc, "av.token_revoked", audit.SeverityInfo,
+			audit.Actor{EntityID: ev.EntityID, ClientID: ev.ClientID, Extension: "av"},
+			audit.Details{"source": "proximity", "room": ev.GroupID},
+			"")
 	})
 
 	// --- Subscribe to worldsim.zones for live zone updates (map reload) ---

@@ -1,0 +1,31 @@
+{{template "base" .}}
+{{define "title"}}Event #{{.Event.ID}}{{end}}
+{{define "content"}}
+<section class="event-detail">
+  <a href="{{bp}}/events" class="back">&larr; Back to events</a>
+  <h2>{{.Event.EventType}}</h2>
+  <table class="kv">
+    <tr><th>ID</th><td>{{.Event.ID}}</td></tr>
+    <tr><th>Severity</th><td class="sev-{{.Event.Severity}}">{{.Event.Severity}}</td></tr>
+    <tr><th>Timestamp</th><td>{{.Event.Timestamp.Format "2006-01-02 15:04:05 MST"}}</td></tr>
+    <tr><th>Actor Sub</th><td>{{if .Event.Actor.Sub}}<a href="{{bp}}/players/{{.Event.Actor.Sub}}">{{.Event.Actor.Sub}}</a>{{end}}</td></tr>
+    <tr><th>Entity ID</th><td>{{.Event.Actor.EntityID}}</td></tr>
+    <tr><th>Client ID</th><td>{{.Event.Actor.ClientID}}</td></tr>
+    <tr><th>IP</th><td>{{.Event.Actor.IP}}</td></tr>
+    <tr><th>Device ID</th><td>{{.Event.Actor.DeviceID}}</td></tr>
+    <tr><th>Extension</th><td>{{.Event.Actor.Extension}}</td></tr>
+    <tr><th>Trace ID</th><td>
+      {{if .Event.TraceID}}
+        {{if .OtelBaseURL}}
+          <a href="{{.OtelBaseURL}}/web/traces/search?trace_id={{.Event.TraceID}}" target="_blank">{{.Event.TraceID}} &nearr;</a>
+        {{else}}
+          {{.Event.TraceID}}
+        {{end}}
+      {{end}}
+    </td></tr>
+  </table>
+
+  <h3>Details</h3>
+  <pre class="json">{{printf "%s" .Event.Details}}</pre>
+</section>
+{{end}}

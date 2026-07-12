@@ -517,3 +517,71 @@ Shared via `backend/internal/version/version.go`. The Makefile and Dockerfile bo
 - `documentation/09-pusher.md` — §9: Health endpoint (`/healthz`) section, `healthz` NATS subject in communication contract, health aggregator in internal modules
 - `documentation/10-world-simulator.md` — `healthz` in outbound NATS subjects table
 - `documentation/18-extensions.md` — `healthz` in extension NATS subject contract
+
+## Audit & Observability System
+
+**Branch:** `feat/audit-world-status-and-auth`
+**Status:** Implemented — `make build` and all tests pass.
+
+A two-pillar system for auditing system health and browsing event history.
+
+### Pillar 1 — OpenTelemetry traces (motel / OpenObserve)
+
+OpenObserve was removed from the Docker stack because its x86 build requires
+AES-NI CPU instructions (not available on older Xeons). For dev tracing,
+use `make debug` with motel. To add OpenObserve on a compatible CPU, see
+[Quick Start §10b](documentation/quick-start.md#10b-opentelemetry-traces-motel--openobserve).
+`OTEL_ENABLED` defaults to `false`.
+
+All 4 extensions call `otel.Init()` on startup.
+
+### Pillar 2 — Audit log service
+
+Standalone Go service (`backend/cmd/audit`) that subscribes to
+`audit.event` on NATS, persists events to its own SQLite database
+(independent of worldsim/PocketBase), and serves a Go templates + HTMX web
+UI at `/audit/` (basic auth via `AUDIT_AUTH_USER`/`AUDIT_AUTH_PASS`).
+Templates and static files are embedded via `go:embed`. Serves under
+`AUDIT_BASE_PATH=/audit` when proxied by nginx.
+
+**Event types (~25):** client.connected/disconnected, auth.failed/banned,
+ws.keepalive_timeout, player.provisioned/despawned/banned/set_name/
+set_sprite_base/set_player_options/teleport/map_transition, chat.message,
+map.reloaded/integrity_check, extension.registered/stale, zone.enter/exit,
+props.action_triggered, av.token_minted/revoked.
+
+**UI pages:** dashboard (health + severity counts + event type counts +
+recent), events (filterable table with HTMX partial reload, filter by
+type/severity/actor/entity), event detail (with trace deep-link),
+player timeline, **world status** (per-map overview, zone occupancy,
+connected players linked to their events, extension alive/dead status),
+health.
+
+**Storage:** SQLite now, `EventStore` interface designed to upgrade to
+ClickHouse (preferred) or TimescaleDB. 30-day retention (configurable via
+`AUDIT_RETENTION_HOURS`).
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/internal/audit/audit.go` | New — Event/Actor/Details types + Emit helper |
+| `backend/internal/audit/audit_test.go` | New — unit tests |
+| `backend/cmd/audit/{main,server,store,embed}.go` | New — audit service (basic auth, base path, world page handler) |
+| `backend/cmd/audit/templates/*.html` | New — Go templates (dashboard, events, detail, player timeline, world, health) |
+| `backend/cmd/audit/static/{style.css,htmx.min.js}` | New — static assets |
+| `backend/internal/pusher/pusher.go` | 5 audit.Emit calls |
+| `backend/internal/worldsim/worldsim.go` | ~15 audit.Emit calls + subscribeStats() |
+| `backend/internal/worldsim/stats.go` | New — worldsim.stats.get NATS request-reply handler |
+| `backend/internal/worldsim/extensions.go` | 2 audit.Emit calls |
+| `backend/cmd/ext-{demo,walls,props,av}/main.go` | otel.Init() + audit.Emit (props, av) |
+| `docker/docker-compose.yml` | audit service, OTel endpoints, AUDIT_AUTH_USER/PASS, AUDIT_BASE_PATH |
+| `docker/dist/docker-compose.yml` | Same for dist layout |
+| `docker/backend.Dockerfile` | audit build target + image |
+| `docker/dist/backend.Dockerfile` | audit in BINARY arg comment |
+| `docker/nginx.conf` | /audit/ proxy route (no rewrite, base path aware) |
+| `Makefile` | audit in build target |
+| `documentation/features.md` | §0.8, §5.3 updated, §5.7 added, Arc D updated |
+| `documentation/quick-start.md` | env vars table, admin backends, stack list, §10 added |
+| `README.md` | features list, debugging section, project layout, audit section |
+| `documentation/plans/2026-07-12-audit-observability-design.md` | New — full design doc |

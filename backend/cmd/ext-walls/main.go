@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lstep/pixeleruv/backend/internal/otel"
 	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
@@ -66,6 +67,13 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	logger, otelShutdown, err := otel.Init(ctx, "ext-"+extID)
+	if err != nil {
+		logger.Error("otel init", "err", err)
+		os.Exit(1)
+	}
+	defer otelShutdown(context.Background())
 
 	nc, err := nats.Connect(natsURL,
 		nats.Name("ext-"+extID),

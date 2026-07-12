@@ -1,0 +1,26 @@
+{{template "base" .}}
+{{define "title"}}Health{{end}}
+{{define "content"}}
+<section>
+  <h2>Service Health</h2>
+  <table class="event-table">
+    <thead>
+      <tr><th>Service</th><th>Status</th><th>Version</th><th>Uptime</th><th>Last Seen</th><th>Extras</th></tr>
+    </thead>
+    <tbody>
+    {{range .Health}}
+      <tr>
+        <td>{{.service}}</td>
+        <td class="status-{{.status}}">{{.status}}</td>
+        <td>{{.version}}</td>
+        <td>{{.uptime}}</td>
+        <td>{{.last_seen}}</td>
+        <td class="muted">{{.extras}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="6">No health data</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
