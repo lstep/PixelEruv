@@ -43,10 +43,10 @@ func init() {
 			return err
 		}
 
-		// Idempotent: skip if a player with this oidc_sub already exists.
+		// Idempotent: skip if a player with this user_id already exists.
 		existing, _ := app.FindRecordsByFilter(
 			playersCollection.Id,
-			"oidc_sub = \""+existingUser.Id+"\"",
+			"user_id = \""+existingUser.Id+"\"",
 			"",
 			1,
 			0,
@@ -60,7 +60,7 @@ func init() {
 		}
 
 		record := core.NewRecord(playersCollection)
-		record.Set("oidc_sub", existingUser.Id)
+		record.Set("user_id", existingUser.Id)
 		record.Set("entity_id", "e_admin")
 		record.Set("display_name", "Admin")
 		record.Set("is_admin", true)

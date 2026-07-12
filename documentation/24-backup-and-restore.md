@@ -103,7 +103,7 @@ This is safe because nothing in the current schema references record IDs
 cross-collection:
 
 - `maps` are keyed by `name` (portal zones use `target_map` = name, not ID).
-- `players` are keyed by `oidc_sub` and `entity_id`, not by PB record ID.
+- `players` are keyed by `user_id` and `entity_id`, not by PB record ID.
 - `players.sprite_base` references `sprite_bases` by record ID — **this will
   break on `-force` import** if players have a non-empty `sprite_base`. For
   full-fidelity restores, prefer the volume-snapshot method (§2) or re-run

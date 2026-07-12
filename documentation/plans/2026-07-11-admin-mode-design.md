@@ -34,7 +34,7 @@ admin data selectively.
 Add `is_admin` (bool) to the `players` collection. Set via the PB admin GUI.
 
 Worldsim reads it during `provisionClient` (it already does a PB lookup by
-`oidc_sub`). Guests never have `is_admin` — they have no PB record.
+`user_id`). Guests never have `is_admin` — they have no PB record.
 
 **Why PB flag, not OIDC claims:** PB is already the source of truth for player
 data (display_name, sprite_base, position). Adding admin status there is
@@ -100,7 +100,7 @@ message AdminInfoFrame {
     string entity_id = 1;
     string ip = 2;           // client IP (guests: in-memory; logged-in: from PB)
     bool is_guest = 3;       // anonymous session?
-    string oidc_sub = 4;     // OIDC subject (empty for guests)
+    string user_id = 4;     // PocketBase user ID (empty for guests)
   }
   repeated EntityAdminInfo entities = 1;
 }

@@ -29,7 +29,7 @@ func TestBan_IsActive(t *testing.T) {
 func TestMatchesActive(t *testing.T) {
 	now := int64(1000)
 	bans := []Ban{
-		{TargetType: BanTargetOidcSub, TargetValue: "user-123", Reason: "spam", BannedUntil: 0},
+		{TargetType: BanTargetUserID, TargetValue: "user-123", Reason: "spam", BannedUntil: 0},
 		{TargetType: BanTargetIP, TargetValue: "1.2.3.4", Reason: "griefing", BannedUntil: 2000},
 		{TargetType: BanTargetDeviceID, TargetValue: "dev-abc", Reason: "trolling", BannedUntil: 0},
 		{TargetType: BanTargetIP, TargetValue: "5.6.7.8", Reason: "expired", BannedUntil: 500},
@@ -79,8 +79,8 @@ func TestMatchesActive_EmptyList(t *testing.T) {
 func TestMatchesActive_FirstActiveWins(t *testing.T) {
 	now := int64(1000)
 	bans := []Ban{
-		{TargetType: BanTargetOidcSub, TargetValue: "same-sub", Reason: "first", BannedUntil: 0},
-		{TargetType: BanTargetOidcSub, TargetValue: "same-sub", Reason: "second", BannedUntil: 0},
+		{TargetType: BanTargetUserID, TargetValue: "same-sub", Reason: "first", BannedUntil: 0},
+		{TargetType: BanTargetUserID, TargetValue: "same-sub", Reason: "second", BannedUntil: 0},
 	}
 	got := MatchesActive(bans, "same-sub", "", "", now)
 	if got == nil {

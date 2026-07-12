@@ -35,7 +35,7 @@ export function getSub(): string | null {
 
 // Device ID is a client-generated UUID stored in localStorage, stable across
 // sessions for the same browser. Used as a ban target for guests (alongside
-// IP and oidc_sub for logged-in users). Evadable by clearing storage — one
+// IP and user_id for logged-in users). Evadable by clearing storage — one
 // layer of three.
 export function getDeviceId(): string {
   let id = localStorage.getItem("device_id");

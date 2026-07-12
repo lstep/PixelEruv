@@ -28,7 +28,7 @@ message AuthFrame {
   string traceparent = 2;
   // Client-generated device ID (UUID stored in localStorage). Stable across
   // sessions for the same browser, used as a ban target for guests. Evadable
-  // by clearing storage — one layer of three (oidc_sub, IP, device_id).
+  // by clearing storage — one layer of three (user_id, IP, device_id).
   string device_id = 3;
 }
 
@@ -198,7 +198,7 @@ message AdminInfoFrame {
     string entity_id = 1;
     string ip = 2;           // client IP (all players; in-memory on Entity)
     bool is_guest = 3;       // anonymous session?
-    string oidc_sub = 4;     // OIDC subject (empty for guests)
+    string user_id = 4;      // PocketBase user ID (empty for guests)
     string device_id = 5;    // client device ID (for ban targeting)
   }
   repeated EntityAdminInfo entities = 1;

@@ -907,7 +907,7 @@ Walk around, talk to people — everything works except persistence
 Pixel Eruv supports a three-layer ban system so admins can block
 griefers by whichever identifier is most effective for the situation:
 
-- **OIDC subject** (`oidc_sub`): the strongest identifier. Bans a
+- **OIDC subject** (`user_id`): the strongest identifier. Bans a
   logged-in user's Dex account. Evading it requires creating a new
   account, which is real friction.
 - **IP address**: coarse but immediate. Stops a griefer right now.
@@ -933,7 +933,7 @@ reconnect.
 
 Ban records are currently issued via the PocketBase admin dashboard
 by adding a row to the `bans` collection with a `target_type`
-(`oidc_sub`, `ip`, or `device_id`), `target_value`, `reason`, and
+(`user_id`, `ip`, or `device_id`), `target_value`, `reason`, and
 optional `banned_until` timestamp. An in-game admin ban command is
 planned as a follow-up.
 

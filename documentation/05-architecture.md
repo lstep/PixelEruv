@@ -482,7 +482,7 @@ flowchart LR
 5. The **Pusher** publishes a `client.connected` event to NATS Core, including
    the `sub`, a generated `client_id`, and the Pusher instance ID.
 6. The **World Simulator** receives the event:
-   - Looks up or creates the user in PocketBase (by `oidc_sub`).
+   - Looks up or creates the user in PocketBase (by `user_id`).
    - Reads or initialises the user's position from JetStream KV.
    - Registers the entity in the ECS.
    - Computes the initial world snapshot for the client's AOI.

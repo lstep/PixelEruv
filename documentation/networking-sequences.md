@@ -48,7 +48,7 @@ sequenceDiagram
         N->>W: deliver client.connected
 
         par WorldSim provisioning (async, < 100 ms budget)
-            W->>PB: lookup users by oidc_sub (or create on first login)
+            W->>PB: lookup users by user_id (or create on first login)
             PB-->>W: user rec + avatar + preferences
             W->>KV: read users.<entity_id>.position (or default spawn)
             KV-->>W: stored position

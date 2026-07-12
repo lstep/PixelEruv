@@ -46,13 +46,13 @@ it coordinates with the kernel or uses its own JetStream KV namespace.
 ### Collections
 
 #### `players`
-Keyed by the Dex `sub` claim (stable OIDC subject identifier). Called
+Keyed by the PocketBase user record ID. Called
 `players` in PocketBase (the collection name in the Go migrations).
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string (PB auto) | PocketBase record ID |
-| `oidc_sub` | string (unique) | Dex `sub` — the join key from the token |
+| `user_id` | string (unique) | Dex `sub` — the join key from the token |
 | `display_name` | string | Shown above the avatar |
 | `entity_id` | string (unique) | The in-world ECS entity ID (string-encoded) assigned on first login |
 | `pos_x` | float | Last saved X position (tiles) |
@@ -132,17 +132,17 @@ extension via NATS (`extension.<id>.options`).
 #### `bans`
 Ban records checked by the world simulator during entity provisioning.
 Each record bans a single identifier. To ban a user by multiple
-identifiers (e.g. both `oidc_sub` and `device_id`), add multiple
+identifiers (e.g. both `user_id` and `device_id`), add multiple
 records. See `08-auth-and-identity.md` §9 for the ban check flow.
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string (PB auto) | PocketBase record ID |
-| `target_type` | string (required, max 20) | `oidc_sub`, `ip`, or `device_id` |
+| `target_type` | string (required, max 20) | `user_id`, `ip`, or `device_id` |
 | `target_value` | string (required, max 200) | The identifier value to match |
 | `reason` | string (max 500) | Human-readable ban reason, shown to the banned user |
 | `banned_until` | number (unix) | Expiry timestamp. 0 or empty = permanent. |
-| `banned_by` | string (max 200) | Optional: admin's `oidc_sub` who issued the ban |
+| `banned_by` | string (max 200) | Optional: admin's `user_id` who issued the ban |
 
 ---
 
@@ -231,7 +231,7 @@ communicate via NATS Core.
 3. **Pusher** publishes a `client.connected` event to NATS Core, containing
    the `sub` and a generated `client_id`.
 4. **World Simulator** receives the event and queries **PocketBase** `users`
-   by `oidc_sub`:
+   by `user_id`:
    - **First login**: creates the `users`, `avatar_appearance`, and
      `user_preferences` rows; assigns a new `entity_id`.
    - **Returning user**: reads existing profile and appearance.

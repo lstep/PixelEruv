@@ -39,7 +39,7 @@ export interface ConnectHandlers {
   // admin-only data (IP, guest status) about entities spawned near the
   // admin. Non-admin clients never receive this. See
   // documentation/plans/2026-07-11-admin-mode-design.md.
-  onAdminInfo?: (msg: { entities: { entityId: string; ip: string; isGuest: boolean; oidcSub: string; deviceId: string }[] }) => void;
+  onAdminInfo?: (msg: { entities: { entityId: string; ip: string; isGuest: boolean; userId: string; deviceId: string }[] }) => void;
   // Fired when the server rejects the connection due to an active ban.
   // The client will not attempt to reconnect. reason is human-readable;
   // banUntil is a unix timestamp (0 = permanent).
@@ -272,7 +272,7 @@ export class WsClient {
               entityId: e.entityId,
               ip: e.ip,
               isGuest: e.isGuest,
-              oidcSub: e.oidcSub,
+              userId: e.userId,
               deviceId: e.deviceId,
             })),
           });

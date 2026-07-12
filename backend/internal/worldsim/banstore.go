@@ -9,7 +9,7 @@ import (
 
 // Ban represents a record in PocketBase's bans collection.
 type Ban struct {
-	TargetType  string // "oidc_sub", "ip", or "device_id"
+	TargetType  string // "user_id", "ip", or "device_id"
 	TargetValue string
 	Reason      string
 	BannedUntil int64  // unix timestamp; 0 = permanent
@@ -22,7 +22,7 @@ func (b *Ban) IsActive(now int64) bool {
 
 // BanTargetType constants identify which identifier a ban targets.
 const (
-	BanTargetOidcSub  = "oidc_sub"
+	BanTargetUserID   = "user_id"
 	BanTargetIP       = "ip"
 	BanTargetDeviceID = "device_id"
 )
@@ -38,7 +38,7 @@ func MatchesActive(bans []Ban, sub, ip, deviceID string, now int64) *Ban {
 			continue
 		}
 		switch b.TargetType {
-		case BanTargetOidcSub:
+		case BanTargetUserID:
 			if sub != "" && b.TargetValue == sub {
 				return b
 			}
@@ -74,7 +74,7 @@ func (s *BanStore) CheckBan(sub, ip, deviceID string) (*Ban, bool) {
 		targetType string
 		value      string
 	}{
-		{BanTargetOidcSub, sub},
+		{BanTargetUserID, sub},
 		{BanTargetIP, ip},
 		{BanTargetDeviceID, deviceID},
 	} {
