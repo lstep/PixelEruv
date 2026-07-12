@@ -17,7 +17,7 @@ func init() {
 
 		collection.Fields.Add(
 			&core.TextField{
-				Name:     "oidc_sub",
+				Name:     "user_id",
 				Required: true,
 				Min:      1,
 				Max:      200,

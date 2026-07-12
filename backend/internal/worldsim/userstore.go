@@ -10,7 +10,7 @@ import (
 // UserRecord represents a player in PocketBase's players collection.
 type UserRecord struct {
 	ID          string
-	OidcSub     string
+	UserID      string // PocketBase users collection record ID
 	EntityID    string
 	DisplayName string
 	PosX        float32
@@ -33,11 +33,11 @@ func NewUserStore(app core.App) *UserStore {
 	return &UserStore{app: app}
 }
 
-// FindOrCreateUser looks up a player by oidc_sub. If not found, creates a new
+// FindOrCreateUser looks up a player by user_id. If not found, creates a new
 // record with a generated entity_id and default spawn position. On both create
 // and reconnect, the client IP and last_seen_at timestamp are persisted.
 func (s *UserStore) FindOrCreateUser(sub, entityID, defaultMapID, ip string) (*UserRecord, error) {
-	user, err := s.findBySub(sub)
+	user, err := s.findByUserID(sub)
 	if err != nil {
 		return nil, fmt.Errorf("find user: %w", err)
 	}
@@ -51,7 +51,7 @@ func (s *UserStore) FindOrCreateUser(sub, entityID, defaultMapID, ip string) (*U
 	}
 
 	user = &UserRecord{
-		OidcSub:    sub,
+		UserID:     sub,
 		EntityID:   entityID,
 		PosX:       10,
 		PosY:       10,
@@ -156,8 +156,8 @@ func (s *UserStore) UpdateConnectInfo(entityID, ip string) error {
 	return s.app.Save(record)
 }
 
-func (s *UserStore) findBySub(sub string) (*UserRecord, error) {
-	record, err := s.app.FindFirstRecordByData("players", "oidc_sub", sub)
+func (s *UserStore) findByUserID(userID string) (*UserRecord, error) {
+	record, err := s.app.FindFirstRecordByData("players", "user_id", userID)
 	if err != nil {
 		return nil, nil // not found is not an error here
 	}
@@ -183,7 +183,7 @@ func (s *UserStore) create(user *UserRecord) error {
 	}
 
 	record := core.NewRecord(collection)
-	record.Set("oidc_sub", user.OidcSub)
+	record.Set("user_id", user.UserID)
 	record.Set("entity_id", user.EntityID)
 	record.Set("pos_x", user.PosX)
 	record.Set("pos_y", user.PosY)
@@ -207,7 +207,7 @@ func (s *UserStore) create(user *UserRecord) error {
 func recordToUser(r *core.Record) *UserRecord {
 	return &UserRecord{
 		ID:          r.Id,
-		OidcSub:     r.GetString("oidc_sub"),
+		UserID:      r.GetString("user_id"),
 		EntityID:    r.GetString("entity_id"),
 		DisplayName: r.GetString("display_name"),
 		PosX:        float32(r.GetFloat("pos_x")),

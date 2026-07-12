@@ -262,8 +262,8 @@ func (s *Server) checkIsAdmin(sub string) (bool, error) {
 	if sub == "" || sub == "dev" {
 		return false, nil
 	}
-	// Query PB players collection filtered by oidc_sub.
-	filter := fmt.Sprintf("oidc_sub=%q", sub)
+	// Query PB players collection filtered by user_id.
+	filter := fmt.Sprintf("user_id=%q", sub)
 	u := fmt.Sprintf("%s/collections/players/records?filter=%s", s.cfg.PBApiURL, url.QueryEscape(filter))
 	resp, err := http.Get(u)
 	if err != nil {

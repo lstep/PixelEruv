@@ -55,8 +55,7 @@ func extractIDFromJWT(token string) (string, error) {
 }
 
 // ValidateToken validates a PocketBase auth token by calling the PocketBase
-// API. Returns the user record ID (used as the sub/oidc_sub throughout the
-// system).
+// API. Returns the user record ID (used as user_id throughout the system).
 func (a *AuthValidator) ValidateToken(idToken string) (string, error) {
 	userID, err := extractIDFromJWT(idToken)
 	if err != nil {

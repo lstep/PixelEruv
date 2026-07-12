@@ -59,7 +59,7 @@ type Entity struct {
 	// DeviceID is the client-generated UUID stored in the browser's
 	// localStorage, sent in the AuthFrame. Stable across sessions for the
 	// same browser. Used as a ban target for guests (alongside IP and
-	// oidc_sub for logged-in users). Sent to admin clients via the
+	// user_id for logged-in users). Sent to admin clients via the
 	// admin-only NATS channel.
 	DeviceID string
 	// IsAdmin is true for players with the is_admin flag in PocketBase.
@@ -698,9 +698,9 @@ type provisionResult struct {
 }
 
 // provisionClient creates a player avatar entity for the given client.
-// If the user has a record in PocketBase (by oidc_sub), their persistent
+// If the user has a record in PocketBase (by user_id), their persistent
 // entity_id and last position are restored. Otherwise a new user record
-// is created. If the client matches an active ban (by oidc_sub, IP, or
+// is created. If the client matches an active ban (by user_id, IP, or
 // device_id), no entity is created and the ban info is returned.
 func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, deviceID string) provisionResult {
 	s.mu.Lock()
@@ -778,7 +778,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	// Check ban list after the PB lookup so we know isAdmin. Admins are
 	// exempt from bans — they can always connect. Guests (never admins)
 	// and non-admin logged-in users are checked against all three
-	// identifiers (oidc_sub, IP, device_id).
+	// identifiers (user_id, IP, device_id).
 	if !isAdmin && s.banStore != nil {
 		if ban, found := s.banStore.CheckBan(sub, ip, deviceID); found {
 			s.logger.InfoContext(ctx, "rejected banned client",
@@ -1804,7 +1804,7 @@ func (s *Simulator) publishAdminInfo(ctx context.Context, adminClientID string, 
 			EntityId: e.ID,
 			Ip:       e.IP,
 			IsGuest:  e.IsGuest,
-			OidcSub:  "", // OIDC sub is not stored on the Entity; available in PB
+			UserId:   "", // user_id is not stored on the Entity; available in PB
 			DeviceId: e.DeviceID,
 		})
 	}

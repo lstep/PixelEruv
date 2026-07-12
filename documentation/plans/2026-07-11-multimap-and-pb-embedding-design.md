@@ -117,7 +117,7 @@ func NewUserStore(app core.App) *UserStore
 ```
 
 HTTP calls become DAO calls:
-- `http.Get("/api/collections/players/records?filter=...")` → `app.Dao().FindRecordsByFilter("players", "oidc_sub = {:sub}", ...)`
+- `http.Get("/api/collections/players/records?filter=...")` → `app.Dao().FindRecordsByFilter("players", "user_id = {:sub}", ...)`
 - `http.Post("/api/collections/players/records")` → `record := models.NewRecord(collection); record.Set(...); app.Dao().SaveRecord(record)`
 - Multipart file uploads → `filesystem.NewFileFromPath(path)` + `record.Set("tiled_json", file)`
 

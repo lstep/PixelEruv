@@ -70,7 +70,7 @@ deploy time. The application code does not change between connector types.
 
 | Claim | Type | Used for |
 |---|---|---|
-| `sub` | string | Stable unique user identifier; join key to PocketBase `users.oidc_sub` |
+| `sub` | string | Stable unique user identifier; join key to PocketBase `users.user_id` |
 | `email` | string | Display fallback if no `display_name` exists in PocketBase |
 | `name` | string | Pre-filled `display_name` on first login |
 | `exp` | int (Unix) | Token expiry; enforced on upgrade and on refresh |
@@ -193,7 +193,7 @@ KV.
 When the Pusher publishes a `client.connected` event to NATS Core (containing
 the validated `sub` and a `client_id`), the World Simulator:
 
-1. Queries **PocketBase** `users` by `oidc_sub`:
+1. Queries **PocketBase** `users` by `user_id`:
    - **First login**: creates the `users`, `avatar_appearance`, and
      `user_preferences` records; assigns a new `entity_id` (a string-encoded
      ID assigned by the ECS).
@@ -299,7 +299,7 @@ providing defense in depth against evasion.
 
 | Target type | Identifier | Strength | Covers |
 |---|---|---|---|
-| `oidc_sub` | Dex OIDC subject | Robust — evading requires a new account | Logged-in users |
+| `user_id` | PocketBase user ID | Robust — evading requires a new account | Logged-in users |
 | `ip` | Client IP address | Coarse — collateral damage on shared IPs (NAT, household) | Everyone |
 | `device_id` | Client-generated UUID in `localStorage` | Weak — evadable by clearing storage or incognito | Primarily guests |
 
@@ -325,7 +325,7 @@ the PocketBase user lookup that determines `isAdmin`:
 
 1. The pusher extracts `sub`, `ip`, and `device_id` from the `AuthFrame`
    and forwards them to worldsim via the `client.connected` NATS message.
-2. Worldsim looks up the user in PocketBase by `oidc_sub` (for logged-in
+2. Worldsim looks up the user in PocketBase by `user_id` (for logged-in
    users) and determines `isAdmin`.
 3. If `isAdmin` is true, the ban check is skipped — admins are always
    exempt.
