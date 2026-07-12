@@ -1481,7 +1481,6 @@ func (s *Simulator) handleSetPlayerOptions(ctx context.Context, clientID string,
 		audit.Actor{EntityID: entityID, ClientID: clientID},
 		audit.Details{"options": options},
 		"")
-
 	// Persist to PocketBase for logged-in users. Guests have no
 	// PocketBase record, so findByEntityID returns nil and the update is
 	// a no-op — matching handleSetName's "guest names are session-only".
