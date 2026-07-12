@@ -285,6 +285,35 @@ WebRTC client-side noise cancellation (`noiseSuppression` + `echoCancellation` +
 - Mid-call toggle: `setNoiseCancellation` restarts the mic track (`LocalAudioTrack.restartTrack`) so the change takes effect without reconnecting, when the mic is published and unmuted.
 - When disabled, the three flags are explicitly set to `false` to override the SDK's `true` defaults.
 
+## AV: Fix video sometimes not appearing (DUPLICATE_IDENTITY + stuck state)
+
+**Branch:** `feat/name-tag-info-dropdown`
+**Status:** Implemented, build passes.
+
+Two bugs in `AvClient` combined to cause video to sometimes not appear and
+stay broken until page reload:
+
+1. **Concurrent `handleTokenFrame("join")` calls bypassed the guard.**
+   `handleTokenFrame` was async and not serialized. The "already connected?"
+   guard checked `this.currentRoom`, but it was set inside `connect()` after
+   the first `await`. When a player oscillated on a proximity edge after a
+   disconnect, multiple "join" frames arrived before the first `connect()` set
+   `this.currentRoom`, so all passed the guard. Each created a `Room` object
+   connecting to the same LiveKit room with the same identity → server kicked
+   one with `DUPLICATE_IDENTITY` (reason 2).
+
+2. **No `RoomEvent.Disconnected` listener → permanent stuck state.**
+   When the room died (server kick, network drop), `this.room` and
+   `this.currentRoom` stayed set. All future "join" frames for the same room
+   were skipped by the guard → player stuck with no A/V until page reload.
+
+**Fix:**
+- `handleTokenFrame` now serializes calls via a `frameQueue` promise chain.
+  Each frame waits for the previous one to finish before processing.
+- Added `RoomEvent.Disconnected` listener that clears state on unexpected
+  disconnect. A `disconnecting` flag suppresses it during client-initiated
+  `disconnect()` (which already cleans up).
+
 Note: only WebRTC client-side cancellation applies (self-hosted LiveKit). The enhanced Krisp/ai-coustics models in the LiveKit docs require LiveKit Cloud and target voice AI agents, not browser conferencing clients.
 
 ### TODO: split into individual toggles in the options menu
