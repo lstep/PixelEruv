@@ -24,6 +24,8 @@ export class TopMenu {
   private audioBtn: HTMLButtonElement;
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
+  private setPlayerOptionsHandler: ((options: string) => void) | null = null;
+  private playerOptions: string = "";
 
   constructor() {
     this.container = document.createElement("div");
@@ -248,11 +250,46 @@ export class TopMenu {
       });
     }
 
+    // --- Player options: Show my name tag ---
+    // Checkbox that toggles whether the local player's name tag is visible
+    // above their own avatar. Sent to the server via SetPlayerOptionsFrame
+    // and persisted to PocketBase for logged-in users.
+    const nameTagLabel = document.createElement("div");
+    nameTagLabel.style.cssText = "color:#aaa;font-size:12px;margin-top:12px;margin-bottom:6px;";
+    nameTagLabel.textContent = "Player options";
+    this.dropdown.appendChild(nameTagLabel);
+
+    const nameTagRow = document.createElement("div");
+    nameTagRow.style.cssText = "display:flex;align-items:center;gap:6px;";
+    this.dropdown.appendChild(nameTagRow);
+
+    const nameTagCheckbox = document.createElement("input");
+    nameTagCheckbox.type = "checkbox";
+    nameTagCheckbox.id = "topmenu-show-name-tag";
+    nameTagCheckbox.style.cssText = "width:16px;height:16px;cursor:pointer;";
+    nameTagRow.appendChild(nameTagCheckbox);
+
+    const nameTagLabelText = document.createElement("label");
+    nameTagLabelText.htmlFor = "topmenu-show-name-tag";
+    nameTagLabelText.textContent = "Show my name tag";
+    nameTagLabelText.style.cssText = "color:#fff;font-size:14px;cursor:pointer;";
+    nameTagRow.appendChild(nameTagLabelText);
+
+    nameTagCheckbox.addEventListener("change", () => {
+      const opts = parsePlayerOptions(this.playerOptions);
+      opts.show_own_name_tag = nameTagCheckbox.checked;
+      const json = JSON.stringify(opts);
+      this.playerOptions = json;
+      this.setPlayerOptionsHandler?.(json);
+    });
+
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.dropdown.style.display = this.dropdown.style.display === "none" ? "block" : "none";
       if (this.dropdown.style.display === "block") {
         refreshDevices();
+        // Sync the name tag checkbox with the current server-side value.
+        nameTagCheckbox.checked = parsePlayerOptions(this.playerOptions).show_own_name_tag ?? false;
       }
     });
     document.addEventListener("click", () => {
@@ -307,6 +344,20 @@ export class TopMenu {
     this.setSpriteBaseHandler = fn;
   }
 
+  // setSetPlayerOptionsHandler wires the callback invoked when the user toggles
+  // a player option in the dropdown. GameScene passes ws.setPlayerOptions so
+  // the change is sent to the server (which persists to PocketBase).
+  setSetPlayerOptionsHandler(fn: (options: string) => void): void {
+    this.setPlayerOptionsHandler = fn;
+  }
+
+  // setPlayerOptions updates the stored player options from the server's auth
+  // result. Called by GameScene on ready so the checkbox reflects the current
+  // server-side value when the dropdown is opened.
+  setPlayerOptions(options: string): void {
+    this.playerOptions = options;
+  }
+
   private updateAvLabels(): void {
     if (!this.avClient) return;
     this.micBtn.textContent = this.avClient.isMicMuted() ? "🎤 Muted" : "🎤 Mic";
@@ -316,4 +367,17 @@ export class TopMenu {
     this.screenBtn.textContent = this.avClient.isScreenShareEnabled() ? "🖥️ Stop" : "🖥️ Screen";
     this.screenBtn.style.opacity = this.avClient.isScreenShareEnabled() ? "1" : "0.5";
   }
+}
+
+// parsePlayerOptions safely parses the player options JSON string, returning
+// an object with known keys. Malformed JSON yields an empty object.
+function parsePlayerOptions(raw: string): { show_own_name_tag?: boolean } {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null) return parsed;
+  } catch {
+    // malformed JSON — return empty
+  }
+  return {};
 }

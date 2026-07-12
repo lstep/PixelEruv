@@ -44,7 +44,7 @@ export class DayNightOverlay {
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
-    this.enabled = loadEnabled();
+    this.enabled = loadEnabled() ?? true; // default: activated
     this.keyframes = loadKeyframes();
 
     this.rect = scene.add
@@ -75,6 +75,20 @@ export class DayNightOverlay {
     saveEnabled(enabled);
     this.rect.setVisible(enabled);
     if (enabled) this.apply();
+  }
+
+  /**
+   * Applies a map-level default for day/night. Only takes effect if the
+   * player has no explicit localStorage preference — the player can always
+   * override by toggling via setEnabled(). Called when map options arrive
+   * (auth, map transition, hot-reload).
+   */
+  applyDefault(defaultEnabled: boolean): void {
+    const stored = loadEnabled();
+    if (stored !== null) return; // player has an explicit preference
+    this.enabled = defaultEnabled;
+    this.rect.setVisible(defaultEnabled);
+    if (defaultEnabled) this.apply();
   }
 
   isEnabled(): boolean {
@@ -147,9 +161,9 @@ function interpolate(now: Date, keyframes: Keyframe[]): { color: number; alpha: 
 
 // --- Persistence ---
 
-function loadEnabled(): boolean {
+function loadEnabled(): boolean | null {
   const v = localStorage.getItem(STORAGE_KEY);
-  if (v === null) return true; // default: activated
+  if (v === null) return null; // no explicit preference
   return v === "true";
 }
 

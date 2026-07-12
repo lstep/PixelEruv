@@ -16,6 +16,7 @@ type MapData struct {
 	Zones      []*Zone
 	SpawnZones []*Zone // subset of Zones with zone_type=spawn
 	Entities   []*PropEntity
+	Options    json.RawMessage // JSON options from the maps PB record
 }
 
 // PropEntity is a base entity authored on the "Entities" object layer in
@@ -82,6 +83,7 @@ type tiledMapJSON struct {
 type MapRecordInfo struct {
 	Name              string
 	TiledJSONFilename string
+	Options           json.RawMessage
 }
 
 // parseTiledMapJSON parses a Tiled JSON export into MapData: collision grid,

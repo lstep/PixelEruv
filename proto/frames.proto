@@ -17,6 +17,7 @@ message ClientFrame {
     ChatFrame chat = 5;
     SetNameFrame set_name = 6;
     SetSpriteBaseFrame set_sprite_base = 7;
+    SetPlayerOptionsFrame set_player_options = 8;
   }
 }
 
@@ -88,6 +89,16 @@ message SetSpriteBaseFrame {
   string traceparent = 2;
 }
 
+// SetPlayerOptionsFrame is a client request to update their player options
+// (e.g. show_own_name_tag). The server persists the full options JSON to
+// PocketBase for logged-in users. Guests have no PB record — options are
+// session-only. The options field is a full JSON replace (not a partial
+// merge), mirroring the extension_options pattern.
+message SetPlayerOptionsFrame {
+  string options = 1;       // JSON-encoded player options (full replace)
+  string traceparent = 2;
+}
+
 // === Server → Client frames ===
 
 message ServerFrame {
@@ -101,6 +112,7 @@ message ServerFrame {
     ChatMessageFrame chat_message = 7;
     MapTransitionFrame map_transition = 8;
     AdminInfoFrame admin_info = 9;
+    MapOptionsUpdateFrame map_options_update = 10;
   }
 }
 
@@ -124,6 +136,8 @@ message AuthResultFrame {
   bool banned = 9;            // worldsim→pusher: client is banned, reject connection
   string ban_reason = 10;     // worldsim→pusher→browser: human-readable ban reason
   uint64 ban_until = 11;      // worldsim→pusher→browser: unix timestamp expiry (0 = permanent)
+  string map_options = 12;    // JSON-encoded options for the player's current map
+  string player_options = 13; // JSON-encoded player options
 }
 
 message ErrorFrame {
@@ -165,6 +179,14 @@ message MapTransitionFrame {
   string map_id = 1;        // new map name
   float spawn_x = 2;        // spawn X on new map
   float spawn_y = 3;        // spawn Y on new map
+  string map_options = 4;  // JSON-encoded options for the new map
+}
+
+// MapOptionsUpdateFrame is sent to connected clients when a map's options are
+// edited in the PB admin GUI (hot-reload). The client re-applies map-level
+// feature toggles (e.g. day_night_enabled) immediately.
+message MapOptionsUpdateFrame {
+  string map_options = 1;  // JSON-encoded updated map options
 }
 
 // AdminInfoFrame carries admin-only data about entities, sent only to admin

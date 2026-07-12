@@ -391,6 +391,10 @@ export class GameScene extends Phaser.Scene {
   // Set by the dot/button pointerdown handlers so the scene-level pointerdown
   // listener knows not to close the dropdown on that same click.
   private _dropdownClickedThisFrame = false;
+  // Player option: whether to show the local player's own name tag above their
+  // avatar. Defaults to false (hidden). Set from the player_options JSON sent
+  // by the server on auth.
+  private showOwnNameTag = false;
 
   constructor() {
     super("GameScene");
@@ -829,6 +833,13 @@ export class GameScene extends Phaser.Scene {
         // PocketBase-stored identity exists (persistent entity_id).
         this.myEntityId = this.ws?.getEntityId() ?? null;
         console.log("ready, myEntityId=", this.myEntityId);
+        // Apply map and player options from the auth result.
+        this.applyMapOptions(this.ws?.getMapOptions() ?? "");
+        this.applyPlayerOptions(this.ws?.getPlayerOptions() ?? "");
+        // Sync player options to the TopMenu so the checkbox reflects the
+        // current server-side value when the dropdown is opened.
+        const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+        tm?.setPlayerOptions(this.ws?.getPlayerOptions() ?? "");
         // If the server says we're on a different map than the one currently
         // loaded (e.g. player logged out on map2 and reconnected), trigger a
         // map transition to load the correct map.
@@ -893,7 +904,10 @@ export class GameScene extends Phaser.Scene {
         chatPanel?.addMessage(msg);
       },
       onMapTransition: (msg) => {
-        this.handleMapTransition(msg.mapId, msg.spawnX, msg.spawnY);
+        this.handleMapTransition(msg.mapId, msg.spawnX, msg.spawnY, msg.mapOptions);
+      },
+      onMapOptionsUpdate: (msg) => {
+        this.applyMapOptions(msg.mapOptions);
       },
       onAdminInfo: (msg) => {
         for (const e of msg.entities) {
@@ -915,6 +929,7 @@ export class GameScene extends Phaser.Scene {
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
     topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
+    topMenu?.setSetPlayerOptionsHandler((options) => this.ws?.setPlayerOptions(options));
 
     // Close the info dropdown when clicking outside it. The dot and buttons
     // set _dropdownClickedThisFrame to suppress this on their own clicks.
@@ -971,6 +986,16 @@ export class GameScene extends Phaser.Scene {
       local.sprite.x = local.predX * TILE_SIZE;
       local.sprite.y = local.predY * TILE_SIZE + TILE_SIZE / 2;
       local.sprite.setDepth(this.dynamicDepth(this.feetY(local.sprite)));
+
+      // Reposition the local player's name tag (if visible) to follow the
+      // sprite and counter-scale, same as remote avatars below.
+      if (local.nameTag) {
+        const zoom = this.cameras.main.zoom;
+        local.nameTag.x = local.sprite.x;
+        local.nameTag.y = local.sprite.y - 52 / zoom;
+        local.nameTag.setScale(1 / zoom);
+        local.nameTag.setDepth(local.sprite.depth + 0.01);
+      }
 
       // Update walk animation based on input.
       const moving = this.inputState.up || this.inputState.down ||
@@ -1060,8 +1085,11 @@ export class GameScene extends Phaser.Scene {
   // handleMapTransition loads the new map's assets from PocketBase, then
   // restarts the scene with the new map. All avatars are cleared during the
   // restart and re-spawned by the server's replication loop.
-  private handleMapTransition(mapId: string, spawnX: number, spawnY: number): void {
+  private handleMapTransition(mapId: string, spawnX: number, spawnY: number, mapOptions?: string): void {
     console.log(`map transition: ${mapId} (${spawnX}, ${spawnY})`);
+    // Apply map options (e.g. day_night_enabled) before loading assets so the
+    // overlay is correct when the scene restarts.
+    if (mapOptions !== undefined) this.applyMapOptions(mapOptions);
     // Load the new map assets from PocketBase, then restart the scene.
     loadMapAssets(mapId)
       .then((mapAssets) => {
@@ -1084,6 +1112,50 @@ export class GameScene extends Phaser.Scene {
       .catch((err) => {
         console.error("map transition failed: failed to load map assets:", err);
       });
+  }
+
+  // applyMapOptions parses the map options JSON and applies map-level feature
+  // toggles. Currently handles day_night_enabled (default true). The map option
+  // sets the default — the player's explicit localStorage preference takes
+  // precedence (see DayNightOverlay.applyDefault).
+  private applyMapOptions(mapOptions: string): void {
+    let dayNightEnabled = true; // default
+    if (mapOptions) {
+      try {
+        const opts = JSON.parse(mapOptions) as { day_night_enabled?: boolean };
+        if (typeof opts.day_night_enabled === "boolean") {
+          dayNightEnabled = opts.day_night_enabled;
+        }
+      } catch {
+        // malformed JSON — use defaults
+      }
+    }
+    this.dayNightOverlay?.applyDefault(dayNightEnabled);
+  }
+
+  // applyPlayerOptions parses the player options JSON and applies player-level
+  // preferences. Currently handles show_own_name_tag (default false). Updates
+  // the local player's name tag visibility if it exists.
+  private applyPlayerOptions(playerOptions: string): void {
+    let showOwnNameTag = false; // default
+    if (playerOptions) {
+      try {
+        const opts = JSON.parse(playerOptions) as { show_own_name_tag?: boolean };
+        if (typeof opts.show_own_name_tag === "boolean") {
+          showOwnNameTag = opts.show_own_name_tag;
+        }
+      } catch {
+        // malformed JSON — use defaults
+      }
+    }
+    this.showOwnNameTag = showOwnNameTag;
+    // Update the local player's name tag visibility if it exists.
+    if (this.myEntityId) {
+      const avatar = this.avatars.get(this.myEntityId);
+      if (avatar?.nameTag) {
+        avatar.nameTag.setVisible(showOwnNameTag);
+      }
+    }
   }
 
   private handleReplication(batch: ReplicationBatchView): void {
@@ -1383,8 +1455,8 @@ export class GameScene extends Phaser.Scene {
 
     container.add(children);
     container.setDepth(avatar.sprite.depth + 0.01);
-    // Hide for the local player's own avatar.
-    container.setVisible(entityId !== this.myEntityId);
+    // Hide for the local player's own avatar unless showOwnNameTag is enabled.
+    container.setVisible(entityId !== this.myEntityId || this.showOwnNameTag);
     // Counter-scale so the tag stays constant screen size regardless of zoom.
     container.setScale(1 / this.cameras.main.zoom);
     avatar.nameTag = container;

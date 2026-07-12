@@ -37,6 +37,7 @@ func (s *MapStore) ListAllMaps() ([]*MapRecordInfo, error) {
 		result = append(result, &MapRecordInfo{
 			Name:              r.GetString("name"),
 			TiledJSONFilename: r.GetString("tiled_json"),
+			Options:           json.RawMessage(r.GetString("options")),
 		})
 	}
 	return result, nil
@@ -130,6 +131,7 @@ func (s *MapStore) FetchMapRecordInfo(mapName string) (*MapRecordInfo, error) {
 	return &MapRecordInfo{
 		Name:              record.GetString("name"),
 		TiledJSONFilename: record.GetString("tiled_json"),
+		Options:           json.RawMessage(record.GetString("options")),
 	}, nil
 }
 
@@ -172,5 +174,10 @@ func (s *MapStore) loadMapOnce(mapName string) (*MapData, error) {
 		return nil, fmt.Errorf("read tiled json body: %w", err)
 	}
 
-	return parseTiledMapJSON(body)
+	md, err := parseTiledMapJSON(body)
+	if err != nil {
+		return nil, err
+	}
+	md.Options = json.RawMessage(record.GetString("options"))
+	return md, nil
 }

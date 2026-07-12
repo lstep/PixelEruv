@@ -20,6 +20,7 @@ type UserRecord struct {
 	IP          string
 	LastSeenAt  int64
 	IsAdmin     bool
+	Options     string
 }
 
 // UserStore handles PocketBase player lookups and persistence via the
@@ -123,6 +124,21 @@ func (s *UserStore) UpdateSpriteBase(entityID, spriteBase string) error {
 	return s.app.Save(record)
 }
 
+// UpdateOptions persists the player's options JSON to PocketBase. No-op if the
+// entity has no PocketBase record (guests — session-only options).
+func (s *UserStore) UpdateOptions(entityID, options string) error {
+	record, err := s.findByEntityIDRecord(entityID)
+	if err != nil {
+		return fmt.Errorf("find user for options update: %w", err)
+	}
+	if record == nil {
+		return nil
+	}
+
+	record.Set("options", options)
+	return s.app.Save(record)
+}
+
 // UpdateConnectInfo persists the client IP and last_seen_at timestamp for a
 // player. Called on every connect. No-op if the entity has no PocketBase
 // record (guests).
@@ -201,5 +217,6 @@ func recordToUser(r *core.Record) *UserRecord {
 		IP:          r.GetString("ip"),
 		LastSeenAt:  int64(r.GetInt("last_seen_at")),
 		IsAdmin:     r.GetBool("is_admin"),
+		Options:     r.GetString("options"),
 	}
 }
