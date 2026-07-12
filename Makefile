@@ -82,6 +82,9 @@ dist-stage:
 	cp docker/dex/config.yaml           $(DIST_DIR)/docker/dex/config.yaml
 	cp docker/dex-entrypoint.sh         $(DIST_DIR)/docker/dex-entrypoint.sh
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
+	@# --- stage static welcome page ---
+	@mkdir -p $(DIST_DIR)/docker/welcome
+	cp docker/welcome/index.html        $(DIST_DIR)/docker/welcome/index.html
 	@# --- stage compose ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
 	@# --- stage character spritesheets for worldsim auto-seed ---
