@@ -33,6 +33,25 @@ export class TopMenu {
       "position:fixed;top:12px;right:12px;display:flex;gap:8px;align-items:flex-start;z-index:20;font-family:sans-serif;";
     document.body.appendChild(this.container);
 
+    // Welcome page link — official PixelEruv icon, fixed to the top-left corner
+    // (separate from the right-aligned A/V bar). Opens /welcome/ in a new tab
+    // so the player's game session is preserved.
+    const welcomeLink = document.createElement("a");
+    welcomeLink.href = "/welcome/";
+    welcomeLink.target = "_blank";
+    welcomeLink.rel = "noopener noreferrer";
+    welcomeLink.title = "Welcome page";
+    welcomeLink.setAttribute("aria-label", "Welcome page");
+    welcomeLink.style.cssText =
+      "position:fixed;top:12px;left:12px;z-index:20;display:flex;align-items:center;justify-content:center;" +
+      "width:40px;height:40px;text-decoration:none;";
+    const welcomeImg = document.createElement("img");
+    welcomeImg.src = "/assets/pixel-eruv-icon.svg";
+    welcomeImg.alt = "";
+    welcomeImg.style.cssText = "width:32px;height:32px;display:block;pointer-events:none;";
+    welcomeLink.appendChild(welcomeImg);
+    document.body.appendChild(welcomeLink);
+
     // A/V controls, hidden until a scene attaches an AvClient.
     this.micBtn = document.createElement("button");
     this.micBtn.style.cssText = PILL_STYLE + "display:none;";
