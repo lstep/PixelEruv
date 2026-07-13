@@ -50,4 +50,5 @@ message Appearance {
 message DisplayName {
   string name = 1;
   bool is_guest = 2;  // true for anonymous/guest sessions (no OIDC sub)
+  bool is_admin = 3;  // true to render the admin badge (IsAdmin && !HideAdminBadge, server-computed)
 }

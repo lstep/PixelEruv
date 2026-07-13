@@ -67,6 +67,11 @@ type Entity struct {
 	// client.<id>.admin NATS subject. Always false for guests (no PB
 	// record).
 	IsAdmin bool
+	// HideAdminBadge is true when the player opted out of the public
+	// "admin" badge on their name tag (players.hide_admin_badge). Only
+	// meaningful when IsAdmin is true; the replicated DisplayName.is_admin
+	// flag is computed as IsAdmin && !HideAdminBadge.
+	HideAdminBadge bool
 	// EntityType/OwnerExtension/TriggerRadius: set for base entities loaded
 	// from the map's "Entities" object layer (see mapdata.go PropEntity).
 	// Included in input-trigger dispatch payloads so extensions can
@@ -738,6 +743,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	displayName := ""
 	spriteBase := ""
 	isAdmin := false
+	hideAdminBadge := false
 	playerOptions := ""
 
 	// Look up or create the user in PocketBase for persistent identity.
@@ -751,6 +757,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			displayName = user.DisplayName
 			spriteBase = user.SpriteBase
 			isAdmin = user.IsAdmin
+			hideAdminBadge = user.HideAdminBadge
 			playerOptions = user.Options
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
@@ -819,6 +826,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		IP:            ip,
 		DeviceID:      deviceID,
 		IsAdmin:       isAdmin,
+		HideAdminBadge: hideAdminBadge,
 		SpriteBase:    spriteBase,
 		PlayerOptions: playerOptions,
 		spawnedTo:     make(map[string]bool),
@@ -1690,7 +1698,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
 			}
 			if e.NetworkSession != nil && e.DisplayName != "" {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge})
 				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
 			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
@@ -1720,7 +1728,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				})
 			}
 			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge})
 				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
