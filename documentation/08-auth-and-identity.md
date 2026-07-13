@@ -10,71 +10,76 @@ trust boundary. It builds on `04-tech-stack.md` (technology choices),
 
 ## 1. Principles
 
-- **Dex is the single OIDC token issuer.** Every human user and every
-  protected service call is authenticated via a JWT signed by Dex. No other
-  component issues tokens.
+- **PocketBase is the single authentication provider.** Every human user
+  registers and authenticates directly against PocketBase's built-in `users`
+  auth collection (email/password, OAuth2 social login). PocketBase issues
+  HS256-signed JWTs. No external identity provider is required.
 - **The Pusher is the single validation point for game-state access.** It
-  validates the token on the WebSocket upgrade and extracts the `sub` claim.
-  It does not do identity provisioning — it forwards the validated `sub` to
-  the World Simulator via NATS. Downstream components (NATS, LiveKit Bridge)
-  trust the Pusher's validation within the same internal Docker network.
-  PocketBase is embedded in the World Simulator as a Go library and receives
-  the validated `sub` in-process (see §5). None of these are reachable from
-  outside.
+  validates the PocketBase JWT on the WebSocket upgrade by calling the
+  PocketBase API to verify the token and extract the user ID. It does not do
+  identity provisioning — it forwards the validated `user_id` to the World
+  Simulator via NATS. Downstream components (NATS, LiveKit Bridge) trust the
+  Pusher's validation within the same internal Docker network. PocketBase is
+  embedded in the World Simulator as a Go library (see §5).
 - **The World Simulator maps identity to entities.** It receives the
-  validated `sub` from the Pusher, looks up or creates the user in
-  PocketBase, and registers the entity in the ECS. The Pusher never touches
-  PocketBase.
-- **PocketBase is never in the auth path.** It stores identity metadata
-  (avatar appearance, preferences) but never issues or validates tokens.
+  validated `user_id` from the Pusher, looks up or creates the player record
+  in PocketBase, and registers the entity in the ECS. The Pusher never
+  touches PocketBase for game-state auth (it only calls the PB API to
+  validate tokens).
 - **Zone isolation is enforced by the World Simulator, not by the client.**
-  The OIDC identity is the root of that enforcement: the World Sim maps
-  `sub` → entity ID → zone membership → permissions.
+  The PocketBase user ID is the root of that enforcement: the World Sim maps
+  `user_id` → entity ID → zone membership → permissions.
 
 ---
 
-## 2. Dex as the OIDC provider
+## 2. PocketBase as the authentication provider
 
 ### Role
 
-Dex is a federation bridge. It accepts credentials from any configured
-upstream identity source and issues standard OIDC JWTs downstream. The rest
-of the application only ever sees Dex-signed tokens and does not need to know
-which upstream was used.
+PocketBase is embedded in the World Simulator as a Go library. Its built-in
+`users` auth collection handles registration, login, email verification,
+password reset, and OAuth2 social login. PocketBase issues HS256-signed JWTs
+that are used throughout the stack for authentication.
 
-### Supported upstream connectors (Dex built-in)
+### Supported authentication methods
 
-| Connector | Use case |
+| Method | Use case |
 |---|---|
-| **LDAP** | On-premise Active Directory, OpenLDAP |
-| **OIDC** | Azure AD / Entra ID, Google Workspace, any OIDC-compliant IdP |
-| **SAML** | Legacy enterprise IdPs |
-| **GitHub / GitLab** | Developer-focused teams |
-| **Local password** | Small deployments without an external IdP |
+| **Email/password** | Default. Self-service registration with email verification. |
+| **Google OAuth2** | Social login. Enabled when `OAUTH2_GOOGLE_CLIENT_ID` / `OAUTH2_GOOGLE_SECRET` are set. |
+| **GitHub OAuth2** | Social login. Enabled when `OAUTH2_GITHUB_CLIENT_ID` / `OAUTH2_GITHUB_SECRET` are set. |
+| **Facebook OAuth2** | Social login. Enabled when `OAUTH2_FACEBOOK_CLIENT_ID` / `OAUTH2_FACEBOOK_SECRET` are set. |
 
-The connector(s) to enable are configured in Dex's single YAML file at
-deploy time. The application code does not change between connector types.
+OAuth2 providers are configured via environment variables on the `worldsim`
+service. Leave them empty to disable social login. The application code does
+not change between enabled/disabled providers.
 
-### Dex deployment
+### PocketBase auth deployment
 
-- Runs as a **standalone Docker Compose service** (`dex`).
-- Persists OAuth sessions and connector state in its own **SQLite volume**
-  (`dex-data`). This volume is separate from the World Simulator's data
-  (PocketBase is embedded in worldsim, see §5).
-- Exposes its OIDC discovery endpoint at `/.well-known/openid-configuration`
-  on an internal port, routed through Traefik for the browser-facing flows.
-- The **JWKS endpoint** (`/keys`) is consumed by the Pusher at startup and
-  cached locally for token validation (see § 4).
+- PocketBase is **embedded in the World Simulator** as a Go library — it is
+  not a separate Docker service.
+- The `users` auth collection is created by a Go migration
+  (`1753300000_create_users_auth_collection.go`) compiled into the worldsim
+  binary. No external migration files are needed.
+- User data (credentials, verified status, OAuth2 links) is stored in
+  PocketBase's SQLite database, in the same `pb_data` volume as game data.
+- The **PocketBase admin UI** (`/_/`) is served by worldsim on port 8090 and
+  proxied by the container nginx behind admin auth (see §8).
+- SMTP for email verification and password reset is configured via
+  `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, and `SMTP_SENDER_NAME` on the
+  `worldsim` service. In dev, MailHog is used; in production, point at a
+  real SMTP server.
+- The `APP_URL` environment variable controls the base URL used in
+  verification and password-reset email links.
 
 ### Token claims used by the application
 
 | Claim | Type | Used for |
 |---|---|---|
-| `sub` | string | Stable unique user identifier; join key to PocketBase `users.user_id` |
+| `id` | string | PocketBase user ID; join key to `players.user_id` |
 | `email` | string | Display fallback if no `display_name` exists in PocketBase |
-| `name` | string | Pre-filled `display_name` on first login |
-| `exp` | int (Unix) | Token expiry; enforced on upgrade and on refresh |
-| `iss` | string | Verified to match Dex's issuer URL to reject foreign tokens |
+| `exp` | int (Unix) | Token expiry; enforced on upgrade |
+| `iss` | string | PocketBase issuer URL |
 
 No other claims are required or trusted by the application.
 
@@ -82,57 +87,48 @@ No other claims are required or trusted by the application.
 
 ## 3. Authentication flows
 
-### 3.1 Human user login (browser)
+### 3.1 Human user registration and login (browser)
 
 ```
-Browser            Traefik          Dex           Pusher        NATS        WorldSim    PocketBase
-   |                  |              |              |             |            |            |
-   |-- GET /login --> |              |              |             |            |            |
-   |              (routes to Dex)   |              |             |            |            |
-   |<-- redirect to Dex login ------+              |             |            |            |
-   |                                |              |             |            |            |
-   |-- credentials (LDAP, OAuth2) ->|              |             |            |            |
-   |<-- authorization code ---------+              |             |            |            |
-   |                                |              |             |            |            |
-   |-- code exchange -------------->|              |             |            |            |
-   |<-- OIDC JWT (id_token) --------+              |             |            |            |
-   |                                               |             |            |            |
-   |-- WS upgrade ----------------->|------------->|             |            |            |
-   |                                  (waiting)     |             |            |            |
-   |-- AUTH frame (id_token) ---------------------->|             |            |            |
-   |                                  validate      |             |            |            |
-   |                                  sig + exp     |             |            |            |
-   |                                  + iss + aud   |             |            |            |
-   |                                  extract sub   |             |            |            |
-   |                                               |-- client.connected -->|   |            |
-   |                                               |  (sub, client_id)    |   |            |
-   |                                               |             |       |-- lookup sub->|
-   |                                               |             |       |<-- user rec --|
-   |                                               |             |       |   (or create)|
+Browser            Nginx          PocketBase      Pusher        NATS        WorldSim
+   |                 |           (in worldsim)      |             |            |
+   |-- POST /api/users/auth-with-password --------->|             |            |
+   |<-- JWT + user record -------------------------|             |            |
+   |                                               |             |            |
+   |-- WS upgrade --------------------------------->|------------>|            |
+   |                                  (waiting)     |             |            |
+   |-- AUTH frame (JWT) ---------------------------------------->|            |
+   |                                  validate JWT via PB API     |            |
+   |                                  extract user_id            |            |
+   |                                               |-- client.connected -->|   |
+   |                                               |  (user_id, client_id)|   |
+   |                                               |             |       |-- lookup player->|
+   |                                               |             |       |<-- player rec --|
+   |                                               |             |       |   (or create)  |
    |                                               |             |       |-- restore pos->(KV)
-   |                                               |             |       |   register ECS|
-   |                                               |             |       |   compute AOI|
-   |                                               |<-- replication batch --|            |
-   |<-- WS established + initial world snapshot ---|<-----------|            |            |
+   |                                               |             |       |   register ECS |
+   |                                               |             |       |   compute AOI |
+   |                                               |<-- replication batch --|
+   |<-- WS established + initial world snapshot ---|<-----------|            |
 ```
 
-> **Note:** PocketBase is no longer a separate Docker service. It is embedded
-> in the World Simulator as a Go library; the "lookup sub" and "user rec"
-> steps above are in-process DAO calls, not HTTP requests. worldsim serves
-> PB's HTTP API on port 8090 (for the admin UI and extensions that still
-> access PB via HTTP — see `18-extensions.md`).
+> **Note:** PocketBase is embedded in the World Simulator as a Go library.
+> The browser authenticates directly against PocketBase's HTTP API (proxied
+> by nginx at `/api/`). The Pusher validates the JWT by calling the
+> PocketBase API. The "lookup player" and "player rec" steps are in-process
+> DAO calls within worldsim, not HTTP requests.
 
 ### 3.2 Token delivery on WebSocket upgrade
 
 The browser's native `WebSocket` API does not support custom HTTP headers.
-The OIDC `id_token` is delivered as the **first WebSocket message** after
+The PocketBase JWT is delivered as the **first WebSocket message** after
 the connection is opened — a dedicated `AUTH` control frame sent before any
 game frame.
 
 **[DECISION]** First-frame `AUTH` is preferred over a URL query parameter
-(`?token=`) because it keeps the token out of Traefik access logs, which
-matters for enterprise deployments with strict audit requirements. The `AUTH`
-frame format will be defined in `07-network-protocol.md`.
+(`?token=`) because it keeps the token out of nginx access logs, which
+matters for deployments with strict audit requirements. The `AUTH`
+frame format is defined in `07-network-protocol.md`.
 
 The Pusher **does not send any game state** until it has received and
 validated a well-formed `AUTH` frame. If no `AUTH` frame arrives within
@@ -140,7 +136,7 @@ validated a well-formed `AUTH` frame. If no `AUTH` frame arrives within
 with `4401 Unauthorized`.
 
 Once the token is validated, the Pusher publishes a `client.connected` event
-to NATS Core (containing the `sub`, a generated `client_id`, the client IP,
+to NATS Core (containing the `user_id`, a generated `client_id`, the client IP,
 and the `device_id` from the `AUTH` frame). The World
 Simulator receives this event, performs the identity → entity provisioning
 (see §5), and publishes the initial replication batch back to the Pusher via
@@ -148,36 +144,36 @@ NATS. The Pusher forwards it to the client.
 
 ### 3.3 Token lifetime and refresh
 
-- `id_token` lifetime: **15 minutes** (configured in Dex). Short enough to
-  limit the blast radius of a leaked token.
-- The browser must obtain a new `id_token` before expiry using the
-  `refresh_token` issued by Dex alongside the `id_token`.
+- JWT lifetime: configured in PocketBase settings (default varies). Short
+  enough to limit the blast radius of a leaked token.
+- The browser must obtain a new JWT before expiry. The PocketBase JS SDK
+  handles token refresh automatically using the stored auth token.
 - **The WebSocket connection must not be dropped on token refresh.** The
   refresh happens in the background (Phaser client, outside the game loop).
-  Once a new `id_token` is obtained, the client sends it to the Pusher via a
-  dedicated `TOKEN_REFRESH` control frame (to be defined in
+  Once a new JWT is obtained, the client sends it to the Pusher via a
+  dedicated `TOKEN_REFRESH` control frame (defined in
   `07-network-protocol.md`). The Pusher re-validates and updates the session
   in-memory. No reconnect required.
-- If the refresh fails (e.g. the `refresh_token` is revoked by the admin),
+- If the refresh fails (e.g. the token is revoked by the admin),
   the Pusher closes the WebSocket with a `4401 Unauthorized` close code and
-  the client redirects to the Dex login page.
+  the client redirects to the login page.
 
 ---
 
 ## 4. Token validation in the Pusher
 
-### JWKS caching
+### PocketBase API validation
 
-On startup, the Pusher fetches Dex's JWKS from the discovery endpoint and
-caches the public keys in memory. It refreshes the JWKS cache every
-**10 minutes** to pick up key rotations without restarting.
+The Pusher validates PocketBase JWTs by calling the PocketBase API
+(`/api/collections/users/auth-refresh` or equivalent). This delegates
+signature verification and expiry checks to PocketBase itself, ensuring
+the token is still valid and not revoked.
 
 Validation steps for every token (upgrade + `TOKEN_REFRESH` frames):
 
-1. Verify the JWT signature against the cached JWKS.
-2. Verify `iss` matches the configured Dex issuer URL.
+1. Call the PocketBase API with the JWT to verify it.
+2. Extract the `user_id` from the validated token response.
 3. Verify `exp` is in the future (clock skew tolerance: 30 seconds).
-4. Verify `aud` contains the application's client ID.
 
 If any step fails: reject with `4401`. No game state is sent.
 
@@ -185,17 +181,17 @@ If any step fails: reject with `4401`. No game state is sent.
 
 ## 5. Identity → entity mapping (first login provisioning)
 
-The Pusher validates the token and extracts the `sub` claim, but **does not
+The Pusher validates the token and extracts the `user_id`, but **does not
 do identity provisioning**. That is the responsibility of the **World
 Simulator**, which is the only service that accesses PocketBase and JetStream
 KV.
 
 When the Pusher publishes a `client.connected` event to NATS Core (containing
-the validated `sub` and a `client_id`), the World Simulator:
+the validated `user_id` and a `client_id`), the World Simulator:
 
-1. Queries **PocketBase** `users` by `user_id`:
-   - **First login**: creates the `users`, `avatar_appearance`, and
-     `user_preferences` records; assigns a new `entity_id` (a string-encoded
+1. Queries **PocketBase** `players` by `user_id`:
+   - **First login**: creates the `players` record linked to the `users`
+     record via `user_id`; assigns a new `entity_id` (a string-encoded
      ID assigned by the ECS).
    - **Returning user**: reads existing profile and appearance.
 2. Reads **NATS JetStream KV** `users.<entity_id>.position`:
@@ -221,9 +217,9 @@ receiving the initial snapshot.
 
 ## 6. LiveKit token issuance
 
-LiveKit requires its own room-scoped JWT (distinct from the OIDC token) to
+LiveKit requires its own room-scoped JWT (distinct from the PocketBase JWT) to
 authorise a participant to join a room. This token is issued by the **LiveKit
-Bridge**, not by Dex:
+Bridge**, not by PocketBase:
 
 1. After the World Simulator provisions the entity (end of § 5), it publishes
    a `client.provisioned` event to NATS Core, including the `client_id`,
@@ -250,15 +246,14 @@ preclude them.
 
 **Proposed approach (to be confirmed in `13-ecs-design.md`):**
 
-- NPC processes authenticate using a **Dex static password connector** entry
-  — a dedicated service account with a non-expiring `refresh_token` stored
-  in a Docker secret.
+- NPC processes authenticate using a **PocketBase service account** — a
+  dedicated `users` record with a long-lived token stored in a Docker secret.
 - NPCs are driven by **extensions**, not by the World Sim's in-process
   systems. An NPC extension registers with the World Sim via NATS and
   spawns/updates NPC entities (see `18-extensions.md`). The extension itself
-  may authenticate with Dex using a service account to access protected
-  resources (e.g. LLM APIs), but the NPC entity does not need an OIDC token —
-  it is not a WebSocket client.
+  may authenticate with PocketBase using a service account to access protected
+  resources (e.g. LLM APIs), but the NPC entity does not need a JWT — it is
+  not a WebSocket client.
 - The NPC's `entity_id` is assigned by the extension when it spawns the
   entity. If the NPC needs a persistent identity (e.g. for audit logs), the
   extension can create a record in PocketBase at deploy time with a flag
@@ -276,7 +271,8 @@ preclude them.
 
 The PocketBase admin dashboard (superuser) is served by the World Simulator
 on port 8090 — PocketBase is embedded in worldsim as a Go library, not a
-separate container. It is not routed through Traefik. It is protected by
+separate container. It is proxied by the container nginx at `/_/` behind
+admin auth (via the admin portal's `auth_request`). It is protected by
 PocketBase's own superuser password (set at first-run via the
 `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` environment variables, consumed by
 worldsim's initial superuser migration). It is used solely for:
@@ -286,7 +282,11 @@ worldsim's initial superuser migration). It is used solely for:
 - Audit log queries.
 - Issuing bans (adding records to the `bans` collection — see §9).
 
-It has no connection to Dex or to the game-state auth flow.
+The admin portal (`/admin/`) is a standalone Go service that handles
+email/password login against PocketBase and sets a signed session cookie.
+nginx uses `auth_request` to check the cookie before proxying to `/_/`
+(PB admin) and `/audit/`. Only users with `is_admin=true` in PocketBase
+can log in to the admin portal.
 
 ---
 
@@ -323,7 +323,7 @@ PocketBase admin dashboard. An in-game admin ban command is planned.
 The world simulator checks the ban list during `provisionClient`, after
 the PocketBase user lookup that determines `isAdmin`:
 
-1. The pusher extracts `sub`, `ip`, and `device_id` from the `AuthFrame`
+1. The pusher extracts `user_id`, `ip`, and `device_id` from the `AuthFrame`
    and forwards them to worldsim via the `client.connected` NATS message.
 2. Worldsim looks up the user in PocketBase by `user_id` (for logged-in
    users) and determines `isAdmin`.
@@ -342,7 +342,7 @@ the PocketBase user lookup that determines `isAdmin`:
 When the browser receives an `AuthResultFrame` with `ok: false` and a
 non-empty `ban_reason`, it displays the ban reason and expiry in the
 disconnect overlay and stops attempting to reconnect. The client does not
-clear the stored `id_token` or `device_id` — the ban is server-side, not
+clear the stored JWT or `device_id` — the ban is server-side, not
 a token issue.
 
 ---
@@ -351,17 +351,16 @@ a token issue.
 
 - **[RESOLVED] NPC driving mechanism**: NPCs are extension-driven via NATS
   (see `18-extensions.md`). There is no in-process injection.
-- **[OPEN] Dex connector selection per deployment**: the Docker Compose setup
-  should ship with a documented `dex-config.yaml` template covering LDAP,
-  Microsoft OIDC, and local-password connectors. To be created alongside
-  `20-roadmap.md`.
+- **[OPEN] OAuth2 provider configuration**: the Docker Compose setup should
+  ship with a documented template for configuring Google, GitHub, and
+  Facebook OAuth2 providers. To be created alongside `20-roadmap.md`.
 - **[DECISION] Token revocation on admin kick**: the revocation **policy**
   (who can kick, under what conditions) is deployment-specific and lives in an
   admin extension. The revocation **execution** is in the World Sim: when the
   admin extension triggers a kick (via NATS), the World Sim publishes
   `admin.revoke.<entity_id>` on Core NATS. The Pusher subscribes to this
   subject and immediately closes the matching WebSocket with
-  `4401 Unauthorized`. This provides instant eviction without waiting for the
-  15-minute `id_token` expiry. The World Sim also removes the entity from the
+  `4401 Unauthorized`. This provides instant eviction without waiting for
+  JWT expiry. The World Sim also removes the entity from the
   ECS and tears down its zone membership. For preventing a kicked user from
   reconnecting, see the ban system (§9).

@@ -19,7 +19,7 @@ source on a dev machine, see the [README](../README.md) (`make dist-x86`).
   termination (section 5). For LAN testing with a self-signed cert, this is
   not needed — the in-container nginx handles HTTPS on `:4043`.
 - A domain name (recommended) or a static IP. Browsers require a
-  **secure context** (HTTPS or `localhost`) for the PKCE auth flow, so plain
+  **secure context** (HTTPS or `localhost`) for the auth flow, so plain
   HTTP only works when browsing from the host itself.
 
 Confirm:
@@ -61,7 +61,7 @@ On the host, the layout should look like:
 ├── docker-compose.yml
 ├── bin/                  # pusher, worldsim, ext-* (linux/amd64)
 ├── web/                  # built frontend (assets/maps/, sprites/, fonts/)
-└── docker/               # Dockerfiles, nginx.conf, livekit.yaml, dex/, entrypoint scripts
+└── docker/               # Dockerfiles, nginx.conf, livekit.yaml, entrypoint scripts
 ```
 
 > The compose file's build context is the dist root (`.`), so it expects
@@ -117,9 +117,11 @@ Setting it auto-configures three things (no manual file edits needed):
 1. **TLS cert SAN** — `frontend-entrypoint.sh` appends `PUBLIC_HOST` to the
    self-signed cert's `subjectAltName` so browsers trust
    `https://<PUBLIC_HOST>:4043` (after accepting the warning once).
-2. **Dex redirect URI** — `dex-entrypoint.sh` templates `PUBLIC_HOST` into
-   the `redirectURIs` entry in `docker/dex/config.yaml` at startup, so the
-   OIDC callback works remotely.
+2. **Email verification links** — `APP_URL` defaults to
+   `https://<PUBLIC_HOST>:4043`, so verification and password-reset emails
+   link to the correct public URL. If you're behind a reverse proxy on
+   port 443, override `APP_URL` in your `.env` (e.g.
+   `APP_URL=https://pixeleruv.example.com`).
 3. **LiveKit public URL** — `LIVEKIT_PUBLIC_URL` becomes
    `ws://<PUBLIC_HOST>:7880` so the browser's LiveKit SDK can reach the SFU.
 
@@ -140,10 +142,10 @@ once. For a real domain + Let's Encrypt cert, put a host nginx proxy in front
 (section 5).
 
 > If you're using a real domain (e.g. `pixeleruv.example.com`) with a host
-> nginx proxy terminating TLS, set `PUBLIC_HOST=pixeleruv.example.com` so the
-> Dex redirect URI matches. The host nginx forwards to the in-container nginx
-> on `:4080` (HTTP) — the in-container HTTPS endpoint is only for the
-> self-signed cert path.
+> nginx proxy terminating TLS, set `PUBLIC_HOST=pixeleruv.example.com` and
+> `APP_URL=https://pixeleruv.example.com` (no port) in your `.env`. The host
+> nginx forwards to the in-container nginx on `:4080` (HTTP) — the in-container
+> HTTPS endpoint is only for the self-signed cert path.
 
 ### 3c. LiveKit node IP (for A/V over the network)
 
@@ -183,7 +185,7 @@ docker compose up --build -d
 
 | Variable | Default | Set on | Purpose |
 |----------|---------|--------|---------|
-| `PUBLIC_HOST` | `localhost` | compose | Hostname/IP remote browsers use. Drives the self-signed TLS cert SAN, the Dex redirect URI, and the default `LIVEKIT_PUBLIC_URL`. |
+| `PUBLIC_HOST` | `localhost` | compose | Hostname/IP remote browsers use. Drives the self-signed TLS cert SAN, the default `APP_URL`, and the default `LIVEKIT_PUBLIC_URL`. |
 | `LIVEKIT_PUBLIC_URL` | `ws://${PUBLIC_HOST:-localhost}:7880` | `ext-av` in compose | WebSocket URL the browser's LiveKit SDK connects to. Override to the proxied `ws://<host>/livekit` path when proxying signaling through nginx (§5c). The frontend auto-upgrades `ws://`→`wss://` on HTTPS. |
 | `LIVEKIT_NODE_IP` | `127.0.0.1` | compose (LiveKit `--node-ip`) | IP LiveKit advertises in WebRTC ICE candidates. Must be routable from the browser — set to the host's public/LAN IP for remote A/V. |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `devkey` / `devsecret…` | `ext-av` in compose **and** `docker/livekit.yaml` | Shared secret for signing LiveKit join tokens. **Must match** in both places. Rotate for production (§3a). |
@@ -192,13 +194,18 @@ docker compose up --build -d
 | `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `worldsim` in compose | PocketBase superuser credentials (used by worldsim's initial-superuser migration, since PB is embedded). **Change before exposing to the internet.** |
 | `PB_DATA_DIR` | `/pb_data` | `worldsim` in compose | Directory worldsim mounts for PocketBase's SQLite data + uploaded files. Backed by the `pb_data` Docker volume. |
 | `PB_HTTP_ADDR` | `0.0.0.0:8090` | `worldsim` in compose | Address worldsim's embedded PocketBase listens on (admin UI + file API). |
+| `APP_URL` | `https://${PUBLIC_HOST:-localhost}:4043` | `worldsim` in compose | Public URL used in email verification and password-reset links. Override in `.env` if behind a reverse proxy on 443 (e.g. `APP_URL=https://example.com`). |
+| `SMTP_HOST` / `SMTP_PORT` | `mailhog` / `1025` | `worldsim` in compose | SMTP server for sending verification and password-reset emails. Defaults to the in-stack MailHog. For production, point at a real SMTP server. |
+| `SMTP_FROM` / `SMTP_SENDER_NAME` | `noreply@pixeleruv.local` / `PixelEruv` | `worldsim` in compose | From address and display name for outgoing emails. |
+| `OAUTH2_GOOGLE_CLIENT_ID` / `OAUTH2_GOOGLE_SECRET` | *(empty)* | `worldsim` in compose | Google OAuth2 credentials for social login. Leave empty to disable. |
+| `OAUTH2_GITHUB_CLIENT_ID` / `OAUTH2_GITHUB_SECRET` | *(empty)* | `worldsim` in compose | GitHub OAuth2 credentials for social login. Leave empty to disable. |
+| `OAUTH2_FACEBOOK_CLIENT_ID` / `OAUTH2_FACEBOOK_SECRET` | *(empty)* | `worldsim` in compose | Facebook OAuth2 credentials for social login. Leave empty to disable. |
 | `OTEL_ENABLED` | `false` | all backend services | Set to `true` to export OpenTelemetry traces and logs to the configured OTLP endpoint. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:27686` | all backend services | OTLP/HTTP endpoint for traces and logs. Points at motel for `make debug`. OpenObserve is not included in the stack by default (requires AES-NI CPU). |
 | `AUDIT_RETENTION_HOURS` | `720` (30 days) | `audit` in compose | How long audit events are kept before automatic cleanup. |
 | `AUDIT_BASE_PATH` | `/audit` | `audit` in compose | URL prefix when proxied under a path. Must match the nginx `location` block. |
 | `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI (fallback when not behind nginx auth_request). Not set by default — admin portal handles auth. |
 | `ADMIN_SESSION_SECRET` | `changeme` | `admin` in compose | HMAC-SHA256 signing key for admin session cookies. **Change in `.env`.** |
-| `DEX_BROWSER_URL` | `/dex` | `admin` in compose | Browser-facing Dex URL for OIDC login redirects (must match nginx `/dex/` proxy). |
 
 > Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
 > deploy. The rest have working defaults; override them for production
@@ -218,10 +225,11 @@ PUBLIC_HOST=192.168.1.10 LIVEKIT_NODE_IP=192.168.1.10 docker compose up --build 
 
 (Or set them in a `.env` file — compose reads it automatically.)
 
-This starts: `nats`, `dex` (:5556), `pusher` (:8081),
+This starts: `nats`, `mailhog` (:1025 SMTP / :8025 web UI), `pusher` (:8081),
 `worldsim` (embeds PocketBase on :8090), `frontend` (host **:4080** HTTP +
 **:4043** HTTPS), `ext-demo`, `ext-walls`, `ext-props`, `ext-av`, `livekit`
-(:7880 / :7881 / UDP 50000-50020), `audit` (:8082, audit log UI).
+(:7880 / :7881 / UDP 50000-50020), `audit` (:8082, audit log UI),
+`admin` (:8083, admin portal).
 
 Check it came up:
 
@@ -233,7 +241,7 @@ curl -sk https://127.0.0.1:4043/ | head   # frontend HTML (self-signed cert)
 
 The frontend is now reachable on:
 
-- `http://<host-ip>:4080` — HTTP (localhost only; PKCE auth needs a secure
+- `http://<host-ip>:4080` — HTTP (localhost only; auth needs a secure
   context, so this only works when browsing from the host itself).
 - `https://<host-ip>:4043` — HTTPS with a self-signed cert (remote browsers;
   accept the cert warning once). This is the endpoint to use for remote
@@ -247,8 +255,9 @@ For a real domain + Let's Encrypt cert, put a host nginx proxy in front
 ## 5. Host nginx as a TLS proxy (optional — real domain)
 
 The in-container nginx already terminates TLS (self-signed cert from
-`PUBLIC_HOST`) and proxies `/ws` → pusher, `/dex/` → dex, and `/api/` →
-worldsim (PocketBase) same-origin. For LAN testing you can skip this section entirely
+`PUBLIC_HOST`) and proxies `/ws` → pusher, `/api/` → worldsim (PocketBase),
+`/admin/` → admin portal, `/_/` → PocketBase admin UI, and `/audit/` → audit
+UI, all same-origin. For LAN testing you can skip this section entirely
 and just use `https://<host-ip>:4043`.
 
 For a real domain with a Let's Encrypt cert, put a host nginx in front that
@@ -297,7 +306,7 @@ server {
     }
 
     # Everything → in-container nginx on :4080 (which already handles
-    # /ws → pusher, /dex/ → dex, and /api/ → worldsim same-origin).
+    # /ws → pusher, /api/ → worldsim, /admin/ → admin portal).
     location / {
         proxy_pass         http://127.0.0.1:4080;
         proxy_http_version 1.1;
@@ -366,8 +375,9 @@ server {
 
 > Notes on this variant:
 > - It forwards to `http://localhost:4080` (the in-container nginx's HTTP
->   endpoint), which already proxies `/ws` → pusher, `/dex/` → dex, and
->   `/api/` → worldsim (PocketBase) same-origin. No need to re-implement those
+>   endpoint), which already proxies `/ws` → pusher, `/api/` → worldsim,
+>   `/admin/` → admin portal, `/_/` → PB admin, and `/audit/` → audit UI.
+>   No need to re-implement those
 >   `location` blocks here.
 > - `proxy_buffering off` + `chunked_transfer_encoding off` matter for the
 >   WebSocket and any streaming responses; keep them off.
@@ -430,15 +440,16 @@ else stays on localhost.
 
 | Port | Proto | Direction | Purpose | Must be public? |
 |------|-------|-----------|---------|-----------------|
-| 443 | TCP | host → browser | HTTPS (frontend + `/ws` + `/dex/` + `/api/` + `/livekit/`, all proxied by nginx) | **Yes** (or 4043 for the self-signed-cert path without a host nginx) |
+| 443 | TCP | host → browser | HTTPS (frontend + `/ws` + `/api/` + `/admin/` + `/_/` + `/audit/` + `/livekit/`, all proxied by nginx) | **Yes** (or 4043 for the self-signed-cert path without a host nginx) |
 | 80 | TCP | host → browser | HTTP → HTTPS redirect | Yes (redirect only; can be dropped if you don't want auto-redirect) |
 | 4043 | TCP | host → browser | In-container HTTPS (self-signed cert) — use this instead of 443 when you have no host nginx | Only if not using a host nginx |
-| 4080 | TCP | host → browser | In-container HTTP — localhost only (PKCE auth needs a secure context) | No |
+| 4080 | TCP | host → browser | In-container HTTP — localhost only (auth needs a secure context) | No |
 | 50000-50020 | UDP | host ↔ browser | **LiveKit WebRTC media (audio/video).** Browsers send and receive RTP here. | **Yes** — this is the one that bites people |
 | 7880 | TCP | host → browser | LiveKit signaling (raw `ws://`) — **not needed** if you proxy `/livekit/` through nginx (§5c) | Only if not proxying through nginx |
 | 7881 | TCP | host ↔ browser | LiveKit WebRTC-over-TCP fallback (only used if UDP fails) | Optional — open if UDP is blocked and you want TCP fallback |
-| 8090 | TCP | host → admin | PocketBase admin UI (`/_/`) served by worldsim — not proxied by the container nginx | No — SSH tunnel instead (`ssh -L 8090:127.0.0.1:8090 …`) |
-| 5556 | TCP | — | Dex (container-internal; proxied as `/dex/` by nginx) | No |
+| 8090 | TCP | host → admin | PocketBase admin UI (`/_/`) served by worldsim — proxied by container nginx behind admin auth | No — SSH tunnel instead (`ssh -L 8090:127.0.0.1:8090 …`) |
+| 8025 | TCP | host → admin | MailHog web UI (view emails sent by the stack — verification emails in dev) | No — SSH tunnel or localhost only |
+| 1025 | TCP | — | MailHog SMTP (container-internal; worldsim sends emails here) | No |
 | 8081 | TCP | — | Pusher (container-internal; proxied as `/ws` by nginx) | No |
 | 4222 | TCP | — | NATS (container-internal) | No |
 
@@ -479,26 +490,32 @@ Fixes, in order of preference:
 
 ## 6. Access the app
 
-Open **`https://pixeleruv.example.com`** (or `https://<host-ip>` with a
+Open **`https://pixeleruv.example.com`** (or `https://<host-ip>:4043` with a
 self-signed cert — accept the warning once).
 
-You'll be redirected to Dex for login.
+You'll see the auth page with options to **register** or **log in**.
 
-### Login / password
+### Registration and login
+
+Users self-register with an email and password. After registering, a
+verification email is sent (in dev, check MailHog at `http://<host-ip>:8025`).
+Click the link in the email to verify the account, then log in.
+
+Social login (Google, GitHub, Facebook) is supported if the corresponding
+`OAUTH2_*` environment variables are set on the `worldsim` service. Leave
+them empty to disable.
+
+### Default admin account
 
 | Role   | Email                       | Password     |
 |--------|-----------------------------|--------------|
 | Admin  | `admin@pixeleruv.local`     | `password123`|
-| Player | `player@pixeleruv.local`    | `password123`|
 
-> These are the default Dex users defined in `docker/dex/config.yaml`
-> (`staticPasswords`, bcrypt cost 10). **Change them before exposing the
-> host to the internet** — edit the hashes in that file and restart `dex`.
-> The PocketBase superuser uses the same email/password
-> (`admin@pixeleruv.local` / `password123`), set via
-> `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` on the `worldsim` service in
-> `docker-compose.yml` (worldsim embeds PocketBase and runs the
-> initial-superuser migration on first start).
+> The PocketBase superuser is set via `PB_ADMIN_EMAIL` /
+> `PB_ADMIN_PASSWORD` on the `worldsim` service in `docker-compose.yml`
+> (worldsim embeds PocketBase and runs the initial-superuser migration on
+> first start). **Change these before exposing the host to the internet.**
+> The admin player record is seeded automatically and linked to this user.
 
 After login you'll land in the world. Move with the arrow keys; each browser
 tab is a player. Proximity-based audio/video engages automatically when
@@ -507,21 +524,22 @@ players are near each other or inside an `av_enabled` zone.
 ### Admin backends
 
 All admin services are behind a unified login at `/admin/`. Log in once
-with a Dex admin account, then access PB admin, audit, and world status
+with the admin email/password, then access PB admin, audit, and world status
 without re-authenticating.
 
 | Service     | URL                                  | Use |
 |-------------|--------------------------------------|-----|
-| Admin portal | `https://<host-ip>/admin/` | OIDC login via Dex, landing page with links to all admin services |
+| Admin portal | `https://<host-ip>/admin/` | Email/password login, landing page with links to all admin services |
 | Welcome page | `https://<host-ip>/welcome` | Public community landing page (static HTML, customizable) |
-| PocketBase  | `https://<host-ip>/_/` (proxied, admin-protected) | Manage `maps` and `players` collections, upload map files |
-| Dex         | `https://<host-ip>/dex/` | OIDC issuer (same-origin via container nginx) |
+| PocketBase  | `https://<host-ip>/_/` (proxied, admin-protected) | Manage `maps`, `players`, `users` collections, upload map files |
 | Audit UI    | `https://<host-ip>/audit/` (proxied, admin-protected) | Search audit events, view world status, check service health |
+| MailHog     | `http://<host-ip>:8025` (dev only) | View emails sent by the stack (verification, password reset) |
 
-> The admin portal (`/admin/`) handles OIDC login via Dex and sets a signed
-> cookie. nginx uses `auth_request` to check the cookie before proxying to
-> `/_/` (PB admin) and `/audit/`. Unauthenticated requests are redirected to
-> `/admin/login`. Only users with `is_admin=true` in PocketBase can log in.
+> The admin portal (`/admin/`) handles email/password login against
+> PocketBase and sets a signed session cookie. nginx uses `auth_request`
+> to check the cookie before proxying to `/_/` (PB admin) and `/audit/`.
+> Unauthenticated requests are redirected to `/admin/login`. Only users
+> with `is_admin=true` in PocketBase can log in.
 
 ---
 
@@ -687,8 +705,8 @@ docker exec -it $(docker compose ps -q nats) nats -s nats://127.0.0.1:4222 pub a
 docker compose logs worldsim 2>&1 | grep integrity
 ```
 
-Persistent data lives in two Docker volumes: `pb_data` (PocketBase, mounted
-into worldsim via `PB_DATA_DIR`) and `dex_data` (Dex). Back them up with
+Persistent data lives in the `pb_data` Docker volume (PocketBase, mounted
+into worldsim via `PB_DATA_DIR`). Back it up with
 `docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine tar czf /b/pb_data.tgz /d`.
 
 For a portable JSON export of PB collections (schema + records + file fields),
@@ -710,11 +728,12 @@ instructions.
   you're running an old build where `mapLoader.ts` hardcoded `localhost:8090`.
   Rebuild the frontend — `mapLoader.ts` now derives the PocketBase URL from
   `window.location.origin` and the container nginx proxies `/api/` → PocketBase.
-- **Dex rejects the redirect URI**: `PUBLIC_HOST` doesn't match the URL the
-  browser used. `dex-entrypoint.sh` templates `PUBLIC_HOST` into the
-  `redirectURIs` at startup — if you change `PUBLIC_HOST`, recreate the `dex`
-  container (`docker compose up -d --force-recreate dex`). If you're using a
-  host nginx proxy with a real domain, set `PUBLIC_HOST` to that domain.
+- **Verification email links point to the wrong URL**: `APP_URL` doesn't
+  match the URL the browser uses. The default is
+  `https://<PUBLIC_HOST>:4043`. If you're behind a reverse proxy on 443,
+  set `APP_URL=https://your-domain` (no port) in your `.env` file and
+  recreate the worldsim container
+  (`docker compose up -d --force-recreate worldsim`).
 - **`token signature is invalid` after rotating the LiveKit secret**: old
   browser tokens are signed with the old secret. Restart `livekit` and
   `ext-av`, then have browsers rejoin (refresh the page).
