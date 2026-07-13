@@ -25,10 +25,11 @@ func parseTemplates(basePath string) (map[string]*template.Template, error) {
 		"bp": func() string { return basePath },
 	}
 
-	// Parse the base template (defines "base", "events_table_inner").
+	// Parse the base template (defines "base", "events_table_inner", "world_content").
 	baseTmpl, err := template.New("").Funcs(funcs).ParseFS(templatesFS,
 		"templates/base.html",
 		"templates/events_table.html",
+		"templates/world_content.html",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("parse base: %w", err)
