@@ -30,6 +30,11 @@
         pointer-events: none;
         opacity: 0.25;
       }
+      /* Also disable pointer events on descendants so inline
+         pointer-events:auto on VideoBar tiles/controls is overridden. */
+      body.server-unavailable > *:not(#game) * {
+        pointer-events: none !important;
+      }
     </style>
   </head>
   <body>
