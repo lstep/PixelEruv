@@ -822,6 +822,9 @@ export class GameScene extends Phaser.Scene {
       .container(0, 0, [dim, msg])
       .setScrollFactor(0)
       .setDepth(9999);
+    // The overlay starts visible (we boot in "connecting"), so mirror that on
+    // the DOM: dim and disable floating DOM UI until the WS reaches "open".
+    document.body.classList.add("server-unavailable");
     // Day/night tint overlay — cosmetic, client-side, follows the local
     // clock. Sits below the disconnect overlay (depth 9997 vs 9998).
     this.dayNightOverlay = new DayNightOverlay(this);
@@ -897,6 +900,10 @@ export class GameScene extends Phaser.Scene {
         if (!this.disconnectOverlay) return;
         const connected = state === "open";
         this.disconnectOverlay.setVisible(!connected);
+        // Mirror the overlay on the DOM so floating buttons (TopMenu, welcome
+        // icon, ChatPanel, VideoBar) are dimmed and non-clickable while the
+        // server is unavailable.
+        document.body.classList.toggle("server-unavailable", !connected);
         if (connected) this.scene.resume("GameScene");
         else this.scene.pause("GameScene");
       },
