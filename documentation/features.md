@@ -868,24 +868,78 @@ extension."
 
 ## Part 4 — Identity and Access
 
-### 4.1 PocketBase Authentication
+### 4.1 Self-Service Registration
 
-Authentication uses PocketBase's built-in `users` auth collection,
-embedded in the World Simulator as a Go library. Users self-register
-with an email and password — no admin needs to create accounts. A
-verification email is sent on registration (via SMTP, MailHog in dev).
-Password reset is supported via email. OAuth2 social login (Google,
-GitHub, Facebook) is enabled by setting environment variables on the
-worldsim service — no application code changes. The Pusher validates
-the JWT on WebSocket upgrade by calling the PocketBase API.
+Users register themselves — no admin needs to create accounts. The
+registration form asks for email, password, and password confirmation.
+On submit, PocketBase creates the `users` record and sends a
+verification email. Until the email is verified, the user can log in
+but is marked as unverified. The Pusher validates the JWT on WebSocket
+upgrade by calling the PocketBase API.
 
-**Storyboard:** Show the registration page — enter email and password.
-Show the verification email in MailHog. Click the link, then log in.
-Show the WebSocket connection carrying the JWT in the AUTH frame.
-Narrate: "users register themselves, verify by email, and log in.
-Social login is an env var — no separate identity service."
+PocketBase is embedded in the World Simulator as a Go library — there
+is no separate identity service to deploy or maintain.
 
-### 4.2 Character Selection
+**Storyboard:** Show the welcome page with a "Register" link. Click it,
+fill in email and password. Submit — a toast says "check your email."
+Narrate: "no admin involvement. Users create their own accounts."
+
+### 4.2 Email Verification
+
+After registration, PocketBase sends a verification email with a
+confirmation link. In dev, MailHog captures the email — open
+`http://<host>:8025` to view it. Click the link and the account is
+verified. The `APP_URL` environment variable controls the base URL in
+the email link, so it works behind reverse proxies and remote hosts.
+
+**Storyboard:** After registering, open MailHog in a second tab. Show
+the verification email. Click the link — a PocketBase page confirms
+verification. Go back to the app and log in. Narrate: "verification
+emails work out of the box — MailHog in dev, your SMTP server in
+production."
+
+### 4.3 Password Reset
+
+Users who forgot their password can request a reset link from the
+login page. PocketBase sends an email with a time-limited token. The
+user clicks the link, enters a new password, and logs in. No admin
+intervention required.
+
+**Storyboard:** Show the login page. Click "Forgot password?" Enter the
+email. Show the reset email in MailHog. Click the link, enter a new
+password. Log in with the new password. Narrate: "self-service password
+reset — no admin support tickets."
+
+### 4.4 OAuth2 Social Login
+
+Users can log in or register with Google, GitHub, or Facebook instead
+of email/password. Each provider is enabled by setting two environment
+variables on the worldsim service (client ID and secret). Leave them
+empty to disable. When a social login is used, PocketBase creates or
+links the `users` record automatically — no separate registration step.
+
+**Storyboard:** Show the login page with "Log in with Google" and
+"Log in with GitHub" buttons. Click Google — redirect to Google's
+consent screen. Approve — redirect back to the app, logged in. Narrate:
+"social login is two env vars per provider. No application code, no
+separate identity service."
+
+### 4.5 Token Validation
+
+The Pusher validates PocketBase JWTs on WebSocket upgrade by calling
+the PocketBase API. This delegates signature verification and expiry
+checks to PocketBase itself, ensuring the token is still valid and not
+revoked. The token is delivered as the first WebSocket message (AUTH
+frame) — not as a URL query parameter — to keep it out of nginx access
+logs.
+
+**Storyboard:** Show the browser dev console — the WebSocket connection
+opens, the first frame is an AUTH frame with the JWT. Show the Pusher
+logs validating the token. Narrate: "the token never appears in a URL.
+The Pusher validates it against PocketBase — no JWKS caching, no key
+rotation to manage."
+
+### 4.6 Character Selection
 
 Logged-in users who haven't picked a sprite see a character select
 scene before joining the world. It displays the PocketBase-backed
@@ -898,7 +952,7 @@ appears with a grid of sprite thumbnails. Click one — it highlights.
 Click confirm — transition to the game scene with the chosen character.
 Log in as a guest — go straight to the game with a default sprite.
 
-### 4.3 Guest Mode
+### 4.7 Guest Mode
 
 Unauthenticated users can join as guests with a generated username and
 a default sprite. Guests skip the character select scene. This lets
@@ -909,7 +963,7 @@ appears in the top menu. The character spawns with a default sprite.
 Walk around, talk to people — everything works except persistence
 (positions are not restored for guests).
 
-### 4.4 Ban System
+### 4.8 Ban System
 
 Pixel Eruv supports a three-layer ban system so admins can block
 griefers by whichever identifier is most effective for the situation:
@@ -1201,7 +1255,7 @@ without interrupting the player.
 3. 5.4 Auto-Seeding (zero setup)
 4. 5.3 OpenTelemetry (trace a movement)
 5. 5.7 Audit Log (search event history, link to traces)
-6. 4.1 PocketBase Authentication (register, verify, social login)
+6. 4.1-4.4 PocketBase Authentication (register, verify, social login)
 
 ### Arc E: "The Road Ahead" (5 minutes)
 
