@@ -95,11 +95,11 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
                              ext-props       ext-av ──> LiveKit
 ```
 
-- **Pusher** (`backend/cmd/pusher`): WebSocket ↔ NATS gateway. Validates JWTs from Dex OIDC, forwards frames to/from worldsim. Pure passthrough — knows nothing about replication wire format.
+- **Pusher** (`backend/cmd/pusher`): WebSocket ↔ NATS gateway. Validates PocketBase JWTs via the PB API, forwards frames to/from worldsim. Pure passthrough — knows nothing about replication wire format.
 - **WorldSim** (`backend/cmd/worldsim`): Spatial authority + ECS kernel. Owns entities, zones, collision, replication. Only gameplay system is avatar movement. Emits `worldsim.ready` on NATS after subscriptions are live.
 - **Extensions** (`ext-demo`, `ext-walls`, `ext-props`, `ext-av`): Peer processes on the NATS bus. Register triggers via `extension.<id>.register`. All gameplay logic lives here, not in the kernel.
 - **PocketBase**: Maps, players, positions storage. Worldsim hits it for map data, user lookup, position persistence.
-- **Frontend** (`frontend/`): Phaser 4 client (TypeScript/Vite). OIDC auth, sprite rendering, WebSocket client.
+- **Frontend** (`frontend/`): Phaser 4 client (TypeScript/Vite). PocketBase auth (email/password + OAuth2), sprite rendering, WebSocket client.
 
 ### Build and test commands
 
@@ -116,7 +116,7 @@ cd backend && go test ./internal/worldsim/ -v
 # Integration tests (require Docker stack running: nats + pocketbase)
 cd backend && go test ./test/integration/ -v
 
-# Start full local dev stack (nats + pocketbase + dex + pusher + worldsim)
+# Start full local dev stack (nats + pocketbase + mailhog + pusher + worldsim)
 make up
 
 # Stop everything
@@ -129,7 +129,7 @@ make debug    # starts motel, NATS container, PocketBase, worldsim + pusher with
 ### Testing notes
 
 - Tests use Go's standard `testing` package — **not Ginkgo**. Do not try to run `ginkgo`.
-- Integration tests start an in-process pusher via `TestMain` (no Dex configured, `IdToken="dev"` works). They still need NATS at `localhost:4222`.
+- Integration tests start an in-process pusher via `TestMain` (no PocketBase auth configured, `IdToken="dev"` works). They still need NATS at `localhost:4222`.
 - Worldsim unit tests run without Docker — they test the ECS, zones, collision, replication, chat, name tags, etc. in isolation.
 - Integration tests cover: guest auth, keepalive, lite MVP (auth + input + replication flow).
 

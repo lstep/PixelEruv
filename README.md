@@ -16,13 +16,13 @@ Instead of switching between chat applications, video meetings and shared docume
 * 🎙️ Proximity-based audio and video powered by LiveKit
 * 💬 Real-time chat and presence (PocketBase-backed)
 * 🏢 Offices and maps within a world
-* 🔐 Authentication via Dex (OIDC; local-password connector first, enterprise connectors later)
+* 🔐 Authentication via PocketBase (email/password, email verification, OAuth2 social login)
 * 🎨 Tiled map support
 * 🔌 Extension system — add NPCs, custom behaviors, and objects as separate programs in any language
 * ⚡ High-performance Go backend
 * 🌐 Self-hostable via Docker Compose (no Kubernetes required)
 * 🔍 Audit log + observability — searchable audit event history (HTMX UI) + OpenTelemetry traces (motel dev / OpenObserve optional)
-* 🔐 Admin portal — unified OIDC login via Dex, protects PB admin + audit UI behind a single auth gate
+* 🔐 Admin portal — unified email/password login via PocketBase, protects PB admin + audit UI behind a single auth gate
 
 🧭 Roadmap (post-MVP)
 
@@ -84,8 +84,8 @@ tile world. Move with the arrow keys; each browser tab is a player.
 
 For remote access the same compose file also exposes HTTPS on port `4043`
 with a self-signed cert generated at startup. Set `PUBLIC_HOST` to the host's
-LAN IP or hostname and rebuild — one variable drives the TLS cert SAN, the Dex
-redirect URI, and the LiveKit public URL:
+LAN IP or hostname and rebuild — one variable drives the TLS cert SAN, the
+email verification URL (`APP_URL`), and the LiveKit public URL:
 
     PUBLIC_HOST=192.168.1.10 make up
 
@@ -101,14 +101,14 @@ Self-contained `dist/` (no source needed on the host)
     make dist-macos  # darwin/arm64 — for native macOS execution
 
 This stages pre-built binaries, web assets, Dockerfiles, compose,
-nginx.conf, livekit.yaml, dex config, and PocketBase migrations into
+nginx.conf, livekit.yaml, and PocketBase migrations into
 `dist/`. Copy the whole `dist/` directory to another machine and run:
 
     docker compose -f dist/docker-compose.yml up --build
 
 The frontend is served on `http://<host>:4080` (HTTP) and `https://<host>:4043`
 (HTTPS, self-signed). For remote browsers, set `PUBLIC_HOST=<host-ip>` and use
-the HTTPS endpoint — the PKCE auth flow needs a secure context. See the
+the HTTPS endpoint — the auth flow needs a secure context. See the
 [Quick Start](docs/quick-start.md) for putting a real TLS certificate in front.
 
 Native binaries + dev server
@@ -155,8 +155,9 @@ Setting it auto-configures three things:
 
 1. **TLS cert SAN** — `frontend-entrypoint.sh` appends `PUBLIC_HOST` to the
    self-signed cert's `subjectAltName` so browsers trust `https://<PUBLIC_HOST>:4043`.
-2. **Dex redirect URI** — `dex-entrypoint.sh` templates `PUBLIC_HOST` into the
-   `redirectURIs` entry at startup, so the OIDC callback works remotely.
+2. **Email verification URL** — `APP_URL` defaults to
+   `https://<PUBLIC_HOST>:4043`, so verification and password-reset emails
+   link to the correct public URL.
 3. **LiveKit public URL** — `LIVEKIT_PUBLIC_URL` becomes
    `ws://<PUBLIC_HOST>:7880` so the browser's LiveKit SDK can reach the SFU.
 
@@ -283,12 +284,12 @@ for the full event catalog and storage upgrade path.
 
 🔐 Admin portal
 
-A standalone Go service (`backend/cmd/admin`) provides OIDC login via Dex
-and a signed cookie session. nginx uses `auth_request` to protect PB admin
-(`/_/`) and the audit UI (`/audit/`) — log in once at `/admin/` and access
-all admin services without re-authenticating. Only users with `is_admin=true`
-in PocketBase can log in. A public welcome page at `/welcome` provides
-community-customizable landing content.
+A standalone Go service (`backend/cmd/admin`) provides email/password login
+via PocketBase and a signed cookie session. nginx uses `auth_request` to
+protect PB admin (`/_/`) and the audit UI (`/audit/`) — log in once at
+`/admin/` and access all admin services without re-authenticating. Only users
+with `is_admin=true` in PocketBase can log in. A public welcome page at
+`/welcome` provides community-customizable landing content.
 
 Project layout
 
@@ -296,7 +297,7 @@ Project layout
     backend/cmd/pusher      WebSocket ↔ NATS proxy (no game logic)
     backend/cmd/worldsim    Authoritative simulation: tick loop, ECS, movement, replication
     backend/cmd/audit       Audit log service (NATS sub + SQLite + HTMX UI)
-    backend/cmd/admin       Admin portal (OIDC login + auth_request endpoint)
+    backend/cmd/admin       Admin portal (email/password login + auth_request endpoint)
     backend/internal/audit  Audit event types + Emit helper (shared by all services)
     frontend/               Phaser 4 client + generated TS protobuf
     docker/                 Dockerfiles for pusher, worldsim, frontend
@@ -305,7 +306,7 @@ Project layout
       web/                  Frontend build output + map assets
       sprites/              Character spritesheets (worldsim auto-seeds sprite_bases)
       maps/                 Default Tiled map + tileset PNGs (worldsim auto-seeds the maps record)
-      docker/               Dockerfiles, nginx.conf, livekit.yaml, dex config
+      docker/               Dockerfiles, nginx.conf, livekit.yaml
       docker-compose.yml    Self-contained compose (run from dist/)
       pb_migrations/        PocketBase collection schemas
 
@@ -329,7 +330,7 @@ picture, then dive into the detailed specs:
 * [05 — Architecture](documentation/05-architecture.md) — detailed component wiring and data flows
 * [06 — Data model and persistence](documentation/06-data-model-and-persistence.md) — where data lives and why
 * [07 — Network protocol](documentation/07-network-protocol.md) — WebSocket frames and NATS subjects
-* [08 — Authentication and identity](documentation/08-auth-and-identity.md) — OIDC, tokens, identity mapping
+* [08 — Authentication and identity](documentation/08-auth-and-identity.md) — PocketBase auth, tokens, identity mapping
 * [09 — Pusher](documentation/09-pusher.md) — WebSocket proxy service
 * [10 — World Simulator](documentation/10-world-simulator.md) — authoritative simulation service
 * [11 — Replication](documentation/11-replication.md) — how game state reaches clients
