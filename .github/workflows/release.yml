@@ -60,10 +60,11 @@ jobs:
         run: npm ci
         working-directory: frontend
 
+      - name: Add protoc-gen-es to PATH
+        run: echo "${{ github.workspace }}/node_modules/.bin" >> "$GITHUB_PATH"
+
       - name: Generate protobuf code
         run: make proto
-        env:
-          PATH: ${{ github.workspace }}/node_modules/.bin:${{ env.PATH }}
 
       - name: Build dist (linux/amd64)
         run: make dist-x86
