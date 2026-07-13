@@ -1,0 +1,114 @@
+{{define "world_content"}}
+{{if .Error}}
+  <div class="panel">
+    <p class="error">{{.Error}}</p>
+    <p>Make sure worldsim is running and connected to NATS.</p>
+  </div>
+{{else}}
+{{$stats := .Stats}}
+<div class="cards">
+  <div class="card">
+    <h3>Total Entities</h3>
+    <span class="big">{{index $stats "total_entities"}}</span>
+  </div>
+  <div class="card">
+    <h3>Connected Players</h3>
+    <span class="big">{{index $stats "total_players"}}</span>
+  </div>
+  <div class="card">
+    <h3>Tick Rate</h3>
+    <span class="big">{{index $stats "tick_hz"}} Hz</span>
+  </div>
+  <div class="card">
+    <h3>Uptime</h3>
+    <span class="big">{{index $stats "uptime"}}</span>
+  </div>
+</div>
+
+{{range $map := index $stats "maps"}}
+<div class="panel">
+  <h3>Map: {{$map.name}} ({{$map.width}}&times;{{$map.height}})</h3>
+  <div class="grid-2">
+    <div>
+      <table>
+        <thead><tr><th>Players</th><th>Entities</th><th>Zones</th><th>Spawn Zones</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>{{$map.player_count}}</td>
+            <td>{{$map.entity_count}}</td>
+            <td>{{$map.zone_count}}</td>
+            <td>{{$map.spawn_zones}}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div>
+      <h4>Zones</h4>
+      <table class="event-table">
+        <thead><tr><th>ID</th><th>Type</th><th>Shape</th><th>AV</th><th>Exclusive</th><th>Portal</th><th>Occupancy</th></tr></thead>
+        <tbody>
+        {{range $zone := $map.zones}}
+          <tr class="sev-info">
+            <td>{{$zone.id}}</td>
+            <td>{{$zone.zone_type}}</td>
+            <td>{{$zone.shape}}</td>
+            <td>{{if $zone.av_enabled}}yes{{else}}no{{end}}</td>
+            <td>{{if $zone.is_exclusive}}yes{{else}}no{{end}}</td>
+            <td>{{if $zone.portal_target}}&rarr; {{$zone.portal_target}}{{else}}-{{end}}</td>
+            <td>{{$zone.occupancy}}</td>
+          </tr>
+        {{else}}
+          <tr><td colspan="7">No zones</td></tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{{end}}
+
+<div class="grid">
+  <div class="panel">
+    <h3>Players</h3>
+    <table class="event-table">
+      <thead><tr><th>Name</th><th>Map</th><th>X</th><th>Y</th><th>Admin</th><th>Guest</th><th>Entity ID</th></tr></thead>
+      <tbody>
+      {{range $p := index $stats "players"}}
+        <tr class="sev-info">
+          <td>{{$p.display_name}}</td>
+          <td>{{$p.map_id}}</td>
+          <td>{{printf "%.0f" $p.x}}</td>
+          <td>{{printf "%.0f" $p.y}}</td>
+          <td>{{if $p.is_admin}}yes{{else}}-{{end}}</td>
+          <td>{{if $p.is_guest}}yes{{else}}-{{end}}</td>
+          <td><a href="{{bp}}/events?entity={{$p.entity_id}}">{{$p.entity_id}}</a></td>
+        </tr>
+      {{else}}
+        <tr><td colspan="7">No players online</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3>Extensions</h3>
+    <table class="event-table">
+      <thead><tr><th>ID</th><th>Alive</th><th>Heartbeat Age</th><th>Input Triggers</th><th>Gate Triggers</th></tr></thead>
+      <tbody>
+      {{range $ext := index $stats "extensions"}}
+        <tr class="{{if $ext.alive}}sev-info{{else}}sev-error{{end}}">
+          <td>{{$ext.id}}</td>
+          <td>{{if $ext.alive}}alive{{else}}dead{{end}}</td>
+          <td>{{$ext.heartbeat_age}}</td>
+          <td>{{$ext.input_triggers}}</td>
+          <td>{{$ext.gate_triggers}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="5">No extensions registered</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</div>
+{{end}}
+{{end}}

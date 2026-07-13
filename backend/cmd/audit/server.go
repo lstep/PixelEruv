@@ -67,6 +67,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc(bp+"/players/", s.handlePlayerTimeline)
 	mux.HandleFunc(bp+"/health", s.handleHealthPage)
 	mux.HandleFunc(bp+"/world", s.handleWorld)
+	mux.HandleFunc(bp+"/world/partial", s.handleWorldPartial)
 	mux.HandleFunc(bp+"/healthz", s.handleHealthz)
 
 	// Static files (HTMX, CSS) — served from embedded filesystem.
@@ -247,32 +248,48 @@ func (s *Server) handleHealthPage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleWorld(w http.ResponseWriter, r *http.Request) {
-	// Request world stats from worldsim via NATS request-reply.
+// fetchWorldStats requests world stats from worldsim via NATS request-reply.
+// Returns the parsed stats map, or an error message string if the request failed.
+func (s *Server) fetchWorldStats() (map[string]any, string) {
 	reply, err := s.nc.Request("worldsim.stats.get", nil, 3*time.Second)
 	if err != nil {
 		s.logger.Warn("world stats request", "err", err)
-		s.render(w, "world.html", map[string]any{
-			"Error":    "worldsim unreachable: " + err.Error(),
-			"BasePath": s.basePath,
-		})
-		return
+		return nil, "worldsim unreachable: " + err.Error()
 	}
-
-	// Parse the JSON response into a generic structure for the template.
 	var stats map[string]any
 	if err := json.Unmarshal(reply.Data, &stats); err != nil {
 		s.logger.Warn("world stats parse", "err", err)
-		s.render(w, "world.html", map[string]any{
-			"Error":    "parse error: " + err.Error(),
-			"BasePath": s.basePath,
-		})
-		return
+		return nil, "parse error: " + err.Error()
 	}
-	s.render(w, "world.html", map[string]any{
-		"Stats":    stats,
-		"BasePath": s.basePath,
-	})
+	return stats, ""
+}
+
+func (s *Server) handleWorld(w http.ResponseWriter, r *http.Request) {
+	stats, errMsg := s.fetchWorldStats()
+	data := map[string]any{"BasePath": s.basePath}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	} else {
+		data["Stats"] = stats
+	}
+	s.render(w, "world.html", data)
+}
+
+// handleWorldPartial renders just the world_content fragment for htmx polling.
+func (s *Server) handleWorldPartial(w http.ResponseWriter, r *http.Request) {
+	stats, errMsg := s.fetchWorldStats()
+	data := map[string]any{"BasePath": s.basePath}
+	if errMsg != "" {
+		data["Error"] = errMsg
+	} else {
+		data["Stats"] = stats
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	t := s.templates["world.html"]
+	if err := t.ExecuteTemplate(w, "world_content", data); err != nil {
+		s.logger.Warn("render world partial", "err", err)
+	}
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
