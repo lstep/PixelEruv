@@ -1,6 +1,6 @@
 <svg width="100%" viewBox="0 0 1280 830" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
   <title>Pixel Eruv — Networking Flow (WebSocket + Protobuf + ECS Replication)</title>
-  <desc>End-to-end networking flow. Forward lane (client to server): Browser sends ClientFrame protobuf over WSS via Traefik to the Pusher, which validates the token, assigns a client_id, and forwards Input/ActionFrame frames to NATS Core; the World Simulator applies them authoritatively in its tick loop. Return lane (server to client): the World Simulator replication pipeline (dirty flags, per-tick scheduler, AOI filter, delta encoder, protobuf component serializer) emits a per-client ReplicationBatch of SpawnEntity/UpdateComponent/DestroyEntity/PlayAnimation, published to NATS, forwarded by the Pusher as a single WebSocket frame, decoded by the Browser into its local entity store.</desc>
+  <desc>End-to-end networking flow. Forward lane (client to server): Browser sends ClientFrame protobuf over WSS via nginx to the Pusher, which validates the JWT via the PocketBase API, assigns a client_id, and forwards Input/ActionFrame frames to NATS Core; the World Simulator applies them authoritatively in its tick loop. Return lane (server to client): the World Simulator replication pipeline (dirty flags, per-tick scheduler, AOI filter, delta encoder, protobuf component serializer) emits a per-client ReplicationBatch of SpawnEntity/UpdateComponent/DestroyEntity/PlayAnimation, published to NATS, forwarded by the Pusher as a single WebSocket frame, decoded by the Browser into its local entity store.</desc>
 
   <defs>
     <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -111,24 +111,24 @@
     <text x="44" y="621" font-size="9" fill="#64748b" font-style="italic">renderer picked by components</text>
   </g>
 
-  <!-- ====== TRAEFIK ====== -->
+  <!-- ====== NGINX ====== -->
   <g>
     <rect x="280" y="145" width="130" height="570" rx="10" fill="#fde68a" stroke="#ea580c" stroke-width="2"/>
-    <text x="345" y="167" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">Traefik</text>
-    <text x="345" y="183" text-anchor="middle" font-size="10" fill="#ea580c">edge proxy</text>
+    <text x="345" y="167" text-anchor="middle" font-size="13" font-weight="700" fill="#7c2d12">nginx</text>
+    <text x="345" y="183" text-anchor="middle" font-size="10" fill="#ea580c">edge proxy (in frontend)</text>
 
     <text x="345" y="208" text-anchor="middle" font-size="10" font-weight="600" fill="#ea580c">forward</text>
     <text x="345" y="226" text-anchor="middle" font-size="10" fill="#9a3412">TLS terminate</text>
     <text x="345" y="241" text-anchor="middle" font-size="10" fill="#9a3412">WSS upgrade</text>
-    <text x="345" y="256" text-anchor="middle" font-size="10" fill="#9a3412">sticky session</text>
+    <text x="345" y="256" text-anchor="middle" font-size="10" fill="#9a3412">/ws → Pusher</text>
 
     <line x1="290" y1="325" x2="400" y2="325" stroke="#fdba74" stroke-width="1" stroke-dasharray="3 3"/>
     <text x="345" y="338" text-anchor="middle" font-size="9" fill="#ea580c" font-style="italic">HTTPS / WSS</text>
 
     <text x="345" y="362" text-anchor="middle" font-size="10" font-weight="600" fill="#16a34a">return</text>
     <text x="345" y="380" text-anchor="middle" font-size="10" fill="#9a3412">route → Pusher</text>
-    <text x="345" y="395" text-anchor="middle" font-size="10" fill="#9a3412">sticky by cookie</text>
-    <text x="345" y="415" text-anchor="middle" font-size="9" fill="#64748b" font-style="italic">same Pusher on reconnect</text>
+    <text x="345" y="395" text-anchor="middle" font-size="10" fill="#9a3412">/api/ → WorldSim</text>
+    <text x="345" y="415" text-anchor="middle" font-size="9" fill="#64748b" font-style="italic">/admin/ · /audit/ · /_/</text>
   </g>
 
   <!-- ====== PUSHER ====== -->
@@ -140,7 +140,7 @@
     <!-- forward -->
     <text x="464" y="208" font-size="10" font-weight="600" fill="#2563eb">forward · input path</text>
     <text x="464" y="226" font-size="10" fill="#1e40af">• AuthFrame first (5s)</text>
-    <text x="464" y="241" font-size="10" fill="#1e40af">• JWKS validate → Dex</text>
+    <text x="464" y="241" font-size="10" fill="#1e40af">• JWT validate → PB API</text>
     <text x="464" y="256" font-size="10" fill="#1e40af">• assign client_id</text>
     <text x="464" y="271" font-size="10" fill="#1e40af">• publish client.connected</text>
     <rect x="464" y="281" width="162" height="34" rx="5" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
@@ -271,7 +271,7 @@
     <rect x="86" y="34" width="14" height="14" rx="3" fill="#fde68a" stroke="#4338ca" stroke-width="1.5"/>
     <text x="106" y="45" font-size="10" fill="#334155">Browser</text>
     <rect x="170" y="34" width="14" height="14" rx="3" fill="#fde68a" stroke="#ea580c" stroke-width="1.5"/>
-    <text x="190" y="45" font-size="10" fill="#334155">Traefik (edge)</text>
+    <text x="190" y="45" font-size="10" fill="#334155">nginx (edge)</text>
     <rect x="280" y="34" width="14" height="14" rx="3" fill="#bfdbfe" stroke="#3b82f6" stroke-width="1.5"/>
     <text x="300" y="45" font-size="10" fill="#334155">Pusher</text>
     <rect x="354" y="34" width="14" height="14" rx="3" fill="#e2e8f0" stroke="#475569" stroke-width="1.5"/>
