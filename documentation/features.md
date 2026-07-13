@@ -1138,6 +1138,34 @@ why. The audit log records every event; OpenObserve shows every
 trace. Two clicks from a ban to the exact millisecond it was
 processed."
 
+### 5.8 Automatic Reload on Server Update
+
+When the server is redeployed (new images, links, auth flow, or protocol
+tweaks), clients already in a game session keep running against the old
+assets until they manually refresh — leading to broken images, stale
+links, and confusing auth failures mid-session. The frontend detects the
+update on its own and reloads.
+
+The version badge in the corner of the game page already polls the
+pusher's `/healthz` endpoint every 10 seconds for the kernel (worldsim)
+version, which is stamped from `git describe` at build time. The poll
+now captures that version as a baseline on the first successful read.
+If a later poll reports a different version, the page reloads
+immediately. A `sessionStorage` flag carries the reason across the
+reload, so the reloaded page shows a small top-center toast — "The page
+reloaded because the server was updated." — for about 2 seconds. The
+toast is clickable to dismiss sooner. Detection latency is at most one
+poll interval (10 seconds); no extra requests are added.
+
+**Storyboard:** Open the game in a browser with the stack running. Show
+the version badge in the corner. In a terminal, rebuild and restart the
+worldsim with a new version tag. Within ~10 seconds the browser reloads
+on its own and the toast appears: "The page reloaded because the server
+was updated." Click the toast — it vanishes. Narrate: "deploy a new
+version and every connected player picks it up within seconds. No
+stale assets, no broken links, no support tickets asking people to
+refresh."
+
 ---
 
 ## Part 6 — Roadmap (Post-MVP)
@@ -1255,7 +1283,8 @@ without interrupting the player.
 3. 5.4 Auto-Seeding (zero setup)
 4. 5.3 OpenTelemetry (trace a movement)
 5. 5.7 Audit Log (search event history, link to traces)
-6. 4.1-4.5 PocketBase Authentication (register, verify, password reset, social login, token validation)
+6. 5.8 Automatic Reload on Server Update (deploy, watch clients reload)
+7. 4.1-4.5 PocketBase Authentication (register, verify, password reset, social login, token validation)
 
 ### Arc E: "The Road Ahead" (5 minutes)
 
