@@ -885,6 +885,7 @@ export class GameScene extends Phaser.Scene {
         this.avatars.clear();
         this.displayNameByEntity.clear();
         this.isGuestByEntity.clear();
+        this.isAdminByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         this.myEntityId = entityId || null;
@@ -1108,6 +1109,7 @@ export class GameScene extends Phaser.Scene {
         this.avatars.clear();
         this.displayNameByEntity.clear();
         this.isGuestByEntity.clear();
+        this.isAdminByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         // Restart the scene to reload the map.
