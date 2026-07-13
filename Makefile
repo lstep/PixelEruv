@@ -80,9 +80,9 @@ dist-stage:
 	cp docker/dist/example.nginx.conf   $(DIST_DIR)/example.nginx.conf
 	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
-	@# --- stage static welcome page ---
+	@# --- stage static welcome page (copy entire directory) ---
 	@mkdir -p $(DIST_DIR)/docker/welcome
-	cp docker/welcome/index.html        $(DIST_DIR)/docker/welcome/index.html
+	cp -R docker/welcome/.              $(DIST_DIR)/docker/welcome/
 	@# --- stage compose ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
 	@# --- stage character spritesheets for worldsim auto-seed ---
