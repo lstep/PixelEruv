@@ -271,3 +271,74 @@ func TestReplication_SpawnIncludesIsGuest(t *testing.T) {
 		t.Fatal("timed out waiting for replication batch")
 	}
 }
+
+// TestReplication_SpawnIncludesIsAdmin verifies that the is_admin field is
+// replicated as part of the DisplayName component on spawn, computed as
+// IsAdmin && !HideAdminBadge. An admin who hasn't opted out (IsAdmin=true,
+// HideAdminBadge=false) replicates IsAdmin=true; an admin who opted out
+// (HideAdminBadge=true) and a non-admin both replicate IsAdmin=false.
+func TestReplication_SpawnIncludesIsAdmin(t *testing.T) {
+	sim, subNc := newChatTestSim(t)
+	adminShown := addPlayer(sim, "e_admin_shown", "c_admin_shown", "Admin", "")
+	adminShown.IsAdmin = true
+	adminShown.HideAdminBadge = false
+	adminHidden := addPlayer(sim, "e_admin_hidden", "c_admin_hidden", "Admin", "")
+	adminHidden.IsAdmin = true
+	adminHidden.HideAdminBadge = true
+	regular := addPlayer(sim, "e_user", "c_user", "Alice", "")
+	regular.IsAdmin = false
+	// Observer already spawned.
+	addPlayer(sim, "e_obs", "c_obs", "Obs", "")
+
+	got := make(chan *pb.ReplicationBatch, 1)
+	sub, err := subNc.Subscribe("client.c_obs.replication", func(m *nats.Msg) {
+		var sf pb.ServerFrame
+		if err := proto.Unmarshal(m.Data, &sf); err != nil {
+			return
+		}
+		if batch := sf.GetReplication(); batch != nil {
+			select {
+			case got <- batch:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	t.Cleanup(func() { sub.Unsubscribe() })
+	subNc.Flush()
+
+	sim.tick()
+
+	select {
+	case batch := <-got:
+		for _, sp := range batch.Spawns {
+			var dn pb.DisplayName
+			for _, comp := range sp.Components {
+				if comp.ComponentId == compDisplayName {
+					if err := proto.Unmarshal(comp.Data, &dn); err != nil {
+						t.Fatalf("unmarshal DisplayName: %v", err)
+					}
+					break
+				}
+			}
+			switch sp.EntityId {
+			case "e_admin_shown":
+				if !dn.IsAdmin {
+					t.Fatalf("admin e_admin_shown (HideAdminBadge=false): IsAdmin = false, want true")
+				}
+			case "e_admin_hidden":
+				if dn.IsAdmin {
+					t.Fatalf("admin e_admin_hidden (HideAdminBadge=true): IsAdmin = true, want false")
+				}
+			case "e_user":
+				if dn.IsAdmin {
+					t.Fatalf("non-admin e_user: IsAdmin = true, want false")
+				}
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for replication batch")
+	}
+}

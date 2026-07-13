@@ -21,6 +21,7 @@ type UserRecord struct {
 	LastSeenAt  int64
 	IsAdmin     bool
 	Options     string
+	HideAdminBadge bool // players.hide_admin_badge — opt out of the public admin badge
 }
 
 // UserStore handles PocketBase player lookups and persistence via the
@@ -218,5 +219,6 @@ func recordToUser(r *core.Record) *UserRecord {
 		LastSeenAt:  int64(r.GetInt("last_seen_at")),
 		IsAdmin:     r.GetBool("is_admin"),
 		Options:     r.GetString("options"),
+		HideAdminBadge: r.GetBool("hide_admin_badge"),
 	}
 }
