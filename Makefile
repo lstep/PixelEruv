@@ -83,6 +83,10 @@ dist-stage:
 	@# --- stage static welcome page (copy entire directory) ---
 	@mkdir -p $(DIST_DIR)/docker/welcome
 	cp -R docker/welcome/.              $(DIST_DIR)/docker/welcome/
+	@# --- bake the build version into the staged welcome pages ---
+	@# Uses sed -i.bak + rm for portability across macOS (BSD sed) and Linux (GNU sed).
+	@sed -i.bak 's/__VERSION__/$(VERSION)/g' $(DIST_DIR)/docker/welcome/*.html
+	@rm -f $(DIST_DIR)/docker/welcome/*.bak
 	@# --- stage compose ---
 	cp docker/dist/docker-compose.yml   $(DIST_COMPOSE)
 	@# --- stage character spritesheets for worldsim auto-seed ---
