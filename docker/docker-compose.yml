@@ -100,8 +100,9 @@ services:
       #   TLS_HOSTS=localhost,127.0.0.1,192.168.1.10
       TLS_HOSTS: "localhost,127.0.0.1"
       # Public host (LAN IP or hostname) remote browsers use to reach this
-      # machine. Drives the TLS cert SAN (auto-appended), Dex redirect URI,
-      # and LiveKit public URL. Defaults to localhost (same-machine dev).
+      # machine. Drives the TLS cert SAN (auto-appended), the default APP_URL
+      # (email verification links), and LiveKit public URL.
+      # Defaults to localhost (same-machine dev).
       PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
     restart: unless-stopped
 
