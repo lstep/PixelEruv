@@ -44,11 +44,11 @@ export class TopMenu {
     welcomeLink.setAttribute("aria-label", "Welcome page");
     welcomeLink.style.cssText =
       "position:fixed;top:12px;left:12px;z-index:20;display:flex;align-items:center;justify-content:center;" +
-      "width:40px;height:40px;text-decoration:none;";
+      "width:80px;height:80px;text-decoration:none;";
     const welcomeImg = document.createElement("img");
     welcomeImg.src = "/assets/pixel-eruv-icon.svg";
     welcomeImg.alt = "";
-    welcomeImg.style.cssText = "width:32px;height:32px;display:block;pointer-events:none;";
+    welcomeImg.style.cssText = "width:80px;height:80px;display:block;pointer-events:none;";
     welcomeLink.appendChild(welcomeImg);
     document.body.appendChild(welcomeLink);
 
