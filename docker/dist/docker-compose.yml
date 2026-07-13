@@ -63,7 +63,7 @@ services:
       SMTP_PORT: "1025"
       SMTP_FROM: "noreply@pixeleruv.local"
       SMTP_SENDER_NAME: "PixelEruv"
-      APP_URL: "${APP_URL:-https://${PUBLIC_HOST:-localhost}:4043}"
+      APP_URL: "${APP_URL:-https://${PUBLIC_HOST:-localhost}}"
       OAUTH2_GOOGLE_CLIENT_ID: "${OAUTH2_GOOGLE_CLIENT_ID:-}"
       OAUTH2_GOOGLE_SECRET: "${OAUTH2_GOOGLE_SECRET:-}"
       OAUTH2_GITHUB_CLIENT_ID: "${OAUTH2_GITHUB_CLIENT_ID:-}"
