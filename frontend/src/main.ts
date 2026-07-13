@@ -12,11 +12,6 @@ import { renderRegisterPage, renderLoginPage, renderVerifyEmailPage } from "./ui
 // VITE_OTEL_ENABLED != "true".
 initOtel();
 
-// If the previous page load ended in a server-update reload, show a small
-// toast explaining why the page refreshed. The reason is carried in
-// sessionStorage so it only appears in the tab that was reloaded.
-showReloadNoticeIfPending();
-
 // Poll /healthz every 10 seconds and display the kernel version in a small
 // bottom-left badge. Also detects server updates: the kernel version from the
 // first successful poll is captured as a baseline, and if a later poll reports
@@ -47,7 +42,7 @@ pollVersion();
 setInterval(pollVersion, 10_000);
 
 // Show a small top-center toast if the page was reloaded because the server
-// was updated. Auto-dismisses after 2 seconds; clicking it dismisses
+// was updated. Auto-dismisses after 8 seconds; clicking it dismisses
 // immediately. Reads and clears the "reloadReason" sessionStorage key set by
 // pollVersion() right before the reload.
 function showReloadNoticeIfPending(): void {
@@ -56,10 +51,11 @@ function showReloadNoticeIfPending(): void {
   const toast = document.createElement("div");
   toast.textContent = "The page reloaded because the server was updated.";
   toast.style.cssText =
-    "position:fixed;top:12px;left:50%;transform:translateX(-50%);" +
+    "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);" +
     "padding:10px 16px;font-size:14px;font-family:sans-serif;font-weight:600;" +
-    "background:#2d2d3a;color:#fff;border-radius:20px;cursor:pointer;" +
-    "z-index:10001;box-shadow:0 4px 12px rgba(0,0,0,0.4);";
+    "background:#2d2d3a;color:#fff;border:1px solid rgba(255,255,255,0.15);" +
+    "border-radius:20px;cursor:pointer;z-index:10001;" +
+    "box-shadow:0 4px 12px rgba(0,0,0,0.4);";
   const dismiss = (): void => {
     toast.remove();
     toast.onclick = null;
@@ -67,7 +63,7 @@ function showReloadNoticeIfPending(): void {
   };
   toast.onclick = dismiss;
   document.body.appendChild(toast);
-  const timer = setTimeout(dismiss, 2_000);
+  const timer = setTimeout(dismiss, 8_000);
 }
 
 const config: Phaser.Types.Core.GameConfig = {
@@ -92,14 +88,17 @@ async function bootstrap(): Promise<void> {
   const path = window.location.pathname;
   if (path === "/register") {
     renderRegisterPage();
+    showReloadNoticeIfPending();
     return;
   }
   if (path === "/login") {
     renderLoginPage();
+    showReloadNoticeIfPending();
     return;
   }
   if (path === "/verify-email") {
     renderVerifyEmailPage();
+    showReloadNoticeIfPending();
     return;
   }
 
@@ -131,6 +130,10 @@ async function bootstrap(): Promise<void> {
   // Track which map was initially loaded so onReady can detect if the
   // server wants the player on a different map (saved map_id in PB).
   game.registry.set("loadedMapName", import.meta.env.VITE_MAP_NAME || "main");
+
+  // Show the reload toast after the game canvas exists so it appears on top
+  // of the rendered game, not during the dark loading phase.
+  showReloadNoticeIfPending();
 }
 
 bootstrap();
