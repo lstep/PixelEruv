@@ -1255,7 +1255,7 @@ without interrupting the player.
 3. 5.4 Auto-Seeding (zero setup)
 4. 5.3 OpenTelemetry (trace a movement)
 5. 5.7 Audit Log (search event history, link to traces)
-6. 4.1-4.4 PocketBase Authentication (register, verify, social login)
+6. 4.1-4.5 PocketBase Authentication (register, verify, password reset, social login, token validation)
 
 ### Arc E: "The Road Ahead" (5 minutes)
 
