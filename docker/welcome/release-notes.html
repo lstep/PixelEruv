@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PixelEruv — Release notes</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem; }
+.container { max-width: 720px; margin: 0 auto; }
+header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 2rem; flex-wrap: wrap; gap: 0.5rem; }
+h1 { font-size: 2rem; }
+.version { color: var(--accent); font-size: 1rem; }
+.back { display: inline-block; margin-bottom: 1.5rem; color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+.back:hover { color: var(--accent); }
+section { background: var(--surface); border-radius: 8px; padding: 1.25rem 1.5rem; margin-bottom: 1.25rem; }
+h2 { font-size: 1.15rem; margin-bottom: 0.75rem; color: var(--text); }
+ul { list-style: none; }
+ul li { color: var(--muted); line-height: 1.6; padding: 0.25rem 0; }
+ul li::before { content: "— "; color: var(--muted); }
+.empty { color: var(--muted); font-style: italic; }
+footer { margin-top: 2rem; color: var(--muted); font-size: 0.8rem; text-align: center; }
+footer a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="container">
+  <a class="back" href="/welcome/">&larr; Back to welcome</a>
+  <header>
+    <h1>Release notes</h1>
+    <span class="version">Version __VERSION__</span>
+  </header>
+
+  <!--
+    Release notes — public-facing summary of THIS release.
+    Keep it to big, important changes that players care about (new features,
+    notable improvements, significant fixes). Skip minor/internal changes.
+    Update this file for each release. Older releases are archived on GitHub:
+    https://github.com/lstep/pixeleruv/releases
+  -->
+
+  <section>
+    <h2>Highlights</h2>
+    <ul>
+      <li class="empty">Add the one or two standout changes for this release here.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>New features</h2>
+    <ul>
+      <li class="empty">List major new features here.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Improvements</h2>
+    <ul>
+      <li class="empty">List notable improvements to existing features here.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Bug fixes</h2>
+    <ul>
+      <li class="empty">List significant bug fixes here.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>Full changelog and older releases on <a href="https://github.com/lstep/pixeleruv/releases">GitHub</a>.</p>
+  </footer>
+</div>
+</body>
+</html>

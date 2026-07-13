@@ -13,6 +13,10 @@ RUN apk add --no-cache openssl
 COPY --from=builder /dist/web /usr/share/nginx/html
 # Static welcome page (community-customizable).
 COPY docker/welcome /var/www/welcome
+# Bake the build version into the welcome pages. Defaults to "dev" for local
+# builds; dist builds substitute the real git tag/commit during `make dist-stage`.
+ARG VERSION=dev
+RUN sed -i 's/__VERSION__/${VERSION}/g' /var/www/welcome/*.html
 # Proxy /ws to the pusher service
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 # Entrypoint generates a self-signed cert (SANs from $TLS_HOSTS) then starts nginx.
