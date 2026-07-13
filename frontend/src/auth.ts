@@ -15,7 +15,7 @@ import PocketBase from "pocketbase";
 // — the SDK automatically appends /api/ to the base URL, so we use the
 // bare origin. nginx proxies /api/ to worldsim's PocketBase.
 const PB_URL = window.location.port === "5173"
-  ? (import.meta.env.VITE_PB_URL ?? "http://localhost:8090")
+  ? (import.meta.env.VITE_POCKETBASE_URL ?? "http://localhost:8090")
   : window.location.origin;
 
 export const pb = new PocketBase(PB_URL);
