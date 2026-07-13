@@ -48,6 +48,7 @@ func TestAdminInfo_SentOnSpawnToAdmin(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("subscribe admin channel: %v", err)
 	}
+	subNc.Flush()
 
 	// Trigger replication for the admin client. Entities have not been
 	// spawned to the admin yet (spawnedTo is empty), so this tick will
@@ -167,6 +168,7 @@ func TestProvisionClient_SetsDeviceID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("subscribe admin channel: %v", err)
 	}
+	subNc.Flush()
 
 	sim.replicateToClient(context.Background(), admin)
 
