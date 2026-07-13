@@ -130,6 +130,11 @@ func configureSMTP(app core.App) {
 	if name := os.Getenv("SMTP_SENDER_NAME"); name != "" {
 		s.Meta.SenderName = name
 	}
+	// Set the public app URL used in email templates (verification,
+	// password reset, email change). Falls back to the PB HTTP address.
+	if appURL := os.Getenv("APP_URL"); appURL != "" {
+		s.Meta.AppURL = appURL
+	}
 	if err := app.Save(s); err != nil {
 		log.Printf("configure SMTP: %v", err)
 	}
