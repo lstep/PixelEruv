@@ -10,12 +10,13 @@
 
 import PocketBase from "pocketbase";
 
-// Determine the PocketBase API URL. In dev (vite dev server on :5173),
+// Determine the PocketBase base URL. In dev (vite dev server on :5173),
 // PocketBase is at localhost:8090. In Docker (nginx proxy), it's same-origin
-// via /api/.
+// — the SDK automatically appends /api/ to the base URL, so we use the
+// bare origin. nginx proxies /api/ to worldsim's PocketBase.
 const PB_URL = window.location.port === "5173"
   ? (import.meta.env.VITE_PB_URL ?? "http://localhost:8090")
-  : `${window.location.origin}/api`;
+  : window.location.origin;
 
 export const pb = new PocketBase(PB_URL);
 
