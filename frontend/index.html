@@ -21,6 +21,15 @@
         z-index: 10000;
         user-select: none;
       }
+      /* When the game server is unavailable, dim and disable all floating DOM
+         UI (TopMenu, welcome icon, ChatPanel, VideoBar, screen-share windows)
+         so the in-canvas "Server not available" overlay effectively grays out
+         the whole screen. #game holds the Phaser canvas (with the overlay) and
+         is excluded. */
+      body.server-unavailable > *:not(#game) {
+        pointer-events: none;
+        opacity: 0.25;
+      }
     </style>
   </head>
   <body>
