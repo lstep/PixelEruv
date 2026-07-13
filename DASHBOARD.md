@@ -9,6 +9,7 @@ Admins now show a red "admin" badge to the right of their name in the name-tag p
 
 The replicated `DisplayName.is_admin` flag is computed server-side as `Entity.IsAdmin && !Entity.HideAdminBadge`, so the client never decides admin status — it just renders the server-provided flag. Normal and guest users always have `IsAdmin=false` (no PB record or `is_admin=false`), so they never get the badge. The toggle is purely cosmetic; it never grants or revokes admin capabilities (admin features like IP info / ban button remain gated on the admin-only NATS subject, separately).
 
+
 ### Files
 
 | File | Changes |
