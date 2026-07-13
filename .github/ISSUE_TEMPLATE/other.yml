@@ -1,0 +1,20 @@
+name: Other
+description: Anything that doesn't fit a bug report or feature request
+title: "[Other]: "
+labels: ["other"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe what's on your mind — question, discussion, chore, documentation, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Add any other context, links, or references here.
+    validations:
+      required: false
