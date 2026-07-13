@@ -112,20 +112,23 @@ Python extension — the world keeps running. Restart it — the NPC
 resumes. Narrate: "the kernel doesn't care what language your extension
 is written in. It only sees NATS messages."
 
-### 0.5 Enterprise Identity from Day One
+### 0.5 Self-Service Authentication from Day One
 
-Gather and ZEP use their own auth systems. Connecting them to corporate
-LDAP, Active Directory, or SSO requires third-party bridges or custom
-work. Pixel Eruv ships with Dex as the OIDC provider from the first
-release. Dex federates to LDAP, Active Directory, Google, GitHub,
-SAML, and any OIDC-compliant IdP. Switching from local passwords to
-corporate LDAP is a config file change — no application code, no
-rebuild.
+Gather and ZEP use their own hosted auth systems. Pixel Eruv ships with
+PocketBase's built-in authentication: email/password registration with
+email verification, password reset, and OAuth2 social login (Google,
+GitHub, Facebook). Users self-register — no admin needs to create
+accounts. PocketBase is embedded in the World Simulator as a Go library,
+so there is no separate identity service to deploy or maintain. The
+Pusher validates JWTs by calling the PocketBase API, keeping the auth
+flow simple and self-contained.
 
-**Storyboard:** Show the Dex config file with the local-password
-connector. Swap one block to the LDAP connector. Restart Dex. Log in
-with corporate credentials. Narrate: "same app, same code — just a
-config change and you're on LDAP."
+**Storyboard:** Show the registration page — enter email and password.
+Show the verification email arriving in MailHog. Click the link, log in,
+and enter the world. Then show the OAuth2 config (just environment
+variables) and switch to Google login. Narrate: "users register
+themselves, verify by email, and log in. Social login is a config
+change — no separate identity service."
 
 ### 0.6 The Kernel Has No Gameplay Logic
 
@@ -211,18 +214,19 @@ Pixel Eruv is yours, so customization goes as deep as you want:
   greets visitors with the company name, or a custom zone policy that
   matches their org chart. The extension API is the same one the
   first-party extensions use.
-- **Identity is Dex.** Point Dex at your corporate LDAP or Active
-  Directory and employees log in with their existing credentials. No
-  separate account system, no password sync.
+- **Identity is PocketBase.** Users self-register with email/password
+  or log in via Google, GitHub, or Facebook (OAuth2). No separate
+  identity service to deploy — PocketBase is embedded in the World
+  Simulator.
 
 An enterprise or association can have a fully branded virtual space —
-custom map, custom sprites, custom interactions, corporate SSO —
+custom map, custom sprites, custom interactions, OAuth2 social login —
 without writing engine code or forking the repo.
 
 **Storyboard:** Show a default Pixel Eruv office. Then show the same
 deployment with a custom Tiled map (a branded lobby with the company
 logo as a decoration), custom character sprites (employees in company
-colors), and a Dex config pointing at LDAP. Narrate: "logo, map,
+colors), and OAuth2 configured for Google login. Narrate: "logo, map,
 characters, behavior, login — all yours. No fork, no vendor, no
 per-seat branding fee."
 
@@ -482,7 +486,7 @@ The dropdown content depends on the viewer. Regular users see a
 placeholder line ("Hello world"). Admins see the player's IP address
 and a short device ID, delivered via a dedicated NATS channel that
 carries an `AdminInfoFrame` with every player's IP, device ID, guest
-status, and OIDC subject — the data only reaches admin clients. Both
+status, and user ID — the data only reaches admin clients. Both
 regular and admin viewers see an "Invite" button; admins additionally
 see a "Ban" button. These buttons are stubs — they show "Not
 implemented yet" when clicked. Wiring the ban button to a server-side
@@ -704,7 +708,7 @@ The World Simulator is the spatial authority. It owns the ECS, the tile
 grid, the spatial index, the trigger registry, and the replication
 pipeline. The only gameplay system in the kernel is player avatar
 movement — everything else is delegated to extensions. The Pusher is a
-thin WebSocket proxy that validates OIDC tokens and forwards frames
+thin WebSocket proxy that validates PocketBase JWTs and forwards frames
 between the browser and the worldsim via NATS.
 
 **Storyboard:** Show the architecture diagram (NATS at the center,
@@ -864,19 +868,22 @@ extension."
 
 ## Part 4 — Identity and Access
 
-### 4.1 Dex OIDC Authentication
+### 4.1 PocketBase Authentication
 
-Authentication uses Dex as the OIDC provider with the authorization
-code flow + PKCE. The MVP ships with Dex's local-password connector
-(simple username/password). Enterprise connectors (LDAP, Active
-Directory, Google, GitHub, SAML) are enabled by changing Dex's config
-at deploy time — no application code changes. The Pusher validates the
-JWT on WebSocket upgrade using JWKS cached from Dex.
+Authentication uses PocketBase's built-in `users` auth collection,
+embedded in the World Simulator as a Go library. Users self-register
+with an email and password — no admin needs to create accounts. A
+verification email is sent on registration (via SMTP, MailHog in dev).
+Password reset is supported via email. OAuth2 social login (Google,
+GitHub, Facebook) is enabled by setting environment variables on the
+worldsim service — no application code changes. The Pusher validates
+the JWT on WebSocket upgrade by calling the PocketBase API.
 
-**Storyboard:** Show the login screen — redirect to Dex. Enter
-credentials. Redirect back to the app with a token. Show the WebSocket
-connection carrying the token in the AUTH frame. Narrate: "swap the
-Dex config file and you're on LDAP — same app, same code."
+**Storyboard:** Show the registration page — enter email and password.
+Show the verification email in MailHog. Click the link, then log in.
+Show the WebSocket connection carrying the JWT in the AUTH frame.
+Narrate: "users register themselves, verify by email, and log in.
+Social login is an env var — no separate identity service."
 
 ### 4.2 Character Selection
 
@@ -907,8 +914,8 @@ Walk around, talk to people — everything works except persistence
 Pixel Eruv supports a three-layer ban system so admins can block
 griefers by whichever identifier is most effective for the situation:
 
-- **OIDC subject** (`user_id`): the strongest identifier. Bans a
-  logged-in user's Dex account. Evading it requires creating a new
+- **User ID** (`user_id`): the strongest identifier. Bans a
+  logged-in user's PocketBase account. Evading it requires creating a new
   account, which is real friction.
 - **IP address**: coarse but immediate. Stops a griefer right now.
   Can have collateral damage on shared IPs (NAT, household), so use
@@ -953,7 +960,7 @@ enters the world. Admins are always exempt."
 ### 5.1 Self-Hostable via Docker Compose
 
 The entire stack runs with a single `make up` command — no Kubernetes,
-no platform engineering. NATS, Dex, LiveKit, the Pusher, the WorldSim
+no platform engineering. NATS, MailHog, LiveKit, the Pusher, the WorldSim
 (with embedded PocketBase), and all extensions start as Docker Compose
 services. A self-contained `dist/` directory can be copied to any host
 and run without source code.
@@ -966,8 +973,8 @@ no cluster."
 ### 5.2 Single-Variable Remote Configuration
 
 One environment variable — `PUBLIC_HOST` — drives everything remote
-browsers need: the TLS cert SAN, the Dex redirect URI, and the
-LiveKit public URL. Set it to the host's LAN IP or hostname and
+browsers need: the TLS cert SAN, the email verification URL (`APP_URL`),
+and the LiveKit public URL. Set it to the host's LAN IP or hostname and
 rebuild.
 
 **Storyboard:** Show `PUBLIC_HOST=192.168.1.10 make up`. Open a browser
@@ -1136,7 +1143,7 @@ other Matrix servers can join the conversation."
 ### 6.5 Horizontal Scaling
 
 Multiple worldsim shards (per-map or per-region) with cross-shard
-visibility. The Pusher can be horizontally scaled with Traefik sticky
+visibility. The Pusher can be horizontally scaled with nginx sticky
 sessions routing reconnecting clients to the same instance.
 
 **Storyboard (future):** Show two worldsim instances on the architecture
@@ -1194,7 +1201,7 @@ without interrupting the player.
 3. 5.4 Auto-Seeding (zero setup)
 4. 5.3 OpenTelemetry (trace a movement)
 5. 5.7 Audit Log (search event history, link to traces)
-6. 4.1 Dex Authentication (swap connectors)
+6. 4.1 PocketBase Authentication (register, verify, social login)
 
 ### Arc E: "The Road Ahead" (5 minutes)
 
