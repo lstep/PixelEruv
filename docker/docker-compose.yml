@@ -64,7 +64,9 @@ services:
       SMTP_FROM: "noreply@pixeleruv.local"
       SMTP_SENDER_NAME: "PixelEruv"
       # Public URL used in verification/password-reset email links.
-      APP_URL: "${APP_URL:-https://${PUBLIC_HOST:-localhost}}"
+      # Default includes port 4043 (direct access). Override in .env if
+      # behind a reverse proxy on 443 (e.g. APP_URL=https://example.com).
+      APP_URL: "${APP_URL:-https://${PUBLIC_HOST:-localhost}:4043}"
       # OAuth2 providers — set client IDs/secrets in .env to enable.
       OAUTH2_GOOGLE_CLIENT_ID: "${OAUTH2_GOOGLE_CLIENT_ID:-}"
       OAUTH2_GOOGLE_SECRET: "${OAUTH2_GOOGLE_SECRET:-}"
