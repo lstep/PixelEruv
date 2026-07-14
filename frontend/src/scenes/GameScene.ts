@@ -235,6 +235,10 @@ const LERP_TAU_MS = 80;
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
+// Mirrors the server's proximityRadius (worldsim.go). Two players within
+// this distance (in tiles, feet-to-feet) can hear each other's Nearby chat.
+const PROXIMITY_RADIUS_TILES = 2.0;
+const PROXIMITY_RADIUS_PX = PROXIMITY_RADIUS_TILES * TILE_SIZE; // 64
 // Vertical offset from Position.Y to the avatar's feet in tile coords.
 // Avatars render with origin (0.5, 0.75) on a 64px frame placed at
 // (pos.X*32, pos.Y*32+16), so feet sit at Position.Y + 1.0. Collision is
@@ -334,6 +338,10 @@ interface Avatar {
   predY: number;
   // Name tag above the avatar (null for props and local player's own avatar).
   nameTag: Phaser.GameObjects.Container | null;
+  // Proximity spotlight (null for props). A soft warm radial-gradient image
+  // centered on the avatar's feet, visualizing the 2-tile chat radius.
+  // Toggled on/off globally with the Q key.
+  glow: Phaser.GameObjects.Image | null;
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
@@ -399,6 +407,15 @@ export class GameScene extends Phaser.Scene {
   // avatar. Defaults to true (visible). Set from the player_options JSON sent
   // by the server on auth.
   private showOwnNameTag = true;
+  // Player option: whether to show the proximity spotlight around avatars.
+  // Off by default; toggled with the Q key. When on, every avatar gets a
+  // soft warm pool at its feet (2-tile radius). Players in the local
+  // player's proximity chat group get a brighter highlight.
+  private showProximityGlow = false;
+  // Entity IDs in the local player's current proximity chat group, computed
+  // each frame via connected-components on feet-distance ≤ 2 tiles (matching
+  // the server's runProximityClustering). Used to highlight group members.
+  private proximityGroup: Set<string> = new Set();
 
   constructor() {
     super("GameScene");
@@ -716,6 +733,33 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // --- Proximity spotlight textures ---
+    // Two radial-gradient canvas textures used for the toggleable proximity
+    // spotlight (Q key). Both are soft warm pools centered on the avatar's
+    // feet with a brighter ring near the 2-tile boundary. "proximityGlow" is
+    // the default (subtle); "proximityGlowActive" is brighter for players in
+    // the local player's chat group. Generated once and reused by all avatars.
+    const diameter = Math.ceil(PROXIMITY_RADIUS_PX * 2);
+    const makeGlowTexture = (key: string, peakAlpha: number) => {
+      if (this.textures.exists(key)) return;
+      const tex = this.textures.createCanvas(key, diameter, diameter);
+      if (!tex) return;
+      const ctx = tex.getContext();
+      const cx = diameter / 2;
+      const r = cx;
+      const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, r);
+      grad.addColorStop(0.00, "rgba(255, 220, 150, 0)");
+      grad.addColorStop(0.55, `rgba(255, 210, 130, ${peakAlpha * 0.25})`);
+      grad.addColorStop(0.82, `rgba(255, 200, 120, ${peakAlpha * 0.55})`);
+      grad.addColorStop(0.92, `rgba(255, 195, 110, ${peakAlpha})`);
+      grad.addColorStop(1.00, "rgba(255, 190, 100, 0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, diameter, diameter);
+      tex.refresh();
+    };
+    makeGlowTexture("proximityGlow", 0.35);
+    makeGlowTexture("proximityGlowActive", 0.65);
+
     // Input — keyboard
     const kb = this.input.keyboard;
     if (!kb) return;
@@ -735,6 +779,16 @@ export class GameScene extends Phaser.Scene {
     let eHeld = false;
     kb.on("keydown-E", () => { if (!eHeld) { eHeld = true; this.ws?.sendAction("key:E"); } });
     kb.on("keyup-E", () => { eHeld = false; });
+
+    // Proximity spotlight toggle — shows/hides the soft warm pool around every
+    // avatar visualizing the 2-tile chat radius. Group members get a brighter
+    // highlight (computed each frame in update()).
+    kb.on("keydown-Q", () => {
+      this.showProximityGlow = !this.showProximityGlow;
+      for (const av of this.avatars.values()) {
+        av.glow?.setVisible(this.showProximityGlow);
+      }
+    });
 
     // When the window loses focus or is hidden, the browser stops delivering
     // DOM events to the page — including keyup. This happens concretely when
@@ -884,6 +938,7 @@ export class GameScene extends Phaser.Scene {
         for (const av of this.avatars.values()) {
           av.sprite.destroy();
           av.nameTag?.destroy();
+          av.glow?.destroy();
         }
         this.avatars.clear();
         this.displayNameByEntity.clear();
@@ -962,6 +1017,10 @@ export class GameScene extends Phaser.Scene {
       this.avClient = null;
       this.closeDropdown();
       topMenu?.detachAvControls();
+      // Remove generated glow textures so re-creating the scene doesn't
+      // warn about duplicate keys.
+      if (this.textures.exists("proximityGlow")) this.textures.remove("proximityGlow");
+      if (this.textures.exists("proximityGlowActive")) this.textures.remove("proximityGlowActive");
       window.removeEventListener("blur", clearMovementInput);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     });
@@ -1061,6 +1120,58 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // --- Proximity spotlight: compute chat group + update glows ---
+    // Matches the server's runProximityClustering: build adjacency on
+    // feet-distance ≤ 2 tiles, then BFS from the local player to find the
+    // transitive chat group. Group members get the brighter "active" texture.
+    if (this.showProximityGlow) {
+      const players: { id: string; fx: number; fy: number }[] = [];
+      for (const av of this.avatars.values()) {
+        if (av.isProp) continue;
+        players.push({
+          id: av.entityId,
+          fx: av.sprite.x / TILE_SIZE,
+          fy: this.feetY(av.sprite) / TILE_SIZE,
+        });
+      }
+
+      this.proximityGroup = new Set();
+      if (this.myEntityId && players.length > 1) {
+        const localIdx = players.findIndex((p) => p.id === this.myEntityId);
+        if (localIdx >= 0) {
+          const adj: number[][] = players.map(() => []);
+          for (let i = 0; i < players.length; i++) {
+            for (let j = i + 1; j < players.length; j++) {
+              const d = Math.hypot(players[i].fx - players[j].fx, players[i].fy - players[j].fy);
+              if (d <= PROXIMITY_RADIUS_TILES) {
+                adj[i].push(j);
+                adj[j].push(i);
+              }
+            }
+          }
+          const visited = new Set<number>([localIdx]);
+          const queue = [localIdx];
+          while (queue.length > 0) {
+            const cur = queue.shift()!;
+            this.proximityGroup.add(players[cur].id);
+            for (const n of adj[cur]) {
+              if (!visited.has(n)) {
+                visited.add(n);
+                queue.push(n);
+              }
+            }
+          }
+        }
+      }
+
+      for (const av of this.avatars.values()) {
+        if (!av.glow) continue;
+        av.glow.x = av.sprite.x;
+        av.glow.y = this.feetY(av.sprite);
+        av.glow.setTexture(this.proximityGroup.has(av.entityId) ? "proximityGlowActive" : "proximityGlow");
+      }
+    }
+
     // --- A/V: spatial volume + video bar tick ---
     if (this.avClient && this.videoBar) {
       const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
@@ -1112,6 +1223,7 @@ export class GameScene extends Phaser.Scene {
         for (const av of this.avatars.values()) {
           av.sprite.destroy();
           av.nameTag?.destroy();
+          av.glow?.destroy();
         }
         this.avatars.clear();
         this.displayNameByEntity.clear();
@@ -1225,6 +1337,7 @@ export class GameScene extends Phaser.Scene {
             predX: 0,
             predY: 0,
             nameTag: null,
+            glow: null,
           });
           console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid}`);
           continue;
@@ -1257,7 +1370,15 @@ export class GameScene extends Phaser.Scene {
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
         nameTag: null,
+        glow: null,
       });
+      // Create the proximity spotlight (soft warm pool at the avatar's feet).
+      // Toggled globally with Q; texture swapped to "active" for group members.
+      const avatar = this.avatars.get(spawn.entityId)!;
+      avatar.glow = this.add.image(x, this.feetY(sprite), "proximityGlow");
+      avatar.glow.setOrigin(0.5, 0.5);
+      avatar.glow.setDepth(DEPTH_BAND_DYNAMIC - 1);
+      avatar.glow.setVisible(this.showProximityGlow);
       // Create name tag if the server sent a DisplayName component. Hidden
       // for the local player's own avatar (you don't need a tag over your
       // own head).
@@ -1358,6 +1479,7 @@ export class GameScene extends Phaser.Scene {
           this.closeDropdown();
         }
         avatar.nameTag?.destroy();
+        avatar.glow?.destroy();
         avatar.sprite.destroy();
         this.avatars.delete(dest.entityId);
         this.displayNameByEntity.delete(dest.entityId);
