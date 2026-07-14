@@ -87,9 +87,8 @@ tr:hover { background: var(--surface2); }
 a { color: var(--accent); }
 
 /* Flag shown in front of an IP address in the players table.
-   .flag-neutral is the placeholder used until IP->country lookup is wired;
-   future .flag-<cc> classes (lowercase ISO 3166-1 alpha-2) can override the
-   background with a real flag (emoji, sprite, or gradient). */
+   .fi / .fi-<cc> classes come from lipis/flag-icons (flag-icons.min.css).
+   .flag / .flag-neutral is the fallback when no GeoIP DB is loaded. */
 .flag {
   display: inline-block;
   width: 1.1em;
@@ -102,5 +101,13 @@ a { color: var(--accent); }
 .flag-neutral {
   background: linear-gradient(135deg, var(--border) 0%, var(--surface2) 100%);
   border: 1px solid var(--border);
+}
+/* lipis/flag-icons uses 1.333em width by default; shrink to match the
+   neutral flag size so the IP column stays compact. */
+.ip-cell .fi {
+  width: 1.1em;
+  height: 0.8em;
+  margin-right: 0.3em;
+  vertical-align: middle;
 }
 .ip-cell { white-space: nowrap; }

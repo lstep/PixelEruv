@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -99,6 +99,9 @@ dist-stage:
 	@# --- stage default map (Tiled JSON + tileset PNGs) for worldsim auto-seed ---
 	@mkdir -p $(DIST_DIR)/maps
 	cp -R maps/.                         $(DIST_DIR)/maps/
+	@# --- stage GeoIP MMDB for audit service country flags ---
+	@mkdir -p $(DIST_DIR)/geoip
+	cp backend/cmd/audit/data/ip-to-country.mmdb $(DIST_DIR)/geoip/
 
 # dist: native platform (convenience alias).
 dist: build web dist-stage
@@ -167,3 +170,15 @@ debug-stop:
 debug-frontend: sync-assets
 	@echo "==> frontend at http://localhost:5173 (OTel enabled, traces proxied to $(OTEL_ENDPOINT))"
 	cd frontend && VITE_OTEL_ENABLED=true VITE_OTEL_ENDPOINT=/v1/traces npx vite
+
+# Refresh the GeoIP MMDB used by the audit service for country flag lookups.
+# Downloads the latest ip-to-country.mmdb from iplocate/ip-address-databases
+# (free, no registration, no attribution required) into the repo so it's
+# available for Docker builds and local dev. Commit the updated file.
+GEOIP_DB_PATH := backend/cmd/audit/data/ip-to-country.mmdb
+geoip:
+	@echo "==> Downloading latest ip-to-country.mmdb from iplocate..."
+	curl -fL -o $(GEOIP_DB_PATH) \
+		https://github.com/iplocate/ip-address-databases/raw/main/ip-to-country/ip-to-country.mmdb
+	@echo "==> Done. Restart the audit service to pick up the new database."
+	@echo "    Commit the updated file: git add $(GEOIP_DB_PATH)"

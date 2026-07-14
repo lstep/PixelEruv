@@ -18,4 +18,8 @@ ENV SPRITES_DIR=/sprites
 # maps collection on first run. Other services ignore MAP_DIR.
 COPY maps /maps
 ENV MAP_DIR=/maps
+# Bundle the GeoIP MMDB so the audit service can render country flags out of
+# the box. Other services ignore GEOIP_DB.
+COPY geoip/ip-to-country.mmdb /opt/geoip/ip-to-country.mmdb
+ENV GEOIP_DB=/opt/geoip/ip-to-country.mmdb
 ENTRYPOINT ["app"]

@@ -12,6 +12,10 @@
 //	PUSHER_HEALTHZ     pusher /healthz URL for dashboard health cards
 //	OTEL_BASE_URL      OpenObserve base URL for trace deep-links (e.g. http://localhost:5080)
 //	AUDIT_RETENTION_HOURS  retention period in hours (default: 720 = 30 days)
+//	GEOIP_DB           path to a GeoIP2-compatible MMDB for country flag lookups
+//	                   (default: ./cmd/audit/data/ip-to-country.mmdb; in Docker:
+//	                   /opt/geoip/ip-to-country.mmdb). If absent, neutral flags
+//	                   are shown.
 package main
 
 import (
@@ -35,6 +39,7 @@ func main() {
 	basePath := os.Getenv("AUDIT_BASE_PATH")
 	authUser := os.Getenv("AUDIT_AUTH_USER")
 	authPass := os.Getenv("AUDIT_AUTH_PASS")
+	geoipDB := envOr("GEOIP_DB", "./cmd/audit/data/ip-to-country.mmdb")
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -61,6 +66,18 @@ func main() {
 		os.Exit(1)
 	}
 	defer nc.Close()
+
+	fc, err := NewFlagCache(geoipDB)
+	if err != nil {
+		logger.Warn("geoip database", "err", err, "path", geoipDB)
+	}
+	if fc.reader != nil {
+		logger.Info("geoip database loaded", "path", geoipDB)
+	} else {
+		logger.Warn("geoip database not available, using neutral flags", "path", geoipDB)
+	}
+	defer fc.Close()
+	flagCache = fc
 
 	srv, err := NewServer(nc, store, logger, healthzURL, otelBaseURL, basePath, authUser, authPass)
 	if err != nil {
