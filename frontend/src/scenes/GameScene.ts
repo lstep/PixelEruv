@@ -235,13 +235,20 @@ const LERP_TAU_MS = 80;
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
-// Cap on per-frame prediction ticks. When the main thread stalls (e.g. A/V
-// / video-tile setup blocking the event loop), Phaser's frame delta spikes.
-// Without a cap, the prediction advances many ticks in one frame, overshooting
-// the server's authoritative position; the next reconciliation then snaps the
-// avatar back, producing a visible jump. Capping at 2 ticks (100ms) limits the
-// overshoot to 0.8 tiles per frame — normal frames (8-17ms) are unaffected.
-const MAX_PREDICT_TICKS = 2;
+// Threshold for detecting main-thread stalls. When the frame delta exceeds
+// this, the prediction is skipped entirely for that frame. During a stall
+// (e.g. A/V / video-tile setup blocking the event loop), the game loop
+// doesn't run. When it resumes, delta is inflated. Predicting with the full
+// delta would overshoot the server's authoritative position (the server kept
+// ticking at 20Hz during the stall, and the prediction tries to "catch up"
+// all at once). Clamping the delta (a previous approach) caused the prediction
+// to advance faster than the server during repeated short stalls, producing
+// oscillation (predict ahead, snap back, repeat) that felt like the avatar
+// was "blocked." Skipping prediction instead lets the next reconciliation
+// snap the avatar to the server's position — a single forward jump instead
+// of oscillation. 150ms = 3 ticks at 20Hz; normal frames (8-50ms) are
+// unaffected.
+const STALL_THRESHOLD_MS = 150;
 // Mirrors the server's proximityRadius (worldsim.go). Two players within
 // this distance (in tiles, feet-to-feet) can hear each other's Nearby chat.
 const PROXIMITY_RADIUS_TILES = 2.0;
@@ -1057,7 +1064,13 @@ export class GameScene extends Phaser.Scene {
     // worth of ticks, then render. This makes movement feel immediate.
     const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
     if (local) {
-      const ticks = Math.min(delta / TICK_MS, MAX_PREDICT_TICKS);
+      // Skip prediction during main-thread stalls (delta exceeds threshold).
+      // The avatar freezes during the stall (inherent — the game loop isn't
+      // running), and the next reconciliation snaps it to the server's
+      // authoritative position. This avoids both the overshoot-and-snap-back
+      // from a single long stall and the oscillation from repeated short
+      // stalls. See STALL_THRESHOLD_MS above.
+      const ticks = delta > STALL_THRESHOLD_MS ? 0 : delta / TICK_MS;
       const p = this.applyMovement(local.predX, local.predY, this.inputState, ticks);
       local.predX = p.x;
       local.predY = p.y;
