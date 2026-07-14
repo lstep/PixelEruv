@@ -28,6 +28,8 @@ export class TopMenu {
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
   private playerOptions: string = "";
+  private authStoreUnsub: (() => void) | null = null;
+  private boundDocClick: () => void = () => {};
 
   constructor() {
     this.container = document.createElement("div");
@@ -130,7 +132,7 @@ export class TopMenu {
     // clears a stale token after the server DB is reset, falling back to
     // guest mode. Without this, the button would keep saying "Logout" until
     // the user manually reloads.
-    pb.authStore.onChange(() => this.refreshAuth());
+    this.authStoreUnsub = pb.authStore.onChange(() => this.refreshAuth());
     this.refreshAuth();
 
     const menuWrap = document.createElement("div");
@@ -327,9 +329,10 @@ export class TopMenu {
         nameTagCheckbox.checked = parsePlayerOptions(this.playerOptions).show_own_name_tag ?? true;
       }
     });
-    document.addEventListener("click", () => {
+    this.boundDocClick = () => {
       this.dropdown.style.display = "none";
-    });
+    };
+    document.addEventListener("click", this.boundDocClick);
     this.dropdown.addEventListener("click", (e) => e.stopPropagation());
   }
 
@@ -412,6 +415,16 @@ export class TopMenu {
     this.camBtn.style.opacity = this.avClient.isCameraEnabled() ? "1" : "0.5";
     this.screenBtn.textContent = this.avClient.isScreenShareEnabled() ? "🖥️ Stop" : "🖥️ Screen";
     this.screenBtn.style.opacity = this.avClient.isScreenShareEnabled() ? "1" : "0.5";
+  }
+
+  // destroy tears down event listeners and removes the DOM container. Mirrors
+  // the cleanup pattern used by VideoBar/VirtualJoystick. TopMenu is currently
+  // created once per page load, but this keeps it safe to reuse/recreate.
+  destroy(): void {
+    this.authStoreUnsub?.();
+    this.authStoreUnsub = null;
+    document.removeEventListener("click", this.boundDocClick);
+    this.container.remove();
   }
 }
 
