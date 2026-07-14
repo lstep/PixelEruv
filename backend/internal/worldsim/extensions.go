@@ -48,8 +48,9 @@ type ExtensionManager struct {
 	// optsMgr handles extension options (PB collection + NATS delivery).
 	// nil in tests that don't use PB.
 	optsMgr *ExtensionOptionsManager
-	// nc is the NATS connection for publishing options to extensions.
-	nc *nats.Conn
+	// nc is the NATS publisher for audit events. *nats.Conn satisfies
+	// audit.Publisher; tests may inject a fake to assert emit behavior.
+	nc audit.Publisher
 }
 
 func NewExtensionManager(logger *slog.Logger) *ExtensionManager {
@@ -90,6 +91,8 @@ func (m *ExtensionManager) Register(data []byte) error {
 	}
 
 	m.mu.Lock()
+	existing, alreadyKnown := m.extensions[msg.ExtensionID]
+	intervalChanged := alreadyKnown && existing.HeartbeatInterval != interval
 	m.extensions[msg.ExtensionID] = &Extension{
 		ID:               msg.ExtensionID,
 		HeartbeatInterval: interval,
@@ -97,7 +100,11 @@ func (m *ExtensionManager) Register(data []byte) error {
 	}
 	m.mu.Unlock()
 	m.logger.Info("extension registered", "id", msg.ExtensionID, "heartbeat", interval)
-	if m.nc != nil {
+	// Extensions re-register periodically as a keep-alive (every few
+	// heartbeats). Suppress the audit event for those re-registrations so
+	// the audit log isn't flooded with identical heartbeat noise — only
+	// emit when the extension is newly registered or its interval changed.
+	if m.nc != nil && (!alreadyKnown || intervalChanged) {
 		audit.Emit(m.nc, "extension.registered", audit.SeverityInfo,
 			audit.Actor{Extension: msg.ExtensionID},
 			audit.Details{"heartbeat_interval_s": msg.HeartbeatIntervalS},
