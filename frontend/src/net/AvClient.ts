@@ -66,8 +66,9 @@ export class AvClient {
   private disconnecting = false;
   // Notifies the UI when browser autoplay policy blocks audio playback.
   private onAudioBlocked: AvAudioBlockedHandler | null = null;
-  // Debounce timer for "leave" events — delays disconnect so momentary
-  // proximity zone exits (2-tile radius) don't thrash the LiveKit room.
+  // Debounce timer for "leave" events — delays disconnect briefly so a
+  // rapid re-join can cancel it. Reduced from 1.5s to 200ms after backend
+  // hysteresis + movement gating eliminated boundary oscillation (#88).
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
   // Selected input device IDs, persisted across room connections so the
   // user's device choice survives disconnect/reconnect cycles.
@@ -439,11 +440,12 @@ export class AvClient {
   }): Promise<void> {
     if (msg.action === "leave") {
       if (this.currentRoom === msg.room) {
-        // Debounce: delay disconnect by 1.5s so a rapid re-join for the
-        // same (or a new) room can cancel it. With a 2-tile proximity
-        // radius, players briefly step out of range and back in within a
-        // few ticks — immediate disconnect would tear down the LiveKit
-        // room and require a fresh user gesture to re-enable audio.
+        // Debounce: delay disconnect briefly so a rapid re-join for the
+        // same (or a new) room can cancel it. Hysteresis on the proximity
+        // radius (enter at 2 tiles, exit at 3 tiles) and movement-gated
+        // joins on the backend eliminate the boundary oscillation that
+        // previously required a long debounce. 200ms is now just a safety
+        // net for edge cases (e.g. teleportation). See issue #88.
         if (this.leaveTimer) clearTimeout(this.leaveTimer);
         const leavingRoom = msg.room;
         this.leaveTimer = setTimeout(async () => {
@@ -451,7 +453,7 @@ export class AvClient {
           if (this.currentRoom === leavingRoom) {
             await this.disconnect();
           }
-        }, 1500);
+        }, 200);
       }
       return;
     }
