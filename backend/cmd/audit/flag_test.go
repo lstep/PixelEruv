@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -67,8 +68,9 @@ func TestFlagCache_NonExistentDB_ReturnsNeutral(t *testing.T) {
 
 func TestFlagCache_WithBundledDB(t *testing.T) {
 	// Use absolute path so the test works regardless of working directory.
+	_, thisFile, _, _ := runtime.Caller(0)
 	dbPath := filepath.Join(t.TempDir(), "test.mmdb")
-	src, err := os.Open("data/ip-to-country.mmdb")
+	src, err := os.Open(filepath.Join(filepath.Dir(thisFile), "data", "ip-to-country.mmdb"))
 	if err != nil {
 		t.Skipf("bundled MMDB not found: %v — skipping GeoIP lookup test", err)
 	}
