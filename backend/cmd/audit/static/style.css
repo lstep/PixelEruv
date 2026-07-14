@@ -85,3 +85,21 @@ tr:hover { background: var(--surface2); }
 .status-stale { color: var(--warn); }
 .status-unreachable { color: var(--error); }
 a { color: var(--accent); }
+
+/* Flag shown in front of an IP address in the players table.
+   .flag-neutral is the placeholder used until IP->country lookup is wired;
+   future .flag-<cc> classes (lowercase ISO 3166-1 alpha-2) can override the
+   background with a real flag (emoji, sprite, or gradient). */
+.flag {
+  display: inline-block;
+  width: 1.1em;
+  height: 0.8em;
+  margin-right: 0.3em;
+  vertical-align: middle;
+  border-radius: 2px;
+  background: var(--border);
+}
+.flag-neutral {
+  background: linear-gradient(135deg, var(--border) 0%, var(--surface2) 100%);
+  border: 1px solid var(--border);
+}
