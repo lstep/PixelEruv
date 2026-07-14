@@ -1,5 +1,45 @@
 # Dashboard
 
+## A/V Proximity Latency Fix (Issue #88)
+
+**Branch:** `main` (uncommitted)
+**Status:** Implemented — `go build ./...`, `go test ./internal/worldsim/` (49 tests), and `tsc --noEmit` all pass.
+
+Three changes to fix the ~2s video open/close delay and A/V thrashing when
+walking past another player:
+
+1. **Hysteresis on proximity radius** — enter at 2.0 tiles, exit at 3.0 tiles.
+   Eliminates boundary oscillation that caused the 1.5s leave debounce to be
+   necessary. In `worldsim.go` zone exit detection: `prox-*` zones that are no
+   longer in `ZonesAtPoint` are kept if the player is still within
+   `proximityExitRadius` of the zone owner's feet.
+2. **Movement-gated proximity join** — `proximity.join` is suppressed until
+   the player has been stationary for `proximityStationaryThreshold` ticks
+   (~500ms at 20Hz). Walking past without stopping triggers no A/V at all.
+   New groups require ALL members stationary; existing groups gaining a new
+   member require only the joining player stationary.
+3. **Reduced leave debounce** — `AvClient.ts` leave debounce reduced from
+   1500ms to 200ms (safe now that hysteresis + movement gating eliminate
+   thrashing).
+
+The join latency from WebRTC connection setup (~1-2s) is inherent and not
+addressed by this fix. A client-side keep-warm alternative is documented in
+`documentation/plans/2026-07-14-av-keep-warm-future-exploration.md` for future
+evaluation if join latency is still insufficient.
+
+LiveKit `MoveParticipant` (server-side room switching without reconnect) was
+investigated but is LiveKit Cloud-only — not available on self-hosted LiveKit
+v1.13.2 which this project uses.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/internal/worldsim/worldsim.go` | `stationaryTicks` field on Entity; `proximityExitRadius`/`proximityStationaryThreshold` constants; stationary tick tracking in `tick()`; hysteresis in zone exit detection; movement gating in `runProximityClustering()` |
+| `frontend/src/net/AvClient.ts` | Leave debounce reduced from 1500ms to 200ms; updated comments |
+| `backend/internal/worldsim/worldsim_proximity_test.go` | New `TestProximityClustering_Hysteresis` and `TestProximityClustering_MovementGating`; existing tests updated with `stationaryTicks` |
+| `documentation/plans/2026-07-14-av-keep-warm-future-exploration.md` | New — documents keep-warm alternative for future evaluation |
+
 ## Admin Badge on Name Tags
 
 **Branch:** `main` (uncommitted)

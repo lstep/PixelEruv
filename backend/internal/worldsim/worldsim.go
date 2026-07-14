@@ -12,6 +12,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -115,6 +116,12 @@ type Entity struct {
 	// player currently belongs to (e.g. "proxgroup-<hash>"). Empty when not
 	// in a proximity group. Used to detect join/leave transitions.
 	currentProximityGroup string
+	// stationaryTicks counts consecutive ticks the player has not moved.
+	// Used to gate proximity A/V activation: a player must be stationary for
+	// proximityStationaryThreshold ticks before proximity.join fires, so
+	// walking past another player without stopping does not trigger A/V.
+	// Reset to 0 on movement (dirtyPosition), incremented each stationary tick.
+	stationaryTicks int
 	// PlayerOptions is the JSON-encoded player options string (e.g.
 	// {"show_own_name_tag":true}). Persisted to PocketBase for logged-in
 	// users; session-only for guests. Updated via SetPlayerOptionsFrame.
@@ -1523,6 +1530,21 @@ func (s *Simulator) tick() {
 
 	s.runMovementSystem()
 
+	// --- Update stationary ticks for proximity A/V gating ---
+	// dirtyPosition is set by runMovementSystem when the player moved this
+	// tick, and cleared at the end of the tick (below). This update runs
+	// before that clear, so it sees the current tick's movement state.
+	for _, e := range s.entities {
+		if e.NetworkSession == nil {
+			continue
+		}
+		if e.dirtyPosition {
+			e.stationaryTicks = 0
+		} else {
+			e.stationaryTicks++
+		}
+	}
+
 	// --- Update mobile zone positions ---
 	// Move each player's proximity circle to follow their avatar's current
 	// position (after movement was applied this tick). Centered at the feet
@@ -1567,6 +1589,26 @@ func (s *Simulator) tick() {
 		}
 		for zid := range e.currentZones {
 			if !newSet[zid] {
+				// Hysteresis for proximity zones: delay exit until the
+				// player is beyond proximityExitRadius from the zone
+				// owner's feet. Without this, players standing near the
+				// 2-tile boundary oscillate in/out every tick, causing
+				// A/V thrashing. See issue #88.
+				if strings.HasPrefix(zid, "prox-") {
+					ownerID := zid[len("prox-"):]
+					if owner, ok := s.entities[ownerID]; ok && owner.Position != nil {
+						feetX := e.Position.X
+						feetY := e.Position.Y + avatarFeetYOffset
+						ownerFeetX := owner.Position.X
+						ownerFeetY := owner.Position.Y + avatarFeetYOffset
+						dx := feetX - ownerFeetX
+						dy := feetY - ownerFeetY
+						if dx*dx+dy*dy <= proximityExitRadius*proximityExitRadius {
+							newSet[zid] = true
+							continue
+						}
+					}
+				}
 				s.publishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid, e.Position.MapId)
 			}
 		}
@@ -2129,6 +2171,18 @@ const avatarFeetYOffset = 1.0
 // documentation/plans/2026-07-06-livekit-av-design.md.
 const proximityRadius = 2.0
 
+// proximityExitRadius is the hysteresis exit radius (in tiles). A player must
+// move this far from another player's feet before the proximity zone exit
+// fires. Larger than proximityRadius so players at the boundary don't
+// oscillate in/out every tick. See issue #88.
+const proximityExitRadius = 3.0
+
+// proximityStationaryThreshold is the number of consecutive stationary ticks
+// required before proximity A/V activates. At 20Hz, 10 ticks = 500ms. This
+// gates proximity.join so a player walking past another without stopping
+// does not trigger A/V creation/destruction. See issue #88.
+const proximityStationaryThreshold = 10
+
 // playerCollisionRadius is the half-width of the player's collision box in
 // tiles, centered on the feet. Zone shapes are expanded by this radius
 // (Minkowski sum) before the swept segment test, so the feet center stops
@@ -2336,6 +2390,19 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 			}
 		}
 		if gid == "" {
+			// New group — require all members to be stationary before
+			// activating A/V. This prevents A/V thrashing when a player
+			// walks past another without stopping. See issue #88.
+			allStationary := true
+			for _, id := range sorted {
+				if e, ok := s.entities[id]; ok && e.stationaryTicks < proximityStationaryThreshold {
+					allStationary = false
+					break
+				}
+			}
+			if !allStationary {
+				continue
+			}
 			// Brand-new group: mint a new ID from the member hash.
 			h := fnv.New64a()
 			for _, id := range sorted {
@@ -2356,6 +2423,13 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 		newG := newGroup[e.ID]
 
 		if old == newG {
+			continue
+		}
+
+		// Suppress join for moving players joining an existing group from
+		// scratch. New groups are already filtered above. Don't update
+		// currentProximityGroup — next cycle retries. See issue #88.
+		if old == "" && newG != "" && e.stationaryTicks < proximityStationaryThreshold {
 			continue
 		}
 

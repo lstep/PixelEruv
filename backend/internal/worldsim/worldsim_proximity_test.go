@@ -212,6 +212,7 @@ func TestProximityClustering_TwoPlayersJoin(t *testing.T) {
 			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
 			currentZones:   make(map[string]bool),
 			spawnedTo:      make(map[string]bool),
+			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
 			ID: "prox-" + id, Shape: ShapeCircle,
@@ -337,6 +338,7 @@ func TestProximityClustering_ThreePlayerChain(t *testing.T) {
 			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
 			currentZones:   make(map[string]bool),
 			spawnedTo:      make(map[string]bool),
+			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
 			ID: "prox-" + id, Shape: ShapeCircle,
@@ -440,6 +442,7 @@ func TestProximityClustering_ZoneOverride(t *testing.T) {
 			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
 			currentZones:   make(map[string]bool),
 			spawnedTo:      make(map[string]bool),
+			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
 			ID: "prox-" + id, Shape: ShapeCircle,
@@ -539,6 +542,7 @@ func TestProximityClustering_StableGroupID(t *testing.T) {
 			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
 			currentZones:   make(map[string]bool),
 			spawnedTo:      make(map[string]bool),
+			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
 			ID: "prox-" + id, Shape: ShapeCircle,
@@ -680,6 +684,365 @@ func TestProximityClustering_StableGroupID(t *testing.T) {
 		json.Unmarshal(msg.Data, &ev)
 		if ev.EntityID == "e_a" || ev.EntityID == "e_b" {
 			t.Errorf("existing member %s got unexpected proximity.join on 3rd player departure", ev.EntityID)
+		}
+	}
+
+	_ = a
+	_ = b
+}
+
+// TestProximityClustering_Hysteresis verifies that the proximity zone exit
+// is delayed by hysteresis: a player within proximityExitRadius (but beyond
+// proximityRadius) of another player does NOT get a proximity.leave event.
+// Only when the distance exceeds proximityExitRadius does the leave fire.
+// See issue #88.
+func TestProximityClustering_Hysteresis(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	subNc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("sub connect: %v", err)
+	}
+	t.Cleanup(subNc.Close)
+
+	pubNc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("pub connect: %v", err)
+	}
+	t.Cleanup(pubNc.Close)
+
+	sim := &Simulator{
+		nc:          pubNc,
+		defaultMap:  "test-map",
+		zones:       map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 30, 30)},
+		extMgr:      NewExtensionManager(logger),
+		logger:      logger,
+		tracer:      otel.Tracer("test"),
+		entities:    map[string]*Entity{},
+		clients:     map[string]*Entity{},
+	}
+
+	makePlayer := func(id, cid string, x, y float32) *Entity {
+		e := &Entity{
+			ID:             id,
+			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:   make(map[string]bool),
+			spawnedTo:      make(map[string]bool),
+			stationaryTicks: proximityStationaryThreshold,
+		}
+		e.mobileZone = &Zone{
+			ID: "prox-" + id, Shape: ShapeCircle,
+			X: x - proximityRadius, Y: y - proximityRadius,
+			W: proximityRadius * 2, H: proximityRadius * 2,
+			Radius: proximityRadius, Mobility: "mobile",
+		}
+		sim.zones["test-map"].AddZone(e.mobileZone)
+		sim.entities[id] = e
+		sim.clients[cid] = e
+		return e
+	}
+
+	a := makePlayer("e_a", "c_a", 5, 5)
+	b := makePlayer("e_b", "c_b", 6, 5) // 1 tile from A — within enter radius
+
+	type proxEvent struct {
+		EntityID string   `json:"entity_id"`
+		GroupID  string   `json:"group_id"`
+		Members  []string `json:"members"`
+	}
+
+	joinSub, _ := subNc.SubscribeSync("proximity.join")
+	leaveSub, _ := subNc.SubscribeSync("proximity.leave")
+	subNc.Flush()
+
+	// Tick to form the group (both stationary).
+	sim.tick()
+	pubNc.Flush()
+
+	joins := map[string]proxEvent{}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(joins) < 2 && time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(500 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		joins[ev.EntityID] = ev
+	}
+	if len(joins) < 2 {
+		t.Fatalf("expected 2 proximity.join events, got %d", len(joins))
+	}
+
+	// Move B to 2.5 tiles from A — beyond proximityRadius (2.0) but within
+	// proximityExitRadius (3.0). Hysteresis should suppress the exit.
+	b.Position.X = 7.5
+	b.Position.Y = 5
+	// Update B's mobile zone position (tick does this, but we need the
+	// zone check to see the new position).
+	// Mark B as stationary so movement gating doesn't interfere.
+	b.stationaryTicks = proximityStationaryThreshold
+
+	// Tick until clustering runs (every 5 ticks).
+	for i := 0; i < 5; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	// No proximity.leave should fire — B is still within exit radius.
+	// Drain any messages with a short timeout.
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		msg, err := leaveSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		t.Errorf("unexpected proximity.leave for %s at 2.5 tiles (within exit radius)", ev.EntityID)
+	}
+
+	// Move B to 4 tiles from A — beyond proximityExitRadius (3.0).
+	// Exit should now fire.
+	b.Position.X = 9
+	b.Position.Y = 5
+	b.stationaryTicks = proximityStationaryThreshold
+
+	for i := 0; i < 5; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	foundLeave := false
+	deadline = time.Now().Add(2 * time.Second)
+	for !foundLeave && time.Now().Before(deadline) {
+		msg, err := leaveSub.NextMsg(500 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		foundLeave = true
+	}
+	if !foundLeave {
+		t.Fatal("expected proximity.leave at 4 tiles (beyond exit radius), got none")
+	}
+
+	_ = a
+}
+
+// TestProximityClustering_MovementGating verifies that proximity.join is
+// suppressed when a player is moving, and only fires after the player has
+// been stationary for proximityStationaryThreshold ticks. This prevents A/V
+// thrashing when a player walks past another without stopping. See issue #88.
+func TestProximityClustering_MovementGating(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	subNc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("sub connect: %v", err)
+	}
+	t.Cleanup(subNc.Close)
+
+	pubNc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("pub connect: %v", err)
+	}
+	t.Cleanup(pubNc.Close)
+
+	sim := &Simulator{
+		nc:          pubNc,
+		defaultMap:  "test-map",
+		zones:       map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 30, 30)},
+		extMgr:      NewExtensionManager(logger),
+		logger:      logger,
+		tracer:      otel.Tracer("test"),
+		entities:    map[string]*Entity{},
+		clients:     map[string]*Entity{},
+	}
+
+	makePlayer := func(id, cid string, x, y float32) *Entity {
+		e := &Entity{
+			ID:             id,
+			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:   make(map[string]bool),
+			spawnedTo:      make(map[string]bool),
+			stationaryTicks: proximityStationaryThreshold,
+		}
+		e.mobileZone = &Zone{
+			ID: "prox-" + id, Shape: ShapeCircle,
+			X: x - proximityRadius, Y: y - proximityRadius,
+			W: proximityRadius * 2, H: proximityRadius * 2,
+			Radius: proximityRadius, Mobility: "mobile",
+		}
+		sim.zones["test-map"].AddZone(e.mobileZone)
+		sim.entities[id] = e
+		sim.clients[cid] = e
+		return e
+	}
+
+	a := makePlayer("e_a", "c_a", 5, 5)
+	b := makePlayer("e_b", "c_b", 15, 15) // far away initially
+
+	type proxEvent struct {
+		EntityID string   `json:"entity_id"`
+		GroupID  string   `json:"group_id"`
+		Members  []string `json:"members"`
+	}
+
+	joinSub, _ := subNc.SubscribeSync("proximity.join")
+	leaveSub, _ := subNc.SubscribeSync("proximity.leave")
+	subNc.Flush()
+
+	// Tick enough times for A to become stationary (A never moves).
+	for i := 0; i < proximityStationaryThreshold; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+	// Drain any messages (A is alone, no events expected).
+	for {
+		_, err := joinSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+	}
+
+	// Move B next to A but mark B as moving (stationaryTicks = 0).
+	b.Position.X = 6
+	b.Position.Y = 5
+	b.stationaryTicks = 0
+
+	// Tick: clustering runs (tickCount%5==0 at tick 10). B is moving →
+	// new group {A,B} skipped (not all stationary). No events.
+	sim.tick()
+	pubNc.Flush()
+
+	// No proximity.join should fire.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		t.Errorf("unexpected proximity.join for %s while B is moving", ev.EntityID)
+	}
+
+	// B stops. Tick enough times for B to become stationary.
+	// stationaryTicks increments each tick B doesn't move (dirtyPosition
+	// is false since runMovementSystem has zero input).
+	for i := 0; i < proximityStationaryThreshold; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	// Now both should get proximity.join.
+	joins := map[string]proxEvent{}
+	deadline = time.Now().Add(2 * time.Second)
+	for len(joins) < 2 && time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(500 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		joins[ev.EntityID] = ev
+	}
+	if len(joins) < 2 {
+		t.Fatalf("expected 2 proximity.join events after B stopped, got %d", len(joins))
+	}
+	if joins["e_a"].GroupID != joins["e_b"].GroupID {
+		t.Errorf("A and B have different group IDs: %q vs %q",
+			joins["e_a"].GroupID, joins["e_b"].GroupID)
+	}
+
+	// --- Part 2: existing group, new moving player C ---
+	c := makePlayer("e_c", "c_c", 20, 20) // far away
+	// Make C stationary to start.
+	c.stationaryTicks = proximityStationaryThreshold
+
+	// Tick to settle C's zone state.
+	for i := 0; i < 5; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+	// Drain any messages.
+	for {
+		_, err := joinSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+	}
+
+	// Move C next to the group but mark as moving.
+	c.Position.X = 7
+	c.Position.Y = 5
+	c.stationaryTicks = 0
+
+	// Tick: C is moving → join suppressed for C. A and B unaffected.
+	for i := 0; i < 5; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	// No proximity.join for C while moving.
+	deadline = time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_c" {
+			t.Errorf("unexpected proximity.join for C while moving")
+		}
+	}
+
+	// C stops. Tick enough for C to become stationary.
+	for i := 0; i < proximityStationaryThreshold; i++ {
+		sim.tick()
+	}
+	pubNc.Flush()
+
+	// C should now get proximity.join with the same group ID.
+	cJoined := false
+	groupID := joins["e_a"].GroupID
+	deadline = time.Now().Add(2 * time.Second)
+	for !cJoined && time.Now().Before(deadline) {
+		msg, err := joinSub.NextMsg(500 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_c" {
+			cJoined = true
+			if ev.GroupID != groupID {
+				t.Errorf("C joined group %q, expected stable group %q", ev.GroupID, groupID)
+			}
+		}
+	}
+	if !cJoined {
+		t.Fatal("C did not get proximity.join after stopping")
+	}
+
+	// A and B should NOT have received any leave or join during C's join.
+	deadline = time.Now().Add(300 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		msg, err := leaveSub.NextMsg(100 * time.Millisecond)
+		if err != nil {
+			break
+		}
+		var ev proxEvent
+		json.Unmarshal(msg.Data, &ev)
+		if ev.EntityID == "e_a" || ev.EntityID == "e_b" {
+			t.Errorf("existing member %s got unexpected proximity.leave on C join", ev.EntityID)
 		}
 	}
 
