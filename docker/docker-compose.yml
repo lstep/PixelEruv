@@ -211,6 +211,10 @@ services:
       AUDIT_BASE_PATH: "/audit"
       PUSHER_HEALTHZ: "http://pusher:8081/healthz"
       OTEL_BASE_URL: "http://localhost:5080"
+      # GeoIP MMDB for country flag lookups. Baked into the Docker image at
+      # /opt/geoip/ip-to-country.mmdb — no volume mount needed. To override
+      # with a fresher DB, mount a file here and set GEOIP_DB to its path.
+      GEOIP_DB: "/opt/geoip/ip-to-country.mmdb"
     volumes:
       - audit_data:/data
     ports:

@@ -790,6 +790,44 @@ Events are retained for 30 days by default (`AUDIT_RETENTION_HOURS` env
 var). The storage layer is behind an interface designed to upgrade to
 ClickHouse or TimescaleDB when volume grows.
 
+#### Country flags in the Players table
+
+The `/audit/world` page shows each connected player's IP address prefixed
+with a country flag. Flags are resolved via a GeoIP MMDB database bundled
+in the repository at `backend/cmd/audit/data/ip-to-country.mmdb` and baked
+into the Docker image at `/opt/geoip/ip-to-country.mmdb`. No configuration
+or volume mount is needed — flags work out of the box.
+
+The database is sourced from
+[iplocate/ip-address-databases](https://github.com/iplocate/ip-address-databases)
+(free, no registration, no attribution required). It is read in-process
+via `maxminddb-golang`; no user IPs leave the audit service.
+
+**Refreshing the database** — the committed file is periodically updated.
+To pull the latest version:
+
+```bash
+make geoip    # downloads the latest ip-to-country.mmdb into the repo
+git add backend/cmd/audit/data/ip-to-country.mmdb
+git commit -m "chore: refresh geoip mmdb"
+```
+
+Then rebuild the Docker image (`docker compose build audit`).
+
+**Overriding the database path** — set `GEOIP_DB` to point at a different
+MMDB file (e.g. a volume-mounted fresher copy):
+
+```yaml
+audit:
+  environment:
+    GEOIP_DB: "/data/my-custom.mmdb"
+  volumes:
+    - ./my-custom.mmdb:/data/my-custom.mmdb:ro
+```
+
+If the file at `GEOIP_DB` is missing or unreadable, the audit service
+falls back to a neutral gray flag and logs a warning — it stays up.
+
 ### 10b. OpenTelemetry traces (motel / OpenObserve)
 
 All backend services (pusher, worldsim, all four extensions) are

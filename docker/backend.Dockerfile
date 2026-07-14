@@ -67,9 +67,13 @@ ENTRYPOINT ["ext-av"]
 
 # --- audit image ---
 # Templates and static files are embedded in the binary via go:embed.
+# The GeoIP MMDB (ip-to-country.mmdb) is copied into the image so country
+# flags work out of the box without a volume mount.
 FROM alpine:3.20 AS audit
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/audit /usr/local/bin/audit
+COPY backend/cmd/audit/data/ip-to-country.mmdb /opt/geoip/ip-to-country.mmdb
+ENV GEOIP_DB=/opt/geoip/ip-to-country.mmdb
 ENTRYPOINT ["audit"]
 
 # --- admin image ---

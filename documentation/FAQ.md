@@ -271,6 +271,27 @@ Pages:
 | `/audit/world` | Live world status: per-map overview, players, extensions, zones |
 | `/audit/health` | Service health detail |
 
+### How do I enable country flags in the audit UI?
+
+Country flags in the `/audit/world` Players table work out of the box — a
+GeoIP MMDB is bundled in the repository and baked into the Docker image.
+No configuration is needed.
+
+The database comes from
+[iplocate/ip-address-databases](https://github.com/iplocate/ip-address-databases)
+(free, no registration). To refresh it:
+
+```bash
+make geoip    # downloads the latest ip-to-country.mmdb
+git add backend/cmd/audit/data/ip-to-country.mmdb && git commit -m "chore: refresh geoip mmdb"
+docker compose build audit
+```
+
+If the MMDB is missing, the audit service shows a neutral gray flag
+instead and logs a warning. See
+[Quick Start §10a](quick-start.md#country-flags-in-the-players-table)
+for details on overriding the database path.
+
 ### How do I access OpenObserve?
 
 OpenObserve is not included in the Docker stack by default (its x86 build
