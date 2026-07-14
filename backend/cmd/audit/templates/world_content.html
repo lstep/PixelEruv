@@ -81,7 +81,7 @@
           <td>{{printf "%.0f" $p.y}}</td>
           <td>{{if $p.is_admin}}yes{{else}}-{{end}}</td>
           <td>{{if $p.is_guest}}yes{{else}}-{{end}}</td>
-          <td><span class="flag flag-{{flagFor $p.ip}}"></span> {{$p.ip}}</td>
+          <td class="ip-cell"><span class="flag flag-{{flagFor $p.ip}}"></span> {{$p.ip}}</td>
           <td><a href="{{bp}}/events?entity={{$p.entity_id}}">{{$p.entity_id}}</a></td>
         </tr>
       {{else}}

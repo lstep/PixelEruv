@@ -103,3 +103,4 @@ a { color: var(--accent); }
   background: linear-gradient(135deg, var(--border) 0%, var(--surface2) 100%);
   border: 1px solid var(--border);
 }
+.ip-cell { white-space: nowrap; }
