@@ -71,7 +71,7 @@
   <div class="panel">
     <h3>Players</h3>
     <table class="event-table">
-      <thead><tr><th>Name</th><th>Map</th><th>X</th><th>Y</th><th>Admin</th><th>Guest</th><th>Entity ID</th></tr></thead>
+      <thead><tr><th>Name</th><th>Map</th><th>X</th><th>Y</th><th>Admin</th><th>Guest</th><th>IP</th><th>Entity ID</th></tr></thead>
       <tbody>
       {{range $p := index $stats "players"}}
         <tr class="sev-info">
@@ -81,10 +81,11 @@
           <td>{{printf "%.0f" $p.y}}</td>
           <td>{{if $p.is_admin}}yes{{else}}-{{end}}</td>
           <td>{{if $p.is_guest}}yes{{else}}-{{end}}</td>
+          <td><span class="flag flag-{{flagFor $p.ip}}"></span> {{$p.ip}}</td>
           <td><a href="{{bp}}/events?entity={{$p.entity_id}}">{{$p.entity_id}}</a></td>
         </tr>
       {{else}}
-        <tr><td colspan="7">No players online</td></tr>
+        <tr><td colspan="8">No players online</td></tr>
       {{end}}
       </tbody>
     </table>

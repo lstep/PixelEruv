@@ -22,7 +22,8 @@ var staticFS embed.FS
 // with a slice or non-struct data).
 func parseTemplates(basePath string) (map[string]*template.Template, error) {
 	funcs := template.FuncMap{
-		"bp": func() string { return basePath },
+		"bp":      func() string { return basePath },
+		"flagFor": flagCache.Lookup,
 	}
 
 	// Parse the base template (defines "base", "events_table_inner", "world_content").

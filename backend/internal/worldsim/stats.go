@@ -51,6 +51,7 @@ type playerStats struct {
 	Y           float32 `json:"y"`
 	IsAdmin     bool    `json:"is_admin"`
 	IsGuest     bool    `json:"is_guest"`
+	IP          string  `json:"ip,omitempty"`
 }
 
 type extStats struct {
@@ -169,6 +170,7 @@ func (s *Simulator) buildStatsResponse() ([]byte, error) {
 			DisplayName: e.DisplayName,
 			IsAdmin:     e.IsAdmin,
 			IsGuest:     e.IsGuest,
+			IP:          e.IP,
 		}
 		if e.Position != nil {
 			ps.MapID = e.Position.MapId
