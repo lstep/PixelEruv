@@ -4,7 +4,7 @@
 // field. Styled as dark rounded pills, matching AvOverlay's previous HUD
 // look.
 
-import { isLoggedIn, redirectToLogin, redirectToRegister, logout } from "../auth";
+import { isLoggedIn, redirectToLogin, redirectToRegister, logout, pb } from "../auth";
 import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
 import type { ChatPanel } from "./ChatPanel";
@@ -22,6 +22,8 @@ export class TopMenu {
   private chatPanel: ChatPanel | null = null;
   private chatBtn: HTMLButtonElement;
   private audioBtn: HTMLButtonElement;
+  private authBtn: HTMLButtonElement;
+  private registerBtn: HTMLButtonElement;
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
@@ -107,24 +109,29 @@ export class TopMenu {
     });
     this.container.appendChild(this.chatBtn);
 
-    const authBtn = document.createElement("button");
-    const loggedIn = isLoggedIn();
-    authBtn.textContent = loggedIn ? "Logout" : "Login";
-    authBtn.style.cssText = PILL_STYLE + (loggedIn ? "" : "background:#4c5cf0;");
-    authBtn.addEventListener("click", () => {
-      if (loggedIn) logout();
+    this.authBtn = document.createElement("button");
+    this.authBtn.addEventListener("click", () => {
+      if (isLoggedIn()) logout();
       else redirectToLogin();
     });
-    this.container.appendChild(authBtn);
+    this.container.appendChild(this.authBtn);
 
-    // Show a Register button when not logged in.
-    if (!loggedIn) {
-      const registerBtn = document.createElement("button");
-      registerBtn.textContent = "Register";
-      registerBtn.style.cssText = PILL_STYLE + "background:#2ecc71;";
-      registerBtn.addEventListener("click", () => redirectToRegister());
-      this.container.appendChild(registerBtn);
-    }
+    // Register button — always created, hidden when logged in. Visibility is
+    // toggled by refreshAuth() so it appears/disappears when the auth store
+    // changes at runtime (e.g. stale token cleared after a server DB purge).
+    this.registerBtn = document.createElement("button");
+    this.registerBtn.textContent = "Register";
+    this.registerBtn.style.cssText = PILL_STYLE + "background:#2ecc71;";
+    this.registerBtn.addEventListener("click", () => redirectToRegister());
+    this.container.appendChild(this.registerBtn);
+
+    // Keep the auth button in sync with the PocketBase auth store. The store
+    // can change at runtime without a page reload — notably when WsClient
+    // clears a stale token after the server DB is reset, falling back to
+    // guest mode. Without this, the button would keep saying "Logout" until
+    // the user manually reloads.
+    pb.authStore.onChange(() => this.refreshAuth());
+    this.refreshAuth();
 
     const menuWrap = document.createElement("div");
     menuWrap.style.cssText = "position:relative;";
@@ -356,6 +363,17 @@ export class TopMenu {
   setChatPanel(panel: ChatPanel): void {
     this.chatPanel = panel;
     this.chatBtn.style.display = "block";
+  }
+
+  // refreshAuth updates the Login/Logout button and Register button to match
+  // the current PocketBase auth store state. Called on construction and
+  // whenever pb.authStore changes (e.g. stale token cleared after a server
+  // DB purge, which falls back to guest mode without a page reload).
+  private refreshAuth(): void {
+    const loggedIn = isLoggedIn();
+    this.authBtn.textContent = loggedIn ? "Logout" : "Login";
+    this.authBtn.style.cssText = PILL_STYLE + (loggedIn ? "" : "background:#4c5cf0;");
+    this.registerBtn.style.display = loggedIn ? "none" : "block";
   }
 
   // setSetNameHandler wires the callback invoked when the user saves their
