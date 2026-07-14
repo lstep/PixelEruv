@@ -29,7 +29,7 @@ export class TopMenu {
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
   private playerOptions: string = "";
   private authStoreUnsub: (() => void) | null = null;
-  private boundDocClick: () => void = () => {};
+  private boundDocClick: () => void;
 
   constructor() {
     this.container = document.createElement("div");
