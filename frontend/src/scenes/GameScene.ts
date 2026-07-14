@@ -235,6 +235,13 @@ const LERP_TAU_MS = 80;
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
 const TICK_MS = 50; // 20 Hz server tick
+// Cap on per-frame prediction ticks. When the main thread stalls (e.g. A/V
+// / video-tile setup blocking the event loop), Phaser's frame delta spikes.
+// Without a cap, the prediction advances many ticks in one frame, overshooting
+// the server's authoritative position; the next reconciliation then snaps the
+// avatar back, producing a visible jump. Capping at 2 ticks (100ms) limits the
+// overshoot to 0.8 tiles per frame — normal frames (8-17ms) are unaffected.
+const MAX_PREDICT_TICKS = 2;
 // Mirrors the server's proximityRadius (worldsim.go). Two players within
 // this distance (in tiles, feet-to-feet) can hear each other's Nearby chat.
 const PROXIMITY_RADIUS_TILES = 2.0;
@@ -1050,7 +1057,7 @@ export class GameScene extends Phaser.Scene {
     // worth of ticks, then render. This makes movement feel immediate.
     const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
     if (local) {
-      const ticks = delta / TICK_MS;
+      const ticks = Math.min(delta / TICK_MS, MAX_PREDICT_TICKS);
       const p = this.applyMovement(local.predX, local.predY, this.inputState, ticks);
       local.predX = p.x;
       local.predY = p.y;
