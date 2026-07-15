@@ -139,6 +139,17 @@ rm -rf ./pb_data && cp -R ./pb_data.backup ./pb_data
 
 ### Docker (production)
 
+The dist ships with `backup-volumes.sh` and `restore-volumes.sh` which
+automate the tar/restore commands below for both `pb_data` and `audit_data`:
+
+```bash
+cd ~/pixeleruv
+./backup-volumes.sh                 # → ./backups/pb_data-*.tar.gz, audit_data-*.tar.gz
+./restore-volumes.sh ./backups      # restore latest from ./backups/
+```
+
+The equivalent manual commands (for reference or scripting):
+
 ```bash
 cd ~/pixeleruv
 docker compose down
@@ -179,6 +190,6 @@ first.
 
 - [Data Model and Persistence](06-data-model-and-persistence.md) — what lives
   in PocketBase and why.
-- [Quick Start § Day-to-day operations](quick-start.md#9-day-to-day-operations)
-  — volume snapshot one-liner.
+- [Quick Start § Server management](quick-start.md#9-server-management)
+  — upgrade, backup, and restore via the dist scripts.
 - `backend/cmd/pb-collections/main.go` — the tool's source and usage banner.
