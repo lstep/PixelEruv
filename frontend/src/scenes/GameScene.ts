@@ -398,6 +398,13 @@ export class GameScene extends Phaser.Scene {
   private adminInfoByEntity = new Map<string, { ip: string; isGuest: boolean; deviceId: string }>();
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
+  // True while an A/V connect is in progress. The LiveKit connect (WebRTC
+  // handshake, getUserMedia) blocks the main thread. During the block, the
+  // game loop doesn't run, but the server keeps moving the player with the
+  // last input. To prevent the player from jumping forward when the block
+  // ends, we send a stop input before the connect and suppress input sending
+  // + prediction until it completes. See onAvToken below.
+  private avConnecting = false;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
   // server's authoritative position on each reconciliation.
   private pendingInputs: InputEvent[] = [];
@@ -990,9 +997,31 @@ export class GameScene extends Phaser.Scene {
         else this.scene.pause("GameScene");
       },
       onAvToken: (msg) => {
-        this.avClient?.handleTokenFrame(msg).catch((err) =>
-          console.error("AvClient handleTokenFrame error:", err)
-        );
+        if (msg.action === "join") {
+          // The LiveKit connect (WebRTC handshake, getUserMedia) blocks the
+          // main thread. During the block, the server keeps moving the player
+          // with the last input. Send a stop input so the server stops the
+          // player, and suppress further input sending + prediction until
+          // the connect completes. Without this, the player jumps forward
+          // when the block ends and reconciliation snaps to the server's
+          // authoritative position.
+          this.avConnecting = true;
+          const stopState: InputState = { up: false, down: false, left: false, right: false, run: false };
+          const seq = this.ws?.sendInput(stopState) ?? 0;
+          if (seq > 0) {
+            this.pendingInputs.push({ seq, state: stopState, time: performance.now() });
+          }
+        }
+        this.avClient?.handleTokenFrame(msg)
+          .then(() => {
+            this.avConnecting = false;
+            this.inputDirty = true; // re-send real input state
+          })
+          .catch((err) => {
+            this.avConnecting = false;
+            this.inputDirty = true;
+            console.error("AvClient handleTokenFrame error:", err);
+          });
       },
       onChatMessage: (msg) => {
         chatPanel?.addMessage(msg);
@@ -1061,7 +1090,10 @@ export class GameScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     // Send input on change and buffer it for reconciliation.
-    if (this.inputDirty && this.ws) {
+    // Suppress during A/V connect — a stop input was already sent in
+    // onAvToken, and we don't want to override it with the real (still
+    // held) input state until the connect completes.
+    if (this.inputDirty && this.ws && !this.avConnecting) {
       const seq = this.ws.sendInput(this.inputState);
       if (seq > 0) {
         this.pendingInputs.push({
@@ -1077,13 +1109,14 @@ export class GameScene extends Phaser.Scene {
     // worth of ticks, then render. This makes movement feel immediate.
     const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
     if (local) {
-      // Skip prediction during main-thread stalls (delta exceeds threshold).
+      // Skip prediction during main-thread stalls (delta exceeds threshold)
+      // or A/V connect (server has been told to stop the player).
       // The avatar freezes during the stall (inherent — the game loop isn't
       // running), and the next reconciliation snaps it to the server's
       // authoritative position. This avoids both the overshoot-and-snap-back
       // from a single long stall and the oscillation from repeated short
       // stalls. See STALL_THRESHOLD_MS above.
-      const ticks = delta > STALL_THRESHOLD_MS ? 0 : delta / TICK_MS;
+      const ticks = (delta > STALL_THRESHOLD_MS || this.avConnecting) ? 0 : delta / TICK_MS;
       const p = this.applyMovement(local.predX, local.predY, this.inputState, ticks);
       local.predX = p.x;
       local.predY = p.y;
