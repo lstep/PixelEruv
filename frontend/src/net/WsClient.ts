@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -458,6 +458,27 @@ export class WsClient {
       const frame = create(ClientFrameSchema, { payload: { case: "setPlayerOptions", value: spo } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
       this.playerOptions = options;
+    } finally {
+      span.end();
+    }
+  }
+
+  // setStatus sends a SetStatusFrame to change the player's presence status
+  // (0=Available, 1=Busy, 2=Do Not Disturb). The server validates the range,
+  // updates the entity, replicates to all clients via the DisplayName
+  // component, and broadcasts on NATS so ext-av enforces DND A/V exclusion.
+  // Session-only — not persisted to PocketBase. Fire-and-forget.
+  setStatus(status: number): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_set_status", {
+      attributes: { "client.id": this.clientId ?? "", "status": status },
+    });
+    try {
+      const ss = context.with(trace.setSpan(context.active(), span), () =>
+        create(SetStatusFrameSchema, { status, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "setStatus", value: ss } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();
     }

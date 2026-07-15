@@ -39,6 +39,14 @@ const (
 	compDisplayName = 4
 )
 
+// Player presence status, replicated as DisplayName.status and used to gate
+// A/V. DND fully excludes the player from A/V rooms.
+const (
+	statusAvailable    = 0
+	statusBusy         = 1
+	statusDoNotDisturb = 2
+)
+
 type Entity struct {
 	ID             string
 	Position       *pb.Position
@@ -126,6 +134,11 @@ type Entity struct {
 	// {"show_own_name_tag":true}). Persisted to PocketBase for logged-in
 	// users; session-only for guests. Updated via SetPlayerOptionsFrame.
 	PlayerOptions string
+	// Status is the player's presence status (statusAvailable/Busy/DND),
+	// replicated as DisplayName.status and rendered as the nametag pill
+	// color. DND fully excludes the player from A/V. Session-only — not
+	// persisted to PocketBase; resets to statusAvailable on connect.
+	Status uint32
 }
 
 type NetworkSession struct {
@@ -552,6 +565,25 @@ func (s *Simulator) subscribe() error {
 		s.handleSetPlayerOptions(ctx, clientID, &frame)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.set_player_options: %w", err)
+	}
+
+	// client.<id>.set_status — presence status change request (Available /
+	// Busy / Do Not Disturb). Session-only; broadcast on
+	// worldsim.player_status so ext-av can enforce DND A/V exclusion.
+	if _, err := s.nc.Subscribe("client.*.set_status", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.handle_set_status_sub")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "set_status")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var frame pb.SetStatusFrame
+		if err := proto.Unmarshal(m.Data, &frame); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		s.handleSetStatus(ctx, clientID, &frame)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.set_status: %w", err)
 	}
 
 	// Extension lifecycle subscriptions.
@@ -1410,6 +1442,61 @@ func (s *Simulator) handleSetName(ctx context.Context, clientID string, frame *p
 	}
 }
 
+// handleSetStatus processes a client-sent SetStatusFrame: validates the enum
+// range (0-2), updates Entity.Status, marks dirtyName so the DisplayName
+// component (which carries status) is re-replicated, and broadcasts the change
+// on worldsim.player_status so ext-av can enforce DND A/V exclusion (skip zone
+// token minting, proactively eject from active zone rooms). Session-only — not
+// persisted to PocketBase. See
+// documentation/plans/2026-07-15-player-status-design.md.
+func (s *Simulator) handleSetStatus(ctx context.Context, clientID string, frame *pb.SetStatusFrame) {
+	ctx, span := s.tracer.Start(ctx, "worldsim.handle_set_status")
+	defer span.End()
+	span.SetAttributes(attribute.String("client.id", clientID), attribute.Int("status", int(frame.GetStatus())))
+
+	status := frame.GetStatus()
+	if status > statusDoNotDisturb {
+		span.SetStatus(codes.Error, "invalid status")
+		s.logger.WarnContext(ctx, "invalid status", "status", status, "client", clientID)
+		return
+	}
+
+	s.mu.Lock()
+	entity, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown client")
+		return
+	}
+	if entity.Status == status {
+		s.mu.Unlock()
+		return
+	}
+	entity.Status = status
+	entity.dirtyName = true // status rides on the DisplayName component
+	entityID := entity.ID
+	s.mu.Unlock()
+
+	audit.Emit(s.nc, "player.set_status", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Details{"status": status},
+		"")
+
+	// Broadcast the status change so ext-av can enforce DND A/V exclusion
+	// (skip zone token minting for DND, proactively eject from active zone
+	// rooms). Proximity exclusion is handled in runProximityClustering by
+	// skipping DND players, which naturally emits proximity.leave on the
+	// next tick.
+	payload, _ := json.Marshal(struct {
+		EntityID string `json:"entity_id"`
+		Status   uint32 `json:"status"`
+	}{EntityID: entityID, Status: status})
+	if err := s.nc.Publish("worldsim.player_status", payload); err != nil {
+		s.logger.WarnContext(ctx, "publish player_status", "err", err, "entity", entityID)
+		span.RecordError(err)
+	}
+}
+
 // handleSetSpriteBase processes a client-sent SetSpriteBaseFrame: validates
 // the sprite_base ID exists in the sprite_bases collection, updates
 // Entity.SpriteBase, marks it dirty for replication, and persists to
@@ -1718,6 +1805,20 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					SnapshotSeq: s.snapshotSeq,
 				})
 			}
+			// Echo DisplayName updates (which carry presence status) back to
+			// the originating client so it can sync its AvClient DND flag and
+			// update its own nametag pill color. Without this, a status change
+			// is replicated to OTHER clients but never to the player who
+			// changed it.
+			if e.dirtyName {
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
+				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
+					EntityId:    e.ID,
+					ComponentId: compDisplayName,
+					Data:        nameBytes,
+					SnapshotSeq: s.snapshotSeq,
+				})
+			}
 			s.appendAnimations(batch, e)
 			continue
 		}
@@ -1740,7 +1841,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
 			}
 			if e.NetworkSession != nil && e.DisplayName != "" {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
 				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
 			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
@@ -1770,7 +1871,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				})
 			}
 			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
 				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
@@ -2302,10 +2403,19 @@ func (s *Simulator) runProximityClustering(ctx context.Context) {
 	}
 
 	// Collect player entities not in any av_enabled zone.
+	// DND players are excluded entirely: they get no proximity group, so
+	// no proximity.join is emitted for them. Toggling to DND naturally
+	// produces a proximity.leave on the next tick (their
+	// currentProximityGroup is no longer in newGroup), and toggling back
+	// to Available re-includes them on the next tick — automatic eject
+	// and rejoin without synthetic events.
 	var players []*Entity
 	inAVZone := make(map[string]bool)
 	for _, e := range s.entities {
 		if e.NetworkSession == nil {
+			continue
+		}
+		if e.Status == statusDoNotDisturb {
 			continue
 		}
 		for zid := range e.currentZones {

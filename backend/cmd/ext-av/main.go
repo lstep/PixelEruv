@@ -88,6 +88,16 @@ type avTokenMsg struct {
 	Members []string `json:"members,omitempty"`
 }
 
+// Player presence status values, matching worldsim's status constants and the
+// DisplayName.status proto field. DND fully excludes the player from A/V.
+const statusDoNotDisturb = 2
+
+// playerStatusMsg is the NATS payload of worldsim.player_status.
+type playerStatusMsg struct {
+	EntityID string `json:"entity_id"`
+	Status   uint32 `json:"status"`
+}
+
 func main() {
 	startTime := time.Now()
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
@@ -133,6 +143,31 @@ func main() {
 	var mu sync.Mutex
 	avZones := make(map[string]bool) // zone_id -> true
 	opts := avOptions{ProximityAudioEnabled: true, ZoneAudioEnabled: true}
+
+	// zoneRoomState records the room + clientID needed to emit a proactive
+	// leave when a player toggles to DND while in a zone A/V room.
+	type zoneRoomState struct {
+		Room     string
+		ClientID string
+	}
+	// playerStatus tracks each player's presence status (0=Available,
+	// 1=Busy, 2=DND), updated via worldsim.player_status. Used to skip
+	// token minting for DND players (fully excluded from A/V). A missing
+	// entry defaults to Available. Lost on ext-av restart; players
+	// re-broadcast on toggle, so only DND players are misclassified as
+	// Available until they re-toggle (acceptable v1).
+	playerStatus := make(map[string]uint32)
+	// activeZoneRoom tracks the LiveKit zone room a player currently holds
+	// a join token for, so a toggle to DND can proactively eject them
+	// (emit a leave token) without waiting for a zone.exit event.
+	activeZoneRoom := make(map[string]zoneRoomState)
+
+	// isDND reports whether the player is currently Do Not Disturb.
+	isDND := func(entityID string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return playerStatus[entityID] == statusDoNotDisturb
+	}
 
 	// updateAVZones parses a zoneMetadataMsg and updates the local A/V zone set.
 	updateAVZones := func(data []byte) {
@@ -208,6 +243,10 @@ func main() {
 		if ev.ClientID == "" || !isAVZone(ev.ZoneID) || !zoneEnabled {
 			return
 		}
+		// DND players are fully excluded from A/V — skip token minting.
+		if isDND(ev.EntityID) {
+			return
+		}
 		room := "zone-" + slugify(ev.ZoneID)
 		token, err := mintToken(room, ev.EntityID)
 		if err != nil {
@@ -220,6 +259,9 @@ func main() {
 			Token:  token,
 			URL:    livekitPublicURL,
 		})
+		mu.Lock()
+		activeZoneRoom[ev.EntityID] = zoneRoomState{Room: room, ClientID: ev.ClientID}
+		mu.Unlock()
 		logger.Info("zone A/V join", "entity", ev.EntityID, "zone", ev.ZoneID, "room", room)
 		audit.Emit(nc, "av.token_minted", audit.SeverityInfo,
 			audit.Actor{EntityID: ev.EntityID, ClientID: ev.ClientID, Extension: "av"},
@@ -243,6 +285,9 @@ func main() {
 			Action: "leave",
 			Room:   room,
 		})
+		mu.Lock()
+		delete(activeZoneRoom, ev.EntityID)
+		mu.Unlock()
 		logger.Info("zone A/V leave", "entity", ev.EntityID, "zone", ev.ZoneID, "room", room)
 		audit.Emit(nc, "av.token_revoked", audit.SeverityInfo,
 			audit.Actor{EntityID: ev.EntityID, ClientID: ev.ClientID, Extension: "av"},
@@ -305,6 +350,40 @@ func main() {
 	nc.Subscribe("worldsim.zones", func(m *nats.Msg) {
 		logger.Info("worldsim.zones received, updating A/V zones")
 		updateAVZones(m.Data)
+	})
+
+	// --- Subscribe to worldsim.player_status for DND A/V exclusion ---
+	// On a toggle to DND, proactively eject the player from any active zone
+	// A/V room (emit a leave token) so they are fully excluded immediately,
+	// without waiting for a zone.exit. Proximity exclusion is handled by
+	// worldsim skipping DND players in proximity clustering, which emits
+	// proximity.leave on the next tick.
+	nc.Subscribe("worldsim.player_status", func(m *nats.Msg) {
+		var ev playerStatusMsg
+		if err := json.Unmarshal(m.Data, &ev); err != nil {
+			logger.Warn("parse player_status", "err", err)
+			return
+		}
+		mu.Lock()
+		playerStatus[ev.EntityID] = ev.Status
+		var eject zoneRoomState
+		hasEject := false
+		if ev.Status == statusDoNotDisturb {
+			if st, ok := activeZoneRoom[ev.EntityID]; ok {
+				eject = st
+				hasEject = true
+				delete(activeZoneRoom, ev.EntityID)
+			}
+		}
+		mu.Unlock()
+		if hasEject {
+			publishAVToken(eject.ClientID, avTokenMsg{Action: "leave", Room: eject.Room})
+			logger.Info("zone A/V leave (DND)", "entity", ev.EntityID, "room", eject.Room)
+			audit.Emit(nc, "av.token_revoked", audit.SeverityInfo,
+				audit.Actor{EntityID: ev.EntityID, ClientID: eject.ClientID, Extension: "av"},
+				audit.Details{"source": "zone", "room": eject.Room, "reason": "dnd"},
+				"")
+		}
 	})
 
 	// --- Subscribe to extension.av.options for hot-reloadable config ---

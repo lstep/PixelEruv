@@ -639,6 +639,27 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish set_player_options", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_SetStatus:
+			// Forward status change to worldsim on client.<id>.set_status.
+			// Worldsim validates the enum range (0-2), updates Entity.Status,
+			// marks dirty for replication, and broadcasts on
+			// worldsim.player_status so ext-av can enforce DND A/V exclusion.
+			// Session-only — not persisted to PocketBase.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.SetStatus.GetTraceparent()),
+				"pusher.nats.publish.set_status",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.Int("status", int(p.SetStatus.GetStatus())))
+			statusBytes, _ := proto.Marshal(p.SetStatus)
+			subject := fmt.Sprintf("client.%s.set_status", clientID)
+			msg := &nats.Msg{Subject: subject, Data: statusBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish set_status")
+				s.logger.Warn("nats publish set_status", "client", clientID, "err", err)
+			}
+			pspan.End()
 		}
 	}
 }
