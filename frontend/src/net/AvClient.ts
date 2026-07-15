@@ -643,7 +643,12 @@ export class AvClient {
       url = "https://" + url.slice("http://".length);
     }
 
+    // Yield before each heavy operation (room.connect, getUserMedia) so the
+    // game loop can run between them. Each operation may do synchronous
+    // main-thread work (WebRTC setup, hardware access); yielding between them
+    // breaks the total block into smaller chunks.
     try {
+      await new Promise<void>((r) => setTimeout(r, 0));
       await this.room.connect(url, token);
     } catch (err) {
       // Clean up the failed room so retry creates a fresh one.
@@ -659,11 +664,13 @@ export class AvClient {
     // permission) — the room is still connected and can receive remote video.
     // We must NOT let a publishing failure tear down the room connection.
     try {
+      await new Promise<void>((r) => setTimeout(r, 0));
       await this.room.localParticipant.setMicrophoneEnabled(!this.micMuted);
     } catch (err) {
       console.warn("AvClient: microphone publish failed (room still connected):", err);
     }
     try {
+      await new Promise<void>((r) => setTimeout(r, 0));
       await this.room.localParticipant.setCameraEnabled(this.cameraEnabled);
     } catch (err) {
       console.warn("AvClient: camera publish failed (room still connected):", err);
