@@ -12,6 +12,11 @@ import type { Track } from "livekit-client";
 type Mode = "windowed" | "fullscreen" | "minimized";
 
 export class ScreenViewer {
+  // Shared, monotonically increasing z-index counter. The most recently
+  // focused viewer sits above the others, so users can bring any shared
+  // screen to the front by clicking it.
+  private static topZ = 40;
+
   private element: HTMLDivElement;
   private videoEl: HTMLVideoElement | null = null;
   private mode: Mode = "windowed";
@@ -35,7 +40,17 @@ export class ScreenViewer {
       "position:fixed;z-index:40;font-family:sans-serif;";
     document.body.appendChild(this.element);
 
+    // Any pointer interaction raises this window above the other shared
+    // screens. Capture so it runs before drag/button handlers.
+    this.element.addEventListener("mousedown", () => this.bringToFront(), true);
+
     this.render();
+  }
+
+  // bringToFront raises this viewer above every other ScreenViewer by
+  // allocating the next shared z-index slot.
+  bringToFront(): void {
+    this.element.style.zIndex = String(++ScreenViewer.topZ);
   }
 
   // setScreenMuted toggles the "paused" overlay. Called by ScreenShareOverlay
@@ -63,35 +78,36 @@ export class ScreenViewer {
   private render(): void {
     this.element.innerHTML = "";
     this.element.onclick = null;
-    this.element.style.zIndex = this.mode === "fullscreen" ? "50" : "40";
 
     if (this.mode === "minimized") {
       this.element.style.cssText =
-        `position:fixed;bottom:4px;left:4px;z-index:40;width:200px;height:120px;` +
+        `position:fixed;bottom:4px;left:4px;width:200px;height:120px;` +
         `overflow:hidden;border-radius:8px;background:#000;` +
         `box-shadow:0 0 0 2px rgba(99,102,241,0.5),0 8px 30px rgba(0,0,0,0.5);` +
         `cursor:pointer;font-family:sans-serif;margin-bottom:${this.index * 130}px;`;
       this.element.onclick = () => { this.mode = "windowed"; this.render(); };
       this.buildVideoBody();
       this.buildLabel(this.element, "10px");
+      this.bringToFront();
       return;
     }
 
     if (this.mode === "fullscreen") {
       this.element.style.cssText =
-        "position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;" +
+        "position:fixed;inset:0;display:flex;flex-direction:column;" +
         "background:#000;font-family:sans-serif;";
       this.buildTitleBar(this.element, true);
       const body = document.createElement("div");
       body.style.cssText = "position:relative;flex:1;min-height:0;";
       this.element.appendChild(body);
       this.buildVideoBody(body);
+      this.bringToFront();
       return;
     }
 
     // windowed
     this.element.style.cssText =
-      `position:fixed;left:${this.pos.x}px;top:${this.pos.y}px;z-index:40;` +
+      `position:fixed;left:${this.pos.x}px;top:${this.pos.y}px;` +
       `width:${this.size.w}px;display:flex;flex-direction:column;overflow:hidden;` +
       `border-radius:8px;background:#0f172a;` +
       `box-shadow:0 0 0 2px rgba(99,102,241,0.5),0 8px 30px rgba(0,0,0,0.5);` +
@@ -102,6 +118,7 @@ export class ScreenViewer {
     this.element.appendChild(body);
     this.buildVideoBody(body);
     this.buildResizeHandle();
+    this.bringToFront();
   }
 
   private buildTitleBar(parent: HTMLElement, isFullscreen: boolean): void {
