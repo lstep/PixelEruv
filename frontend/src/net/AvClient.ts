@@ -696,15 +696,24 @@ export class AvClient {
       this.disconnecting = true;
       this.detachScreenSourceVisibilityRelay();
       this.screenShareEnabled = false;
+      // Clear participants and notify the UI to destroy DOM tiles BEFORE the
+      // heavy WebRTC teardown. This lets the game loop run between the fast
+      // DOM cleanup and the blocking room.disconnect() call. Without this,
+      // room.disconnect() blocks the main thread (WebRTC peer connection
+      // teardown, track stop) while the video tiles are still in the DOM,
+      // freezing the game loop and making the local player unable to move.
+      this.participants.clear();
+      this.onAudioBlocked?.(false);
+      this.notifyChange();
+      // Yield to the event loop so the game loop can run one frame before
+      // the blocking WebRTC teardown.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
       try {
         await this.room.disconnect();
         console.log(`AvClient: disconnected from room ${this.currentRoom}`);
       } finally {
         this.room = null;
         this.currentRoom = null;
-        this.participants.clear();
-        this.onAudioBlocked?.(false);
-        this.notifyChange();
         this.disconnecting = false;
       }
     }
