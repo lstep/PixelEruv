@@ -80,6 +80,96 @@ authority. Show a browser dev console attempting to send a bogus
 position — the server corrects it. Narrate: "the client renders; the
 server decides. You can't cheat position, collision, or zone access."
 
+### 0.2b Why We Designed It This Way — Architecture Rationale
+
+The server-authoritative model with client-side prediction is not
+something we invented. It is the standard architecture for
+fast-paced multiplayer games, documented over two decades of game
+networking literature. We followed it because the alternatives
+(frontend-authoritative, relay-only) are simpler to build but
+fundamentally insecure and harder to extend.
+
+**The authoritative-server principle.** The core idea is simple:
+don't trust the client. The server owns the game state, validates
+every input against the real rules, and sends the result back.
+Clients send inputs, not positions. This prevents teleporting,
+speed-hacking, and wall-clipping — a modified client can render
+whatever it wants, but the server's state is what other players see.
+
+This principle and the techniques built on top of it are explained
+clearly in two sources that shaped our design:
+
+- **Gabriel Gambetta's "Fast-Paced Multiplayer" series**
+  (https://www.gabrielgambetta.com/client-server-game-architecture.html)
+  — a four-part series covering authoritative servers, client-side
+  prediction with server reconciliation, entity interpolation, and lag
+  compensation. Parts I and II directly informed our architecture:
+  the worldsim is the authoritative server (Part I), and the frontend
+  predicts movement locally then reconciles against the server's
+  authoritative position using sequence numbers (Part II). Part III
+  (entity interpolation for remote avatars) is tracked in
+  [issue #107](https://github.com/lstep/PixelEruv/issues/107). Part
+  IV (lag compensation for shooting) is not applicable — Pixel Eruv
+  has no projectile system (yet). We are grateful to Gabriel for making
+  these concepts accessible to a wide audience.
+
+- **Glenn Fiedler's "Gaffer on Games" series**
+  (https://gafferongames.com/) — the foundational reference on
+  game networking, covering fixed timesteps, deterministic
+  simulation, state synchronization, and reliability over UDP.
+  Fiedler's work on why the server must own the simulation at a
+  fixed tick rate (not variable, not client-driven) shaped our
+  decision to run worldsim at a fixed 20Hz tick and to make the
+  client's prediction match the server's movement math exactly
+  (same speed, same diagonal normalization, same collision
+  algorithm). Without this determinism, reconciliation would
+  produce constant snap-backs — the client and server would
+  disagree on where the player is even with identical inputs.
+
+**Why not frontend-authoritative like Workadventu.re?** In a
+frontend-authoritative model, the browser owns the player's position
+and sends it to the server, which broadcasts it to other clients.
+This is simpler — no prediction, no reconciliation, no server-side
+movement simulation. But it has a fatal flaw: the server has no way
+to reject invalid positions. Any client can send "I'm at (0,0)" or
+"I moved 50 tiles in one frame" and the server must accept it. For
+a casual virtual office this may be acceptable. For a platform that
+aims to support interactive gameplay (item pickups, currency, access
+control, NPC interactions), it is not. The server must be the
+authority, or the rules are unenforceable.
+
+**Why client-side prediction?** A naive authoritative server is
+unresponsive — the player presses a key, waits 100-200ms for the
+round-trip, then sees the movement. Client-side prediction
+(Gambetta Part II) eliminates this: the client applies the input
+locally and immediately, then reconciles when the server's
+authoritative position arrives. The player sees instant movement;
+the server still validates everything. The cost is complexity —
+the client must track un-acked inputs and replay them on
+reconciliation — but the result is a game that feels local while
+being server-authoritative.
+
+**Why a fixed 20Hz tick?** The server processes all clients in
+batches at a fixed rate, not per-input. This bounds CPU usage,
+makes the simulation deterministic, and gives the client a
+predictable reconciliation cadence. Fiedler covers this in depth:
+variable-rate server updates make interpolation and prediction
+unreliable because the client can't reason about how much time
+the server has simulated. A fixed tick (50ms) lets the client
+convert its frame delta into fractional ticks and predict at the
+same rate the server simulates.
+
+**Storyboard:** Show Gambetta's Part II diagram (client predicts,
+server confirms, client reconciles) side by side with Pixel Eruv's
+code: the `pendingInputs` buffer, the `lastInputSeq` ack, and the
+reconciliation loop in `GameScene.ts`. Then show the worldsim tick
+loop at 20Hz. Narrate: "this isn't a custom protocol — it's the
+standard multiplayer architecture, applied to a virtual office.
+The server owns the world; the client predicts for responsiveness
+and reconciles against authority. The same techniques that make
+Counter-Strike feel responsive while preventing cheats make Pixel
+Eruv responsive while preventing position spoofing."
+
 ### 0.3 ECS Core — Modular by Design
 
 Other platforms use object-oriented class hierarchies. Adding a new
