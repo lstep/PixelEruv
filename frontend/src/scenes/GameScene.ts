@@ -1082,8 +1082,7 @@ export class GameScene extends Phaser.Scene {
     // worth of ticks, then render. This makes movement feel immediate.
     const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
     if (local) {
-      // Skip prediction during main-thread stalls (delta exceeds threshold)
-      // or A/V connect (server has been told to stop the player).
+      // Skip prediction during main-thread stalls (delta exceeds threshold).
       // The avatar freezes during the stall (inherent — the game loop isn't
       // running), and the next reconciliation snaps it to the server's
       // authoritative position. This avoids both the overshoot-and-snap-back
