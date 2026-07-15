@@ -232,17 +232,15 @@ function isDecorationLayer(layer: TiledLayerJSON): boolean {
 // last two server position updates. This avoids the lag drift and
 // speed-dependent smoothness of exponential smoothing.
 // https://www.gabrielgambetta.com/entity-interpolation.html
-
-// Render remote avatars this many ms "in the past" relative to the local
-// player. Must be >= TICK_MS (50) so there is always at least one full
-// server tick of buffered positions to interpolate between. 100ms = 2
-// ticks gives one tick of margin for network jitter.
-const REMOTE_RENDER_DELAY_MS = 100;
-
-// Max extrapolation beyond the latest known position. If no new update
-// arrives within this window, the remote avatar holds at the last known
-// position. Prevents drift when updates are delayed. 100ms = 2 ticks.
-const REMOTE_EXTRAPOLATION_MS = 100;
+//
+// REMOTE_RENDER_DELAY_MS must equal TICK_MS for a 2-position buffer.
+// With delay = 50ms and updates every 50ms:
+//   At t (new update): alpha = 0 → at posA (previous update)
+//   At t+25:           alpha = 0.5 → midpoint
+//   At t+50:           alpha = 1 → at posB, then buffer shifts
+// This gives smooth interpolation with a constant 50ms delay. If an
+// update is delayed, the avatar holds at posB until the next arrives.
+const REMOTE_RENDER_DELAY_MS = TICK_MS;
 
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
@@ -1135,13 +1133,11 @@ export class GameScene extends Phaser.Scene {
             avatar.sprite.x = b.x;
             avatar.sprite.y = b.y;
           } else {
-            let alpha = (renderTime - a.t) / span;
-            if (alpha > 1) {
-              // Past the latest update — hold at b after extrapolation bound.
-              const extrapMs = (alpha - 1) * span;
-              if (extrapMs > REMOTE_EXTRAPOLATION_MS) alpha = 1;
-            }
-            alpha = Math.max(0, Math.min(1, alpha));
+            // Interpolate between posA and posB at renderTime. Clamping
+            // handles jitter: if renderTime is before posA (alpha < 0),
+            // hold at posA; if after posB (alpha > 1), hold at posB until
+            // the next update arrives.
+            const alpha = Math.max(0, Math.min(1, (renderTime - a.t) / span));
             avatar.sprite.x = a.x + (b.x - a.x) * alpha;
             avatar.sprite.y = a.y + (b.y - a.y) * alpha;
           }
