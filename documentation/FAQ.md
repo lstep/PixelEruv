@@ -420,3 +420,41 @@ and common causes:
   `ZO_TRACING_ENABLED`, you must also set `ZO_TRACING_OTLP_ENDPOINT`
   (or just leave tracing disabled — it's for self-tracing OpenObserve
   itself, not required for receiving traces from other services).
+
+---
+
+## Choosing Pixel Eruv
+
+### Why should I choose Pixel Eruv instead of Gather/Workadventu.re/ZEP?
+
+Pixel Eruv is fully **open source** — you own your data, your infrastructure,
+and your roadmap. No per-seat licensing, no vendor lock-in, no proprietary
+backend you can't inspect or modify.
+
+On the architecture side, Pixel Eruv is **server-authoritative**. The
+worldsim kernel owns the simulation: entity positions, collision, zones,
+triggers, and replication. The frontend is a thin renderer that predicts
+locally for responsiveness but always reconciles against the server's
+authoritative state. Competitors like Workadventu.re are
+**frontend-authoritative** — the browser owns the player's position and
+sends it to the server, which acts as a relay.
+
+Server authority is better for several reasons:
+
+- **Security**: a compromised client cannot teleport, speed-hack, or walk
+  through walls. The server validates every movement against the real
+  collision and zone state. In a frontend-authoritative model, any client
+  can send arbitrary positions and the server has no way to reject them.
+- **Extensibility**: gameplay logic lives in extensions on the NATS bus,
+  not in the frontend. You add features (doors, triggers, NPCs, mini-games)
+  by writing server-side extensions that hook into the kernel's trigger
+  system — no need to ship code to every client or trust them to run it
+  honestly.
+- **Consistency**: all clients see the same world state because the server
+  is the single source of truth. Frontend-authoritative models suffer from
+  desync when clients disagree about positions, collision, or zone
+  boundaries.
+- **Cheat-resistant commerce**: if you build interactive features (item
+  pickups, currency, access control), the server enforces them. A
+  frontend-authoritative model requires trusting the client to follow the
+  rules, which any user can bypass with browser devtools.
