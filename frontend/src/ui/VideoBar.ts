@@ -233,6 +233,10 @@ export class VideoBar {
         tile.destroy();
         this.tiles.delete(entityId);
         this.joinOrder = this.joinOrder.filter((id) => id !== entityId);
+      } else if (tile && p.cameraTrack) {
+        // Participant still here with a camera — update the track in case
+        // it changed (e.g. after a reconnect where the tile was reused).
+        tile.attachTrack(p.cameraTrack);
       }
       // Names are refreshed each frame in tick(), no need to set here.
     }

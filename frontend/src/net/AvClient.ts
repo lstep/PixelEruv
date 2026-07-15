@@ -733,6 +733,15 @@ export class AvClient {
         this.room = null;
         this.currentRoom = null;
         this.disconnecting = false;
+        // Clear participants again and notify. room.disconnect() fires
+        // TrackUnsubscribed events during teardown. RemoteTrackPublication.setTrack
+        // emits the event BEFORE nullifying pub.track, so our handler reads the
+        // dead track and re-adds the participant with a non-null cameraTrack.
+        // Without this final clear, those zombie participants create black tiles
+        // that are never destroyed.
+        this.participants.clear();
+        this.onAudioBlocked?.(false);
+        this.notifyChange();
       }
     }
   }
