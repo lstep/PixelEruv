@@ -18,6 +18,7 @@ message ClientFrame {
     SetNameFrame set_name = 6;
     SetSpriteBaseFrame set_sprite_base = 7;
     SetPlayerOptionsFrame set_player_options = 8;
+    SetStatusFrame set_status = 9;
   }
 }
 
@@ -96,6 +97,17 @@ message SetSpriteBaseFrame {
 // merge), mirroring the extension_options pattern.
 message SetPlayerOptionsFrame {
   string options = 1;       // JSON-encoded player options (full replace)
+  string traceparent = 2;
+}
+
+// SetStatusFrame is a client request to change their presence status. The
+// server validates the enum range (0-2), updates Entity.Status, replicates the
+// change to all clients via the DisplayName component, and broadcasts it on
+// NATS so ext-av can enforce DND A/V exclusion. Session-only — not persisted
+// to PocketBase; resets to AVAILABLE (0) on connect. See
+// documentation/plans/2026-07-15-player-status-design.md.
+message SetStatusFrame {
+  uint32 status = 1;        // 0=AVAILABLE, 1=BUSY, 2=DO_NOT_DISTURB
   string traceparent = 2;
 }
 

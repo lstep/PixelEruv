@@ -392,6 +392,9 @@ export class GameScene extends Phaser.Scene {
   // is_admin field (server-computed as IsAdmin && !HideAdminBadge). Used
   // to render a red "admin" badge on the name tag, to the right of the name.
   private isAdminByEntity = new Map<string, boolean>();
+  // Presence status by entity ID, from the DisplayName component's status
+  // field (0=Available, 1=Busy, 2=DND). Drives the nametag pill color.
+  private statusByEntity = new Map<string, number>();
   // Admin-only info by entity ID (IP, guest status). Populated from
   // AdminInfoFrame, only received by admin clients. Used to render the IP
   // below the name in the name tag pillbox for admin viewers.
@@ -976,6 +979,7 @@ export class GameScene extends Phaser.Scene {
         this.displayNameByEntity.clear();
         this.isGuestByEntity.clear();
         this.isAdminByEntity.clear();
+        this.statusByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         this.myEntityId = entityId || null;
@@ -1029,6 +1033,7 @@ export class GameScene extends Phaser.Scene {
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
     topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
     topMenu?.setSetPlayerOptionsHandler((options) => this.ws?.setPlayerOptions(options));
+    topMenu?.setSetStatusHandler((status) => this.ws?.setStatus(status));
 
     // Close the info dropdown when clicking outside it. The dot and buttons
     // set _dropdownClickedThisFrame to suppress this on their own clicks.
@@ -1289,6 +1294,7 @@ export class GameScene extends Phaser.Scene {
         this.displayNameByEntity.clear();
         this.isGuestByEntity.clear();
         this.isAdminByEntity.clear();
+        this.statusByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         // Restart the scene to reload the map.
@@ -1355,6 +1361,7 @@ export class GameScene extends Phaser.Scene {
       let displayName = "";
       let isGuest = false;
       let isAdmin = false;
+      let status = 0;
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
           // Position component
@@ -1372,6 +1379,7 @@ export class GameScene extends Phaser.Scene {
           displayName = dn.name;
           isGuest = dn.isGuest;
           isAdmin = dn.isAdmin;
+          status = dn.status;
         }
       }
 
@@ -1446,7 +1454,8 @@ export class GameScene extends Phaser.Scene {
         this.displayNameByEntity.set(spawn.entityId, displayName);
         this.isGuestByEntity.set(spawn.entityId, isGuest);
         this.isAdminByEntity.set(spawn.entityId, isAdmin);
-        this.createNameTag(spawn.entityId, displayName, isGuest, isAdmin);
+        this.statusByEntity.set(spawn.entityId, status);
+        this.createNameTag(spawn.entityId, displayName, isGuest, isAdmin, status);
       }
       // Start idle animation immediately.
       sprite.play(`${charKey}_idle_down`, true);
@@ -1506,9 +1515,15 @@ export class GameScene extends Phaser.Scene {
           this.displayNameByEntity.set(upd.entityId, dn.name);
           this.isGuestByEntity.set(upd.entityId, dn.isGuest);
           this.isAdminByEntity.set(upd.entityId, dn.isAdmin);
+          this.statusByEntity.set(upd.entityId, dn.status);
           // Recreate the tag because the pillbox width depends on text width.
           avatar.nameTag?.destroy();
-          this.createNameTag(upd.entityId, dn.name, dn.isGuest, dn.isAdmin);
+          this.createNameTag(upd.entityId, dn.name, dn.isGuest, dn.isAdmin, dn.status);
+          // Keep the local player's AvClient DND flag in sync with the
+          // server-stamped status (defense-in-depth client-side enforcement).
+          if (upd.entityId === this.myEntityId) {
+            this.avClient?.setStatus(dn.status);
+          }
         }
       } else if (upd.componentId === 3) {
         // Appearance component — hot-swap the character sheet if sprite_base
@@ -1545,6 +1560,7 @@ export class GameScene extends Phaser.Scene {
         this.displayNameByEntity.delete(dest.entityId);
         this.isGuestByEntity.delete(dest.entityId);
         this.isAdminByEntity.delete(dest.entityId);
+        this.statusByEntity.delete(dest.entityId);
         this.adminInfoByEntity.delete(dest.entityId);
         console.log(`destroyed ${dest.entityId}`);
       }
@@ -1559,7 +1575,7 @@ export class GameScene extends Phaser.Scene {
   // inverted triangle at the bottom points down at the avatar. The container
   // is counter-scaled by 1/zoom each frame (see update) so it stays a
   // constant screen size. Hidden for the local player's own avatar.
-  private createNameTag(entityId: string, name: string, isGuest: boolean, isAdmin: boolean): void {
+  private createNameTag(entityId: string, name: string, isGuest: boolean, isAdmin: boolean, status: number): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
 
@@ -1607,10 +1623,17 @@ export class GameScene extends Phaser.Scene {
       guestBadge.setOrigin(0, 0.5);
     }
 
-    // --- Status pill (green circle — clickable, opens info dropdown) ---
+    // --- Status pill (color reflects presence status; clickable, opens
+    // info dropdown). 0=Available (green), 1=Busy (yellow), 2=DND (red). ---
+    const pillColors = [
+      { fill: 0x22c55e, stroke: 0x15803d }, // available
+      { fill: 0xeab308, stroke: 0xa16207 }, // busy
+      { fill: 0xef4444, stroke: 0x991b1b }, // do not disturb
+    ];
+    const pc = pillColors[status] ?? pillColors[0];
     const pillRadius = 4;
-    const statusPill = this.add.circle(0, 0, pillRadius, 0x22c55e);
-    statusPill.setStrokeStyle(1, 0x15803d);
+    const statusPill = this.add.circle(0, 0, pillRadius, pc.fill);
+    statusPill.setStrokeStyle(1, pc.stroke);
     // Enlarge the hit area so the dot is easy to click despite counter-scaling.
     statusPill.setInteractive(
       new Phaser.Geom.Circle(0, 0, 14),

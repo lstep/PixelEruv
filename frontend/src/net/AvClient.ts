@@ -41,6 +41,12 @@ export class AvClient {
   private currentRoom: string | null = null;
   private micMuted = localStorage.getItem(MIC_MUTED_KEY) === "false" ? false : true;
   private cameraEnabled = localStorage.getItem(CAM_ENABLED_KEY) === "true";
+  // Do Not Disturb: when true, the client refuses A/V joins and disconnects
+  // any active room. Mirrors the server-side exclusion (worldsim skips DND
+  // players in proximity clustering; ext-av skips zone token minting and
+  // proactively ejects). Defense in depth — a modded client could bypass
+  // this, but the server won't mint tokens for DND players.
+  private dnd = false;
   // WebRTC noise cancellation (noiseSuppression + echoCancellation +
   // autoGainControl). Defaults on — persisted so the user's choice survives
   // reconnects. Not yet wired to the TopMenu; toggle via setNoiseCancellation.
@@ -431,6 +437,22 @@ export class AvClient {
     return this.frameQueue;
   }
 
+  // setStatus updates the local DND flag. Entering DND (status 2) disconnects
+  // any active A/V room immediately; while DND is active, join token frames
+  // are refused. Leaving DND lets normal proximity/zone joins resume. This is
+  // the client-side half of the defense-in-depth DND enforcement; the server
+  // also excludes DND players from A/V (worldsim proximity clustering + ext-av
+  // zone token minting).
+  setStatus(status: number): void {
+    const wasDnd = this.dnd;
+    this.dnd = status === 2;
+    if (this.dnd && !wasDnd) {
+      // Disconnect immediately — fire-and-forget; processTokenFrame's leave
+      // debounce doesn't apply here since there's no pending rejoin.
+      void this.disconnect();
+    }
+  }
+
   private async processTokenFrame(msg: {
     action: string;
     room: string;
@@ -459,6 +481,11 @@ export class AvClient {
     }
 
     if (msg.action === "join") {
+      // DND: refuse all A/V joins. The server also won't mint tokens for
+      // DND players, so this is a safety net for any in-flight frame.
+      if (this.dnd) {
+        return;
+      }
       // Cancel any pending leave — we're rejoining (possibly the same room).
       if (this.leaveTimer) {
         clearTimeout(this.leaveTimer);

@@ -27,6 +27,7 @@ export class TopMenu {
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
+  private setStatusHandler: ((status: number) => void) | null = null;
   private playerOptions: string = "";
   private authStoreUnsub: (() => void) | null = null;
   private boundDocClick: () => void;
@@ -320,6 +321,58 @@ export class TopMenu {
       this.setPlayerOptionsHandler?.(json);
     });
 
+    // --- Presence status selector (Available / Busy / Do Not Disturb) ---
+    // Sends a SetStatusFrame via ws.setStatus. DND fully excludes the
+    // player from A/V (server-side: worldsim skips proximity clustering,
+    // ext-av skips zone token minting; client-side: AvClient disconnects
+    // and refuses joins). Mic/camera/screen buttons are disabled while
+    // DND is active as visual feedback.
+    const statusLabel = document.createElement("div");
+    statusLabel.style.cssText = "color:#aaa;font-size:12px;margin-top:12px;margin-bottom:6px;";
+    statusLabel.textContent = "Status";
+    this.dropdown.appendChild(statusLabel);
+
+    const statusRow = document.createElement("div");
+    statusRow.style.cssText = "display:flex;gap:6px;";
+    this.dropdown.appendChild(statusRow);
+
+    const statusOptions = [
+      { label: "Available", value: 0, color: "#22c55e" },
+      { label: "Busy", value: 1, color: "#eab308" },
+      { label: "DND", value: 2, color: "#ef4444" },
+    ];
+    let currentStatus = 0;
+    const statusButtons: HTMLButtonElement[] = [];
+    const applyStatus = (value: number) => {
+      currentStatus = value;
+      for (const sb of statusButtons) {
+        const v = Number(sb.dataset.value);
+        sb.style.outline = v === value ? "2px solid #fff" : "none";
+      }
+      // Disable A/V controls while DND; re-enable otherwise.
+      const disabled = value === 2;
+      this.micBtn.disabled = disabled;
+      this.camBtn.disabled = disabled;
+      this.screenBtn.disabled = disabled;
+      this.micBtn.style.opacity = disabled ? "0.4" : "1";
+      this.camBtn.style.opacity = disabled ? "0.4" : "1";
+      this.screenBtn.style.opacity = disabled ? "0.4" : "1";
+    };
+    for (const opt of statusOptions) {
+      const btn = document.createElement("button");
+      btn.textContent = opt.label;
+      btn.dataset.value = String(opt.value);
+      btn.style.cssText =
+        PILL_STYLE + `padding:6px 10px;font-size:12px;background:${opt.color};`;
+      btn.addEventListener("click", () => {
+        applyStatus(opt.value);
+        this.setStatusHandler?.(opt.value);
+      });
+      statusRow.appendChild(btn);
+      statusButtons.push(btn);
+    }
+    applyStatus(0);
+
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       this.dropdown.style.display = this.dropdown.style.display === "none" ? "block" : "none";
@@ -398,6 +451,14 @@ export class TopMenu {
   // the change is sent to the server (which persists to PocketBase).
   setSetPlayerOptionsHandler(fn: (options: string) => void): void {
     this.setPlayerOptionsHandler = fn;
+  }
+
+  // setSetStatusHandler wires the callback invoked when the user picks a
+  // presence status in the dropdown. GameScene passes ws.setStatus so the
+  // change is sent to the server (which validates, replicates, and broadcasts
+  // for A/V exclusion enforcement).
+  setSetStatusHandler(fn: (status: number) => void): void {
+    this.setStatusHandler = fn;
   }
 
   // setPlayerOptions updates the stored player options from the server's auth
