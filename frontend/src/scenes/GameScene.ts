@@ -240,7 +240,7 @@ function isDecorationLayer(layer: TiledLayerJSON): boolean {
 //   At t+50:           alpha = 1 → at posB, then buffer shifts
 // This gives smooth interpolation with a constant 50ms delay. If an
 // update is delayed, the avatar holds at posB until the next arrives.
-const REMOTE_RENDER_DELAY_MS = TICK_MS;
+const REMOTE_RENDER_DELAY_MS = 50; // == TICK_MS (declared below)
 
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
