@@ -503,6 +503,17 @@ export class AvClient {
     return this.lkModule;
   }
 
+  // preloadModule loads and parses the LiveKit SDK module before the player
+  // enters an A/V zone. The module is ~530KB; parsing/evaluating it on first
+  // connect blocks the main thread for a significant chunk of the total A/V
+  // connect freeze. By pre-loading it after the game scene is ready, the
+  // parse cost is paid during idle time, not during the critical connect path.
+  preloadModule(): void {
+    this.ensureModule().catch((err) =>
+      console.warn("AvClient: preloadModule failed:", err)
+    );
+  }
+
   // buildAudioCaptureOptions returns the AudioCaptureOptions for the local
   // microphone, merging the selected device ID (if any) with the WebRTC noise
   // cancellation flags. When noiseCancellation is enabled, noiseSuppression,
