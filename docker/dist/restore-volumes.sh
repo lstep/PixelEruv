@@ -39,6 +39,9 @@ if [ ! -d "$BACKUP_DIR" ]; then
     exit 1
 fi
 
+# Resolve to an absolute path so the docker bind mount matches the tarball paths.
+BACKUP_DIR=$(cd "$BACKUP_DIR" && pwd)
+
 echo "==> Stopping the stack before restore"
 docker compose down
 
@@ -59,8 +62,8 @@ for vol in $VOLUMES; do
     docker volume inspect "$full_name" >/dev/null 2>&1 || docker volume create "$full_name" >/dev/null
 
     # Clear existing contents, then extract the tarball into the volume.
-    docker run --rm -v "${full_name}:/data" -v "$PWD:/backup" alpine \
-        sh -c "rm -rf /data/* /data/.[!.]* 2>/dev/null; tar xzf \"/backup/${tarball#${PWD}/}\" -C /data"
+    docker run --rm -v "${full_name}:/data" -v "${BACKUP_DIR}:/backup" alpine \
+        sh -c "rm -rf /data/* /data/.[!.]* 2>/dev/null; tar xzf \"/backup/$(basename "$tarball")\" -C /data"
 done
 
 echo "==> Restarting the stack"
