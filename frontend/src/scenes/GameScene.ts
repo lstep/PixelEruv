@@ -227,10 +227,22 @@ function isDecorationLayer(layer: TiledLayerJSON): boolean {
   return !layer.properties?.length && layer.type === "tilelayer" && layer.name.toLowerCase() === "ground";
 }
 
-// Time constant for remote-avatar exponential smoothing (ms). At a 20 Hz
-// server tick (50 ms), 80 ms lets the sprite catch up to a new target within
-// roughly two ticks without visibly lagging.
-const LERP_TAU_MS = 80;
+// Entity interpolation for remote avatars (Gambetta Part III).
+// Remote avatars are rendered "in the past" by interpolating between the
+// last two server position updates. This avoids the lag drift and
+// speed-dependent smoothness of exponential smoothing.
+// https://www.gabrielgambetta.com/entity-interpolation.html
+
+// Render remote avatars this many ms "in the past" relative to the local
+// player. Must be >= TICK_MS (50) so there is always at least one full
+// server tick of buffered positions to interpolate between. 100ms = 2
+// ticks gives one tick of margin for network jitter.
+const REMOTE_RENDER_DELAY_MS = 100;
+
+// Max extrapolation beyond the latest known position. If no new update
+// arrives within this window, the remote avatar holds at the last known
+// position. Prevents drift when updates are delayed. 100ms = 2 ticks.
+const REMOTE_EXTRAPOLATION_MS = 100;
 
 // Movement constants — must match worldsim.go movement system.
 const SPEED_TILES_PER_TICK = 0.4;
@@ -344,9 +356,12 @@ interface Avatar {
   // True for base entities (props) rendered as tile sprites — these don't
   // animate or lerp, they just sit at their replicated position.
   isProp: boolean;
-  // Remote avatars: pixel-space lerp target (see LERP_TAU_MS).
-  targetX: number;
-  targetY: number;
+  // Remote avatars: last two server positions with arrival timestamps
+  // for entity interpolation (Gambetta Part III). posA is the older
+  // update, posB is the newer. The sprite interpolates between them over
+  // the REMOTE_RENDER_DELAY_MS window.
+  remotePosA: { x: number; y: number; t: number } | null;
+  remotePosB: { x: number; y: number; t: number } | null;
   // Local avatar only: predicted position in tile coordinates.
   predX: number;
   predY: number;
@@ -1099,15 +1114,39 @@ export class GameScene extends Phaser.Scene {
       this.updateAvatarAnim(local, dir, moving);
     }
 
-    // Exponential smoothing toward the latest replicated position for remote
-    // avatars. Frame-rate independent: t = 1 - exp(-delta/tau).
-    const t = 1 - Math.exp(-delta / LERP_TAU_MS);
+    // Entity interpolation for remote avatars (Gambetta Part III).
+    // Render remote avatars REMOTE_RENDER_DELAY_MS "in the past" by
+    // interpolating between the last two server position updates.
+    const renderTime = performance.now() - REMOTE_RENDER_DELAY_MS;
     for (const avatar of this.avatars.values()) {
       if (avatar.entityId === this.myEntityId) continue;
-      if (avatar.isProp) continue; // props are static — no lerp or animation
+      if (avatar.isProp) continue; // props are static — no interpolation
       const prevX = avatar.sprite.x, prevY = avatar.sprite.y;
-      avatar.sprite.x += (avatar.targetX - avatar.sprite.x) * t;
-      avatar.sprite.y += (avatar.targetY - avatar.sprite.y) * t;
+      const a = avatar.remotePosA;
+      const b = avatar.remotePosB;
+      if (b) {
+        if (!a) {
+          // Only one update — snap to it.
+          avatar.sprite.x = b.x;
+          avatar.sprite.y = b.y;
+        } else {
+          const span = b.t - a.t;
+          if (span <= 0) {
+            avatar.sprite.x = b.x;
+            avatar.sprite.y = b.y;
+          } else {
+            let alpha = (renderTime - a.t) / span;
+            if (alpha > 1) {
+              // Past the latest update — hold at b after extrapolation bound.
+              const extrapMs = (alpha - 1) * span;
+              if (extrapMs > REMOTE_EXTRAPOLATION_MS) alpha = 1;
+            }
+            alpha = Math.max(0, Math.min(1, alpha));
+            avatar.sprite.x = a.x + (b.x - a.x) * alpha;
+            avatar.sprite.y = a.y + (b.y - a.y) * alpha;
+          }
+        }
+      }
       avatar.sprite.setDepth(this.dynamicDepth(this.feetY(avatar.sprite)));
       // Reposition name tag to follow the sprite and counter-scale so it
       // stays a constant screen size regardless of camera zoom.
@@ -1352,8 +1391,8 @@ export class GameScene extends Phaser.Scene {
             dir: 0,
             moving: false,
             isProp: true,
-            targetX: x,
-            targetY: y,
+            remotePosA: null,
+            remotePosB: null,
             predX: 0,
             predY: 0,
             nameTag: null,
@@ -1385,8 +1424,8 @@ export class GameScene extends Phaser.Scene {
         dir: 0,
         moving: false,
         isProp: false,
-        targetX: x,
-        targetY: y + TILE_SIZE / 2,
+        remotePosA: null,
+        remotePosB: { x, y: y + TILE_SIZE / 2, t: performance.now() },
         predX: x / TILE_SIZE,
         predY: y / TILE_SIZE,
         nameTag: null,
@@ -1455,9 +1494,9 @@ export class GameScene extends Phaser.Scene {
           avatar.sprite.x = x * TILE_SIZE;
           avatar.sprite.y = y * TILE_SIZE + TILE_SIZE / 2;
         } else {
-          // Remote avatar: store pixel-space lerp target.
-          avatar.targetX = px;
-          avatar.targetY = py;
+          // Remote avatar: push position into the interpolation buffer.
+          avatar.remotePosA = avatar.remotePosB;
+          avatar.remotePosB = { x: px, y: py, t: performance.now() };
         }
       } else if (upd.componentId === 4) {
         // DisplayName component — update or create the name tag.
