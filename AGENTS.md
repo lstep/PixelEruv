@@ -82,6 +82,9 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
+## Reporting
+
+When reporting information to me, be extremely concise and sacrifice grammar for the sake of concision.
 
 
 ## Project-Specific Guidelines
