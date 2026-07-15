@@ -29,6 +29,8 @@ TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 VOLUMES="pb_data audit_data"
 
 mkdir -p "$OUTPUT_DIR"
+# Resolve to an absolute path so the docker bind mount lands in the right place.
+OUTPUT_DIR=$(cd "$OUTPUT_DIR" && pwd)
 
 for vol in $VOLUMES; do
     full_name="${COMPOSE_PROJECT}_${vol}"
@@ -41,7 +43,7 @@ for vol in $VOLUMES; do
 
     outfile="${OUTPUT_DIR}/${vol}-${TIMESTAMP}.tar.gz"
     echo "  backing up $full_name -> $outfile"
-    docker run --rm -v "${full_name}:/data:ro" -v "$PWD:/backup" alpine \
+    docker run --rm -v "${full_name}:/data:ro" -v "${OUTPUT_DIR}:/backup" alpine \
         tar czf "/backup/${vol}-${TIMESTAMP}.tar.gz" -C /data .
 done
 
