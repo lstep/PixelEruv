@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -102,6 +102,11 @@ dist-stage:
 	@# --- stage GeoIP MMDB for audit service country flags ---
 	@mkdir -p $(DIST_DIR)/geoip
 	cp backend/cmd/audit/data/ip-to-country.mmdb $(DIST_DIR)/geoip/
+	@# --- stage server management scripts (backup/restore/deploy) ---
+	cp docker/dist/backup-volumes.sh    $(DIST_DIR)/backup-volumes.sh
+	cp docker/dist/restore-volumes.sh   $(DIST_DIR)/restore-volumes.sh
+	cp docker/dist/deploy.sh            $(DIST_DIR)/deploy.sh
+	@chmod +x $(DIST_DIR)/backup-volumes.sh $(DIST_DIR)/restore-volumes.sh $(DIST_DIR)/deploy.sh
 
 # dist: native platform (convenience alias).
 dist: build web dist-stage
@@ -121,6 +126,22 @@ dist-macos: GOARCH := arm64
 dist-macos: build web dist-stage
 	@echo "==> dist/ built for darwin/arm64. Binaries run natively on macOS."
 	@echo "    Run Go services directly from dist/bin/; use Docker for nats/mailhog/livekit."
+
+# deploy-remote: build for linux/amd64, rsync dist/ to the server, and run
+# deploy.sh on the server. This is the one-command upgrade path — it backs
+# up volumes, builds images, and recreates only changed services without
+# touching persistent data.
+#
+# Override REMOTE_HOST and REMOTE_PATH for your server:
+#   make deploy-remote REMOTE_HOST=user@myserver REMOTE_PATH=/opt/pixeleruv
+REMOTE_HOST ?= ellipsis
+REMOTE_PATH ?= /opt/pixeleruv
+
+deploy-remote: dist-x86
+	@echo "==> Rsyncing dist/ to $(REMOTE_HOST):$(REMOTE_PATH)/"
+	rsync -avz --delete dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
+	@echo "==> Running deploy.sh on $(REMOTE_HOST)"
+	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./deploy.sh"
 
 up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build

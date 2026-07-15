@@ -385,7 +385,7 @@ container after changing `PUBLIC_HOST`:
 docker compose -f docker/docker-compose.yml up -d --force-recreate dex
 ```
 
-See: [Quick Start § Common pitfalls](quick-start.md#9-common-pitfalls)
+See: [Quick Start § Common pitfalls](quick-start.md#10-common-pitfalls)
 
 ### nginx crashes with "host not found in upstream"
 

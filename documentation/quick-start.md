@@ -211,7 +211,7 @@ docker compose up --build -d
 > deploy. The rest have working defaults; override them for production
 > hardening (secrets) or non-standard topologies (proxied LiveKit).
 > Set `OTEL_ENABLED=true` on all services to ship traces and logs to
-> a collector (motel for dev, or add OpenObserve to the stack — see section 10).
+> a collector (motel for dev, or add OpenObserve to the stack — see section 11).
 
 ---
 
@@ -686,7 +686,87 @@ Guests (not logged in) skip the picker and get a deterministic fallback sprite
 
 ---
 
-## 9. Day-to-day operations
+## 9. Server management
+
+The dist root ships with three scripts that handle upgrades, backups, and
+restores without losing data:
+
+```
+~/pixeleruv/
+├── deploy.sh             # upgrade the running stack (minimal disruption)
+├── backup-volumes.sh     # snapshot pb_data + audit_data to ./backups/
+├── restore-volumes.sh    # restore volumes from a backup dir
+└── docker-compose.yml
+```
+
+### 9a. Upgrading the stack
+
+The safe upgrade path backs up data, builds new images while old containers
+keep serving, then recreates only changed services. Persistent volumes
+(`pb_data`, `audit_data`) are never touched.
+
+**From your dev machine** (one command — builds, rsyncs, deploys):
+
+```bash
+make deploy-remote
+# Override host/path if needed:
+# make deploy-remote REMOTE_HOST=user@myserver REMOTE_PATH=/opt/pixeleruv
+```
+
+This runs `make dist-x86`, rsyncs `dist/` to the server, and runs
+`deploy.sh` over SSH.
+
+**Manually on the server** (if you rsynced the dist yourself):
+
+```bash
+cd ~/pixeleruv
+./deploy.sh
+```
+
+What `deploy.sh` does:
+
+1. Copies `../.env` into the dist root if present (preserves your config).
+2. Backs up `pb_data` and `audit_data` to `./backups/` (takes ~1-2s).
+3. Builds new images — old containers keep serving during the build.
+4. Runs `docker compose up -d` — recreates only services whose image
+   changed. Unchanged services (nats, livekit) keep running.
+5. Prunes dangling images only.
+
+**Never run** `docker volume prune` or `docker system prune --volumes` —
+those delete the named volumes that hold your users, maps, and config.
+`docker image prune -f` (dangling images only) is safe.
+
+### 9b. Backing up data
+
+```bash
+cd ~/pixeleruv
+./backup-volumes.sh              # → ./backups/pb_data-YYYYMMDD-HHMMSS.tar.gz
+                                 #   ./backups/audit_data-YYYYMMDD-HHMMSS.tar.gz
+```
+
+Safe to run while the stack is live. Volumes that don't exist yet (e.g.
+`audit_data` on a fresh deploy) are skipped, not errored.
+
+For a portable JSON export of PB collections (schema + records + file
+fields), build the `pb-collections` binary (`make build` →
+`dist/bin/pb-collections`) and run it against a copy of the `pb_data`
+directory. See [Backup and Restore](24-backup-and-restore.md) for the full
+export/import flow and trade-offs.
+
+### 9c. Restoring from a backup
+
+If an upgrade goes wrong, roll back to the backup produced by `deploy.sh`:
+
+```bash
+cd ~/pixeleruv
+./restore-volumes.sh ./backups
+```
+
+This stops the stack, restores the latest tarball for each volume, and
+restarts. Connected clients will drop during the restore (unavoidable —
+worldsim owns the volume being restored).
+
+### 9d. Day-to-day commands
 
 ```bash
 cd ~/pixeleruv
@@ -705,20 +785,17 @@ docker exec -it $(docker compose ps -q nats) nats -s nats://127.0.0.1:4222 pub a
 docker compose logs worldsim 2>&1 | grep integrity
 ```
 
-Persistent data lives in the `pb_data` Docker volume (PocketBase, mounted
-into worldsim via `PB_DATA_DIR`). Back it up with
-`docker run --rm -v pixeleruv_pb_data:/d -v "$PWD":/b alpine tar czf /b/pb_data.tgz /d`.
+Persistent data lives in two named Docker volumes:
+- `pb_data` — PocketBase (users, maps, config, positions), mounted into
+  worldsim via `PB_DATA_DIR`.
+- `audit_data` — audit SQLite database, mounted into the audit service.
 
-For a portable JSON export of PB collections (schema + records + file fields),
-build the `pb-collections` binary (`make build` → `dist/bin/pb-collections`)
-and run it against a copy of the `pb_data` directory. See
-[Backup and Restore](24-backup-and-restore.md) for the full export/import
-flow, trade-offs between volume snapshots and `pb-collections`, and restore
-instructions.
+Both survive `docker compose down` and `up`. See
+[Backup and Restore](24-backup-and-restore.md) for the full reference.
 
 ---
 
-## 9. Common pitfalls
+## 10. Common pitfalls
 
 - **Black screen + `crypto.subtle` error in console**: you're accessing over
   plain HTTP from a remote browser. Auth needs a secure context — use the
@@ -753,14 +830,14 @@ instructions.
 
 ---
 
-## 10. Audit and Observability
+## 11. Audit and Observability
 
 The stack ships with the **audit service** — it records *what happened*
 (lifecycle and interaction events). For *why/how* (OpenTelemetry traces
 and logs), use `make debug` with motel (dev), or add OpenObserve to the
 stack on a compatible CPU (see 10b below).
 
-### 10a. Audit UI (`/audit/`)
+### 11a. Audit UI (`/audit/`)
 
 The audit service subscribes to `audit.event` on NATS and persists events
 to its own SQLite database — independent of worldsim, so it survives
@@ -828,7 +905,7 @@ audit:
 If the file at `GEOIP_DB` is missing or unreadable, the audit service
 falls back to a neutral gray flag and logs a warning — it stays up.
 
-### 10b. OpenTelemetry traces (motel / OpenObserve)
+### 11b. OpenTelemetry traces (motel / OpenObserve)
 
 All backend services (pusher, worldsim, all four extensions) are
 instrumented with OpenTelemetry. Telemetry is **off by default**.
@@ -870,7 +947,7 @@ on the backend services and add the `/otel/` nginx proxy (see the
 audit-observability design doc). On Apple Silicon, use
 `openobserve/openobserve:latest-arm64` instead.
 
-### 10c. Linking audit events to traces
+### 11c. Linking audit events to traces
 
 Each audit event carries an optional `trace_id`. When OTel is enabled,
 the audit UI's event detail view shows the trace ID — search for it in
