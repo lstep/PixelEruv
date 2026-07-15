@@ -49,6 +49,16 @@ export class VideoBar {
   private tileHeight: number;
   private onResize: () => void = () => {};
 
+  // Debounce state for syncParticipants. LiveKit fires multiple events
+  // (ParticipantConnected, TrackSubscribed, etc.) in rapid succession when
+  // a participant joins. Each would synchronously create/destroy DOM video
+  // elements and attach/detach tracks, blocking the main thread and freezing
+  // the game loop. By deferring to setTimeout(0), the DOM work runs in a
+  // separate task after the current animation frame, and multiple rapid
+  // events coalesce into one sync.
+  private pendingParticipants: Map<string, AvParticipant> | null = null;
+  private syncScheduled = false;
+
   constructor(opts: VideoBarOptions) {
     this.avClient = opts.avClient;
     this.getName = opts.getName;
@@ -76,8 +86,9 @@ export class VideoBar {
 
     document.body.appendChild(this.container);
 
-    // Wire participant changes.
-    this.avClient.setParticipantsHandler((p) => this.syncParticipants(p));
+    // Wire participant changes. Debounced so DOM tile create/destroy work
+    // doesn't block the game loop (see pendingParticipants above).
+    this.avClient.setParticipantsHandler((p) => this.scheduleSync(p));
 
     // Wire the drag handle.
     this.setupHandleDrag();
@@ -170,6 +181,22 @@ export class VideoBar {
     for (const tile of this.tiles.values()) {
       tile.setSize(w, h);
     }
+  }
+
+  // scheduleSync defers syncParticipants to the next task via setTimeout(0).
+  // This prevents DOM tile create/destroy work from blocking the game loop's
+  // animation frame. Multiple rapid LiveKit events coalesce into one sync.
+  private scheduleSync(participants: Map<string, AvParticipant>): void {
+    this.pendingParticipants = participants;
+    if (this.syncScheduled) return;
+    this.syncScheduled = true;
+    setTimeout(() => {
+      this.syncScheduled = false;
+      if (this.pendingParticipants) {
+        this.syncParticipants(this.pendingParticipants);
+        this.pendingParticipants = null;
+      }
+    }, 0);
   }
 
   // syncParticipants creates/removes tiles to match the current participant
