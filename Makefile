@@ -36,7 +36,7 @@ proto:
 
 # Build Go binaries into dist/bin/ for the target GOOS/GOARCH.
 # Defaults to native; overridden by dist-x86 / dist-macos.
-build:
+build: proto
 	@mkdir -p $(DIST_BIN)
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pusher ./cmd/pusher
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/worldsim ./cmd/worldsim

@@ -95,7 +95,7 @@ When reporting information to me, be extremely concise and sacrifice grammar for
   ```bash
   make proto   # requires protoc installed; outputs to backend/internal/pb/ and frontend/src/proto/
   ```
-- Go 1.26.4 (per go.mod). Protoc and buf are not in PATH — install them if `make proto` fails.
+- Go 1.26.4 (per go.mod). Protoc and buf must be installed and in PATH — `make build` depends on `make proto` to regenerate the gitignored `.pb.go` files before compiling.
 
 ### Architecture overview
 
