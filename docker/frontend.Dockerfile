@@ -5,6 +5,11 @@ WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+# Sync game assets (sounds, non-character sprites) from the authoritative
+# assets/ directory into frontend/public/ so Vite bundles them.
+# See Makefile sync-game-assets target.
+COPY assets/sounds/ frontend/public/assets/sounds/
+COPY assets/sprites/ frontend/public/assets/sprites/
 RUN npx vite build
 
 FROM nginx:alpine
