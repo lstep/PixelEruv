@@ -61,6 +61,9 @@ type adjacentEntityInfo struct {
 	EntityType       string              `json:"entity_type,omitempty"`
 	OwnerExtension   string              `json:"owner_extension,omitempty"`
 	State            string              `json:"state,omitempty"`
+	Gid              uint32              `json:"gid,omitempty"`
+	GidOff           uint32              `json:"gid_off,omitempty"`
+	GidOn            uint32              `json:"gid_on,omitempty"`
 	OnInteractAction string              `json:"on_interact_action,omitempty"`
 	Actions          string              `json:"actions,omitempty"`
 	Interactions     map[string][]Effect `json:"interactions,omitempty"`

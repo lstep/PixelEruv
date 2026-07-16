@@ -80,6 +80,7 @@ type adjacentEntityInfo struct {
 	OwnerExtension   string              `json:"owner_extension,omitempty"`
 	State            string              `json:"state,omitempty"`
 	Gid              uint32              `json:"gid,omitempty"`
+	GidOff           uint32              `json:"gid_off,omitempty"`
 	GidOn            uint32              `json:"gid_on,omitempty"`
 	OnInteractAction string              `json:"on_interact_action,omitempty"`
 	Actions          string              `json:"actions,omitempty"`
@@ -354,7 +355,10 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				State    string `json:"state"`
 			}{EntityID: tid, State: newState})
 			if target != nil && target.GidOn != 0 {
-				gid := target.Gid
+				gid := target.GidOff
+				if gid == 0 {
+					gid = target.Gid
+				}
 				if isOn {
 					gid = target.GidOn
 				}
@@ -379,7 +383,10 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 			}{EntityID: tid, State: newState})
 			target := findEntityInDispatch(dispatch, tid)
 			if target != nil && target.GidOn != 0 {
-				gid := target.Gid
+				gid := target.GidOff
+				if gid == 0 {
+					gid = target.Gid
+				}
 				if newState == "on" {
 					gid = target.GidOn
 				}
@@ -422,7 +429,12 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				State    string `json:"state"`
 			}{EntityID: tid, State: "off"})
 			target := findEntityInDispatch(dispatch, tid)
-			if target != nil && target.Gid != 0 {
+			if target != nil && target.GidOff != 0 {
+				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
+					EntityID string `json:"entity_id"`
+					Gid      uint32 `json:"gid"`
+				}{EntityID: tid, Gid: target.GidOff})
+			} else if target != nil && target.Gid != 0 {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 					EntityID string `json:"entity_id"`
 					Gid      uint32 `json:"gid"`

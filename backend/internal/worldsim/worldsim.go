@@ -1185,6 +1185,7 @@ type adjacentEntityInfo struct {
 	OwnerExtension   string              `json:"owner_extension,omitempty"`
 	State            string              `json:"state,omitempty"`
 	Gid              uint32              `json:"gid,omitempty"`
+	GidOff            uint32              `json:"gid_off,omitempty"`
 	GidOn            uint32              `json:"gid_on,omitempty"`
 	OnInteractAction string              `json:"on_interact_action,omitempty"`
 	Actions          string              `json:"actions,omitempty"`
@@ -1354,6 +1355,7 @@ func (s *Simulator) adjacentEntitiesLocked(actingID string, px, py float32) []ad
 			OwnerExtension:   e.OwnerExtension,
 			State:            e.State,
 			Gid:              e.Gid,
+			GidOff:           e.GidOff,
 			GidOn:            e.GidOn,
 			OnInteractAction: e.OnInteractAction,
 			Actions:          e.Actions,

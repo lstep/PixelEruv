@@ -601,6 +601,10 @@ export class GameScene extends Phaser.Scene {
     // Interaction system assets.
     this.load.audio("clic", "/assets/sounds/clic.wav");
     this.load.image("lightGlow", "/assets/sprites/light-glow.png");
+    this.load.spritesheet("sparks", "/assets/sprites/sparks.png", {
+      frameWidth: 32,
+      frameHeight: 32,
+    });
   }
 
   create(): void {
@@ -784,6 +788,18 @@ export class GameScene extends Phaser.Scene {
           repeat: -1,
         });
       }
+    }
+
+    // --- Sparks animation (interaction proximity feedback) ---
+    // 4-frame one-shot: a small spark that shrinks and fades. Played
+    // client-side when the player enters an interactable entity's range.
+    if (!this.anims.exists("sparks_anim")) {
+      this.anims.create({
+        key: "sparks_anim",
+        frames: this.anims.generateFrameNumbers("sparks", { start: 0, end: 3 }),
+        frameRate: 12,
+        repeat: 0,
+      });
     }
 
     // --- Proximity spotlight textures ---
@@ -1981,22 +1997,12 @@ export class GameScene extends Phaser.Scene {
   // playSparks plays a one-shot sparks animation above the entity to
   // signal it is interactable. Client-side only — no server round-trip.
   private playSparks(avatar: Avatar): void {
-    // Simple one-shot: a small yellow star that fades out above the entity.
-    const spark = this.add.text(
-      avatar.sprite.x,
-      avatar.sprite.y - 20,
-      "✦",
-      { fontSize: "16px", color: "#fde047" },
-    );
+    if (!this.textures.exists("sparks")) return;
+    const spark = this.add.sprite(avatar.sprite.x, avatar.sprite.y - 20, "sparks");
     spark.setOrigin(0.5, 0.5);
     spark.setDepth(avatar.sprite.depth + 0.5);
-    this.tweens.add({
-      targets: spark,
-      y: spark.y - 16,
-      alpha: { from: 1, to: 0 },
-      duration: 800,
-      onComplete: () => spark.destroy(),
-    });
+    spark.play("sparks_anim");
+    spark.on("animationcomplete", () => spark.destroy());
   }
 
   // openInteractionPopup shows a popup with available actions for the
