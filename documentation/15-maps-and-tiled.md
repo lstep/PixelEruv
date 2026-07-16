@@ -121,7 +121,11 @@ subject (`{"entity_id", "map_id", "target_entity"}`).
 - **Draw-order algorithm** — how Y-sorting interacts with multi-layer objects
   and avatars passing in front of / behind furniture.
 - **Tiled → runtime mapping** — which Tiled custom properties map to which ECS
-  components (e.g. `traversable`, `interactable`, `zone_type`).
+  components (e.g. `traversable`, `interactable`, `zone_type`). Resolved for
+  interactive entities: see `21-map-design-guide.md` § "Entities" for the
+  full property → component mapping (`entity_type`, `owner_extension`,
+  `trigger_radius`, `gid_on`, `on_interact_action`, `actions`,
+  `interactions`).
 - **Collision representation** — per-tile, per-object, or polygon.
 
 ## Open questions
@@ -133,8 +137,17 @@ subject (`{"entity_id", "map_id", "target_entity"}`).
   position in the Tiled layer stack; a per-layer `sort_mode` (`static` or
   `dynamic`) decides whether it Y-sorts against avatars or stays at a fixed
   band. Not yet implemented in the lite MVP code.
-- **[OPEN] Tiled custom-property → ECS component convention.** Partially
-  resolved for interactive props (`owner_extension`, `interactable`,
-  `trigger_radius` → `Interactable`/`TriggerOwner`) — see the design doc
-  above, Part C.
+- **[RESOLVED] Tiled custom-property → ECS component convention.**
+  Interactive props on the "Entities" object layer use these properties:
+  `entity_type` and `owner_extension` (ownership hint for extensions),
+  `trigger_radius` (interaction distance in tiles), `gid_on` (alternate
+  sprite GID for state changes), `on_interact_action` (immediate mode:
+  action fired on E press), `actions` (popup mode: comma-separated
+  action_ids shown in a popup), and `interactions` (JSON map of
+  action_id to effects list). Worldsim loads these into the Entity
+  struct and includes them in the action dispatch payload. Extensions
+  read the dispatch and reply with state/appearance/animation updates.
+  See `21-map-design-guide.md` § "Entities" and
+  `documentation/plans/2026-07-15-interaction-system-design.md` for
+  the full specification.
 - **[OPEN] Map streaming** — load whole map vs. stream by AOI for large maps.

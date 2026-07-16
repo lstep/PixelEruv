@@ -52,8 +52,15 @@ layers store shapes.
 │  ├─── Interactive entities ─────────────────────────────────────│  │
 │  │                                                              │  │
 │  │  [6] "Entities" — object layer (props with gid + metadata)  │  │
-│  │       ├─ light-switch-1  (entity_type=light_switch)         │  │
-│  │       └─ crate-1         (owner_extension=ext-props)        │  │
+│  │       ├─ switch-1   (entity_type=light_switch,              │  │
+│  │       │              on_interact_action=toggle,             │  │
+│  │       │              interactions={toggle:[...]})           │  │
+│  │       ├─ light-1    (entity_type=light,                     │  │
+│  │       │              actions=toggle,activate,deactivate,    │  │
+│  │       │              interactions={...})                    │  │
+│  │       └─ door-1     (entity_type=door,                      │  │
+│  │                     on_interact_action=toggle,              │  │
+│  │                     interactions={toggle, toggle_wall})     │  │
 │  │                                                              │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                │
@@ -238,6 +245,10 @@ by ownership when dispatched).
 | `entity_type` | string | no | (none) | Hint for the owning extension. e.g. `light_switch`, `crate`, `lever`. A generic extension like ext-props claims entities whose `entity_type` it recognizes. |
 | `owner_extension` | string | no | (none) | Explicit ownership: the extension whose ID matches this value claims the entity. e.g. `ext-props`, `ext-vault-door`. If omitted, any extension that recognizes the `entity_type` can claim it. |
 | `trigger_radius` | float | no | `1.5` | How close (in tiles) a player must be to interact with this entity. Used by the worldsim's `InputHandlerSystem` to compute adjacent entities when an input trigger fires. |
+| `gid_on` | int | no | `0` | Alternate sprite GID for the "on" state. The object's own `gid` is the "off" state. The extension reads this from the dispatch and returns an `AppearanceUpdate` with the appropriate GID when the state changes. `0` means no alternate sprite. |
+| `on_interact_action` | string | no | (none) | **Immediate mode:** action_id fired automatically when the player presses E near this entity. Looks up `interactions[on_interact_action]` for the effects list. No popup is shown. Used for doors, switches, notification buttons. |
+| `actions` | string | no | (none) | **Popup mode:** comma-separated action_ids shown in a popup when the player presses E. Each looks up `interactions[action_id]` for the effects list. Used for lights and complex entities with multiple options. |
+| `interactions` | string (JSON) | no | `{}` | JSON-encoded map of action_id to a list of effects. Each effect has an `action` verb, optional `payload`, and `target_ids` array. See [Interactions data model](#interactions-data-model) below. |
 
 #### Ownership model
 
@@ -266,16 +277,78 @@ coexist without collision.
 
 #### Interaction flow
 
+The interaction system uses a **two-phase RPC** with an
+**immediate-mode opt-out**. The entity declares which mode it uses
+via Tiled properties:
+
+- **Immediate mode** (`on_interact_action`): pressing E fires the
+  action immediately. No popup. Used for doors, switches.
+- **Popup mode** (`actions`): pressing E shows a popup with available
+  actions. The user picks one, which sends `action:execute`. Used for
+  lights and complex entities.
+
 ```
 Player walks near entity, presses E
   → client sends ActionFrame{input: "key:E"}
   → pusher forwards to worldsim via NATS
-  → worldsim's InputHandlerSystem computes adjacent entities (within trigger_radius)
+  → worldsim computes adjacent entities (within trigger_radius)
+  → collects target entities from interactions target_ids (may be far away)
   → broadcasts to all extensions registered for "key:E"
-  → extension checks ownership (owner_extension or entity_type match)
-  → for owned entities: replies with state update + animation
-  → worldsim applies reply → replicates to clients in AOI
+  → extension checks ownership (owner_extension match)
+  → for each owned entity:
+      if on_interact_action is set (immediate mode):
+        → processes interactions[on_interact_action] effects
+        → replies with state updates + appearance updates + animations
+      if actions is set (popup mode):
+        → builds available_actions list (filtered by current state)
+        → replies with available_actions (no execution yet)
+  → worldsim applies replies → replicates state/sprite/animation to clients
+  → worldsim sends ActionResultFrame to client
+      if available_actions non-empty: client shows popup
+      if available_actions empty: immediate mode, done
+
+User clicks a popup action
+  → client sends ActionFrame{input: "action:execute", entity_id, action_id}
+  → worldsim dispatches to extensions
+  → extension finds target entity, processes interactions[action_id] effects
+  → replies with state updates + appearance updates + animations
+  → worldsim applies + replicates
 ```
+
+#### Interactions data model
+
+The `interactions` property is a JSON string encoding a map of
+action_id to a list of effects:
+
+```json
+{
+  "toggle": [
+    {"action": "toggle", "target_ids": ["light-1"]}
+  ],
+  "activate": [
+    {"action": "set_state", "payload": "on", "target_ids": ["light-1"]}
+  ],
+  "deactivate": [
+    {"action": "set_state", "payload": "off", "target_ids": ["light-1"]}
+  ]
+}
+```
+
+Each effect has:
+- `action` (string): The action verb for the target system. Different
+  extensions handle different verbs. ext-props handles `toggle`,
+  `set_state`, `activate`, `deactivate`, `turn_on`, `turn_off`.
+  ext-walls handles `toggle_wall`.
+- `target_ids` (string array): Entity IDs or zone IDs to apply the
+  action to. Empty array = standalone action or applies to self.
+- `payload` (string, optional): Free-form data passed to the handler
+  (e.g. `"on"`, `"off"`, `"locked"`, a notification message).
+
+The framework is a pure message router — it never interprets action
+strings. Adding a new entity with new behavior is a Tiled property
+exercise, not a code change. See
+`documentation/plans/2026-07-15-interaction-system-design.md` for the
+full design.
 
 ## Tileset requirements
 
@@ -343,8 +416,10 @@ Tiled JSON ──┐
                               ─→ Input trigger dispatch (NATS → extensions)
                                     │
                                     ├─→ ext-demo (logs)
-                                    ├─→ ext-walls (gate triggers)
-                                    └─→ ext-props (interactive entities, key:E)
+                                    ├─→ ext-walls (gate triggers, toggle_wall)
+                                    └─→ ext-props (interactive entities, key:E,
+                                          action:execute — toggle, set_state,
+                                          activate, deactivate)
 ```
 
 1. **Frontend** fetches the map record from PocketBase, loads the JSON and
@@ -693,12 +768,17 @@ order) and with different depth-sorting behavior.
 > property is still treated as a static decoration layer, so old maps keep
 > rendering without changes.
 
-### How to: create an interactive entity
+### How to: create an interactive entity (immediate mode — switch)
 
-Interactive entities (boxes, levers, light switches) are authored as
-tile-objects on an **Entities** object layer. They exist in the ECS from
-map load and are claimed by extensions (like ext-props) that register
-input triggers.
+Interactive entities are authored as tile-objects on an **Entities**
+object layer. They exist in the ECS from map load and are claimed by
+extensions (like ext-props) that register input triggers.
+
+**Immediate mode** fires an action automatically when the player
+presses E — no popup. Used for doors, switches, notification buttons.
+
+This example creates a wall switch that toggles two remote lights
+when pressed.
 
 1. **Create an object layer** named `Entities` (Layer → Add Object Layer).
 
@@ -707,36 +787,159 @@ input triggers.
    position.
 
 3. **Name the object**: right-click → Object Properties. Set **Name** to a
-   unique identifier, e.g. `light-switch-1`.
+   unique identifier, e.g. `switch-1`.
    > The name is the `entity_id` — it must be unique within the map.
 
 4. **Add custom properties**:
-   - `entity_type` = `light_switch` (String) — hint for the owning
-     extension. ext-props recognizes `light_switch` as a generic prop.
-   - `trigger_radius` = `1.5` (Float) — how close (in tiles) a player must
-     be to interact.
-   - `owner_extension` = `ext-props` (String, optional) — explicit
-     ownership. If omitted, any extension recognizing the `entity_type`
-     can claim it.
+   - `entity_type` = `light_switch` (String)
+   - `owner_extension` = `props` (String)
+   - `trigger_radius` = `1.5` (Float)
+   - `gid_on` = `381` (Int) — GID of the switch's "on" sprite
+   - `on_interact_action` = `toggle` (String) — immediate mode: fire
+     the `toggle` action on E press
+   - `interactions` = (String, JSON) — the effects to fire:
 
-5. **Save, export, upload** as usual.
+   ```json
+   {
+     "toggle": [
+       {"action": "toggle", "target_ids": ["switch-1"]},
+       {"action": "toggle", "target_ids": ["light-1"]},
+       {"action": "toggle", "target_ids": ["light-2"]}
+     ]
+   }
+   ```
 
-6. **Verify** in the worldsim and ext-props logs:
+5. **Create the target light entities** on the same Entities layer
+   (see [How to: create a light (popup mode)](#how-to-create-a-light-popup-mode)
+   below, or create them as immediate-mode entities too).
+
+6. **Save, export, upload** as usual.
+
+7. **Verify** in the ext-props logs:
    ```bash
-   docker logs pixeleruv-ext-props-1 2>&1 | grep "toggled prop"
-   # After pressing E near the entity in-game:
-   # toggled prop entity=light-switch-1 state=on
+   docker logs pixeleruv-ext-props-1 2>&1 | grep "processed interaction"
+   # After pressing E near the switch in-game:
+   # processed interaction entity=switch-1 input=key:E
    ```
 
 **Attributes used:**
 
 | Attribute | Value | Required | Notes |
 |---|---|---|---|
-| Object Name | `light-switch-1` (unique) | yes | Becomes the `entity_id` |
-| `gid` | (tile from tileset) | yes | Determines sprite appearance |
+| Object Name | `switch-1` (unique) | yes | Becomes the `entity_id` |
+| `gid` | (tile from tileset) | yes | "Off" sprite appearance |
 | `entity_type` | `light_switch` | no | Hint for the owning extension |
-| `owner_extension` | `ext-props` | no | Explicit ownership claim |
+| `owner_extension` | `props` | no | Explicit ownership claim |
 | `trigger_radius` | `1.5` | no (default 1.5) | Interaction distance in tiles |
+| `gid_on` | `381` | no | Alternate GID for "on" state |
+| `on_interact_action` | `toggle` | yes (immediate mode) | Action to fire on E press |
+| `interactions` | (JSON) | yes | Effects list per action_id |
+
+### How to: create a light (popup mode)
+
+**Popup mode** shows a popup with available actions when the player
+presses E. The user picks an action, which sends `action:execute`.
+Used for lights and complex entities with multiple options.
+
+1. **Place a tile-object** on the Entities layer and name it e.g. `light-1`.
+
+2. **Add custom properties**:
+   - `entity_type` = `light` (String)
+   - `owner_extension` = `props` (String)
+   - `trigger_radius` = `1.5` (Float)
+   - `gid_on` = `401` (Int) — GID of the lamp's "on" sprite
+   - `actions` = `toggle,activate,deactivate` (String) — popup mode:
+     show these actions in the popup
+   - `interactions` = (String, JSON):
+
+   ```json
+   {
+     "toggle": [
+       {"action": "toggle", "target_ids": ["light-1"]}
+     ],
+     "activate": [
+       {"action": "set_state", "payload": "on", "target_ids": ["light-1"]}
+     ],
+     "deactivate": [
+       {"action": "set_state", "payload": "off", "target_ids": ["light-1"]}
+     ]
+   }
+   ```
+
+3. **Save, export, upload** as usual.
+
+4. **In-game**: walk near the light, press E. A popup appears with
+   "Toggle", "Activate" (if off), or "Deactivate" (if on). The
+   extension filters actions based on current state — "Activate" is
+   hidden when the light is already on.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `light-1` (unique) | yes | Becomes the `entity_id` |
+| `gid` | (tile from tileset) | yes | "Off" sprite appearance |
+| `entity_type` | `light` | no | Hint for the owning extension |
+| `owner_extension` | `props` | no | Explicit ownership claim |
+| `trigger_radius` | `1.5` | no (default 1.5) | Interaction distance in tiles |
+| `gid_on` | `401` | no | Alternate GID for "on" state |
+| `actions` | `toggle,activate,deactivate` | yes (popup mode) | Comma-separated action_ids |
+| `interactions` | (JSON) | yes | Effects list per action_id |
+
+### How to: create a door (multi-extension, multi-effect)
+
+A door combines a sprite swap (handled by ext-props) with a wall zone
+toggle (handled by ext-walls). The entity declares both effects in its
+`interactions` — each extension processes only the verbs it knows.
+
+1. **Place a tile-object** on the Entities layer and name it e.g. `door-1`.
+
+2. **Add custom properties**:
+   - `entity_type` = `door` (String)
+   - `owner_extension` = `props` (String) — ext-props handles the sprite
+   - `trigger_radius` = `1.5` (Float)
+   - `gid_on` = `501` (Int) — GID of the open door sprite
+   - `on_interact_action` = `toggle` (String) — immediate mode
+   - `interactions` = (String, JSON):
+
+   ```json
+   {
+     "toggle": [
+       {"action": "toggle", "target_ids": ["door-1"]},
+       {"action": "toggle_wall", "target_ids": ["room-1-walls"]}
+     ]
+   }
+   ```
+
+3. **Create a wall zone** named `room-1-walls` on the Zones layer with
+   `zone_type=wall` (see [How to: create a wall](#how-to-create-a-wall-extension-driven)).
+   This is the zone that `toggle_wall` targets.
+
+4. **Save, export, upload** as usual.
+
+5. **In-game**: walk near the door, press E. ext-props swaps the door
+   sprite (open/closed), ext-walls toggles the wall zone (players can
+   walk through the doorway when open). Both effects fire from the
+   single `toggle` action — no code changes needed.
+
+> **How multi-extension dispatch works:** worldsim sends the same
+> dispatch to all extensions registered for `key:E`. ext-props reads
+> the effects list, handles `toggle` (sprite swap), skips
+> `toggle_wall`. ext-walls reads the same effects list, skips
+> `toggle`, handles `toggle_wall` (zone toggle). Each extension
+> processes only the verbs it knows.
+
+**Attributes used:**
+
+| Attribute | Value | Required | Notes |
+|---|---|---|---|
+| Object Name | `door-1` (unique) | yes | Becomes the `entity_id` |
+| `gid` | (tile from tileset) | yes | "Closed" sprite appearance |
+| `entity_type` | `door` | no | Hint for the owning extension |
+| `owner_extension` | `props` | no | ext-props handles the sprite |
+| `gid_on` | `501` | no | Alternate GID for "open" state |
+| `on_interact_action` | `toggle` | yes (immediate mode) | Action to fire on E press |
+| `interactions` | (JSON) | yes | Effects: toggle (sprite) + toggle_wall (zone) |
 
 ### How to: add a new tileset to the map
 
@@ -794,3 +997,8 @@ minutes. Issues are logged at three levels:
 | Portal `target_map` doesn't exist | Player stays on current map, worldsim logs "portal target map not found" | Create the destination map record in PocketBase |
 | Portal `target_entity` not found on destination | Player stays on current map, worldsim logs "target entity not found" | Create a base entity with that name on the destination map's "Entities" layer |
 | No `spawn` zone on map | Players spawn at (10, 10) fallback | Add at least one `zone_type=spawn` zone |
+| `interactions` JSON malformed | Entity is inert (no effects fire on E press) | Validate the JSON string in Tiled's property editor. Use the examples in [How to: create an interactive entity](#how-to-create-an-interactive-entity-immediate-mode-switch) as a template |
+| `on_interact_action` references a key not in `interactions` | Pressing E does nothing (no effects found) | Ensure the action_id in `on_interact_action` exists as a key in the `interactions` JSON |
+| `actions` list references a key not in `interactions` | Popup shows the action but clicking it does nothing | Ensure every action_id in `actions` exists as a key in the `interactions` JSON |
+| `target_ids` references a non-existent entity | Effect silently skipped (target not found) | Ensure target entity IDs match the **Name** of objects on the Entities layer (or zone IDs on the Zones layer) |
+| Both `on_interact_action` and `actions` set | Immediate action fires AND popup shows | Use only one mode per entity. `on_interact_action` = immediate, `actions` = popup |
