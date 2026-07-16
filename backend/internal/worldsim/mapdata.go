@@ -221,10 +221,11 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 				continue
 			}
 			pe := &PropEntity{
-				ID:  obj.Name,
-				Gid: obj.Gid,
-				X:   float32(obj.X) / tileW,
-				Y:   float32(obj.Y) / tileH,
+				ID:           obj.Name,
+				Gid:          obj.Gid,
+				X:            float32(obj.X) / tileW,
+				Y:            float32(obj.Y) / tileH,
+				Interactions: map[string][]Effect{},
 			}
 			for _, prop := range obj.Properties {
 				switch prop.Name {
