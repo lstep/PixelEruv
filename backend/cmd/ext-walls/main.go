@@ -39,11 +39,43 @@ type wallsOptions struct {
 }
 
 type triggerMsg struct {
-	ExtensionID  string `json:"extension_id"`
-	GateTriggers []struct {
+	ExtensionID   string `json:"extension_id"`
+	GateTriggers  []struct {
 		ZoneID   string `json:"zone_id"`
 		Behavior string `json:"behavior"`
 	} `json:"gate_triggers"`
+	InputTriggers []struct {
+		Input string `json:"input"`
+	} `json:"input_triggers"`
+}
+
+// Effect is a single action from an entity's interactions list.
+type Effect struct {
+	Action    string   `json:"action"`
+	Payload   string   `json:"payload,omitempty"`
+	TargetIDs []string `json:"target_ids"`
+}
+
+type adjacentEntityInfo struct {
+	EntityID         string              `json:"entity_id"`
+	EntityType       string              `json:"entity_type,omitempty"`
+	OwnerExtension   string              `json:"owner_extension,omitempty"`
+	State            string              `json:"state,omitempty"`
+	OnInteractAction string              `json:"on_interact_action,omitempty"`
+	Actions          string              `json:"actions,omitempty"`
+	Interactions     map[string][]Effect `json:"interactions,omitempty"`
+}
+
+type actionDispatchMsg struct {
+	EntityID         string               `json:"entity_id"`
+	Input            string               `json:"input"`
+	AdjacentEntities []adjacentEntityInfo `json:"adjacent_entities"`
+	TargetEntityID   string               `json:"target_entity_id,omitempty"`
+	ActionID         string               `json:"action_id,omitempty"`
+}
+
+type actionReplyMsg struct {
+	Handled bool `json:"handled"`
 }
 
 // zoneMeta is the zone metadata entry from worldsim.zones.
@@ -148,6 +180,9 @@ func main() {
 		trigData, _ := json.Marshal(triggerMsg{
 			ExtensionID:  extID,
 			GateTriggers: gateTriggers,
+			InputTriggers: []struct {
+				Input string `json:"input"`
+			}{{Input: "key:E"}, {Input: "action:execute"}},
 		})
 
 		nc.Publish(regSubject, regData)
@@ -192,6 +227,66 @@ func main() {
 		}
 		mu.Unlock()
 	})
+
+	// extension.walls.action — dispatched for "key:E" and "action:execute".
+	// ext-walls handles the "toggle_wall" action verb: it adds/removes the
+	// target zone from the active wall set and re-registers gate triggers.
+	// Other action verbs (toggle, set_state, etc.) are silently skipped.
+	if _, err := nc.Subscribe(fmt.Sprintf("extension.%s.action", extID), func(m *nats.Msg) {
+		var dispatch actionDispatchMsg
+		if err := json.Unmarshal(m.Data, &dispatch); err != nil {
+			return
+		}
+
+		resp := actionReplyMsg{}
+		mu.Lock()
+		for _, ent := range dispatch.AdjacentEntities {
+			// ext-walls does NOT filter by OwnerExtension — a door entity
+			// may be owned by props (for state/sprite) but declare
+			// toggle_wall effects that walls must handle. We process all
+			// adjacent entities and rely on the effects list to determine
+			// relevance.
+			// Determine which action_id to process: for action:execute, use
+			// dispatch.ActionID; for key:E immediate mode, use OnInteractAction.
+			actionID := dispatch.ActionID
+			if dispatch.Input != "action:execute" {
+				actionID = ent.OnInteractAction
+			}
+			if actionID == "" {
+				continue
+			}
+			effects := ent.Interactions[actionID]
+			for _, fx := range effects {
+				if fx.Action != "toggle_wall" {
+					continue
+				}
+				for _, zid := range fx.TargetIDs {
+					if zid == "" {
+						continue
+					}
+					if wallZones[zid] {
+						delete(wallZones, zid)
+					} else {
+						wallZones[zid] = true
+					}
+					resp.Handled = true
+					logger.Info("toggled wall zone", "zone", zid, "active", wallZones[zid])
+				}
+			}
+		}
+		mu.Unlock()
+
+		if resp.Handled {
+			register() // re-publish gate triggers with updated zone set
+		}
+		data, _ := json.Marshal(resp)
+		if err := m.Respond(data); err != nil {
+			logger.Warn("respond", "err", err)
+		}
+	}); err != nil {
+		logger.Error("subscribe action", "err", err)
+		os.Exit(1)
+	}
 
 	// worldsim.ready fires when worldsim's subscriptions are live (on startup
 	// and on restart). Fetch zone metadata and register.
