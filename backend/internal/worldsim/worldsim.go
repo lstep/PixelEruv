@@ -1276,6 +1276,7 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 				OwnerExtension: te.OwnerExtension,
 				State:          te.State,
 				Gid:            te.Gid,
+				GidOff:         te.GidOff,
 				GidOn:          te.GidOn,
 			})
 		}
