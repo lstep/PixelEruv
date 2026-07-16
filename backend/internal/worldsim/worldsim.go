@@ -92,6 +92,24 @@ type Entity struct {
 	// object layer), sent as an Appearance component so the frontend can render
 	// the correct tile sprite. 0 for player avatars.
 	Gid uint32
+	// GidOff is the original gid from map load (the "off" sprite). Stored
+	// separately so the extension can reference it when returning
+	// AppearanceUpdates. Equal to Gid at load time.
+	GidOff uint32
+	// GidOn is the alternate sprite gid for the "on" state (0 = no alternate).
+	// Passed to extensions in the dispatch payload so they can decide which gid
+	// to set via AppearanceUpdates.
+	GidOn uint32
+	// OnInteractAction is the action_id fired immediately when the player
+	// presses E near this entity (immediate mode). Empty for popup-mode entities.
+	OnInteractAction string
+	// Actions is a comma-separated list of action_ids shown in the interaction
+	// popup (popup mode). Empty for immediate-mode entities.
+	Actions string
+	// Interactions maps action_id to a list of effects. Each effect has an
+	// action verb, optional payload, and target IDs. Extensions read this to
+	// know what to do when an action is triggered.
+	Interactions map[string][]Effect
 	// SpriteBase is the sprite_bases PocketBase record ID selecting the
 	// character sheet for player avatars. Set at provision time from the
 	// player's persisted choice. Empty for base entities (they use Gid) and
@@ -342,14 +360,19 @@ func (s *Simulator) loadBaseEntities(mapName string, md *MapData) {
 	}
 	for _, pe := range md.Entities {
 		s.entities[pe.ID] = &Entity{
-			ID:             pe.ID,
-			Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: mapName},
-			EntityType:     pe.EntityType,
-			OwnerExtension: pe.OwnerExtension,
-			TriggerRadius:  pe.TriggerRadius,
-			Gid:            pe.Gid,
-			spawnedTo:      make(map[string]bool),
-			currentZones:   make(map[string]bool),
+			ID:               pe.ID,
+			Position:         &pb.Position{X: pe.X, Y: pe.Y, MapId: mapName},
+			EntityType:       pe.EntityType,
+			OwnerExtension:   pe.OwnerExtension,
+			TriggerRadius:    pe.TriggerRadius,
+			Gid:              pe.Gid,
+			GidOff:           pe.Gid,
+			GidOn:            pe.GidOn,
+			OnInteractAction: pe.OnInteractAction,
+			Actions:          pe.Actions,
+			Interactions:     pe.Interactions,
+			spawnedTo:        make(map[string]bool),
+			currentZones:     make(map[string]bool),
 		}
 	}
 }
@@ -388,17 +411,27 @@ func (s *Simulator) reloadBaseEntities(mapName string, newEntities []*PropEntity
 			e.OwnerExtension = pe.OwnerExtension
 			e.TriggerRadius = pe.TriggerRadius
 			e.Gid = pe.Gid
+			e.GidOff = pe.Gid
+			e.GidOn = pe.GidOn
+			e.OnInteractAction = pe.OnInteractAction
+			e.Actions = pe.Actions
+			e.Interactions = pe.Interactions
 			e.dirtyPosition = true
 		} else {
 			s.entities[pe.ID] = &Entity{
-				ID:             pe.ID,
-				Position:       &pb.Position{X: pe.X, Y: pe.Y, MapId: mapName},
-				EntityType:     pe.EntityType,
-				OwnerExtension: pe.OwnerExtension,
-				TriggerRadius:  pe.TriggerRadius,
-				Gid:            pe.Gid,
-				spawnedTo:      make(map[string]bool),
-				currentZones:   make(map[string]bool),
+				ID:               pe.ID,
+				Position:         &pb.Position{X: pe.X, Y: pe.Y, MapId: mapName},
+				EntityType:       pe.EntityType,
+				OwnerExtension:   pe.OwnerExtension,
+				TriggerRadius:    pe.TriggerRadius,
+				Gid:              pe.Gid,
+				GidOff:           pe.Gid,
+				GidOn:            pe.GidOn,
+				OnInteractAction: pe.OnInteractAction,
+				Actions:          pe.Actions,
+				Interactions:     pe.Interactions,
+				spawnedTo:        make(map[string]bool),
+				currentZones:     make(map[string]bool),
 			}
 		}
 	}
@@ -1147,9 +1180,15 @@ const actionInputTimeout = 300 * time.Millisecond
 // dispatch payload, letting extensions self-filter without re-reading the
 // map (see 13-ecs-design.md §6).
 type adjacentEntityInfo struct {
-	EntityID       string `json:"entity_id"`
-	EntityType     string `json:"entity_type,omitempty"`
-	OwnerExtension string `json:"owner_extension,omitempty"`
+	EntityID         string              `json:"entity_id"`
+	EntityType       string              `json:"entity_type,omitempty"`
+	OwnerExtension   string              `json:"owner_extension,omitempty"`
+	State            string              `json:"state,omitempty"`
+	Gid              uint32              `json:"gid,omitempty"`
+	GidOn            uint32              `json:"gid_on,omitempty"`
+	OnInteractAction string              `json:"on_interact_action,omitempty"`
+	Actions          string              `json:"actions,omitempty"`
+	Interactions     map[string][]Effect `json:"interactions,omitempty"`
 }
 
 // actionDispatchMsg is published to extension.<id>.action for every
@@ -1158,6 +1197,24 @@ type actionDispatchMsg struct {
 	EntityID         string               `json:"entity_id"` // the acting player
 	Input            string               `json:"input"`
 	AdjacentEntities []adjacentEntityInfo `json:"adjacent_entities"`
+	// TargetEntities are far-away entities referenced by adjacent entities'
+	// Interactions target_ids. Worldsim looks them up in s.entities so
+	// extensions can read their current state without a separate query.
+	TargetEntities []adjacentEntityInfo `json:"target_entities,omitempty"`
+	// TargetEntityID and ActionID are set for "action:execute" dispatches
+	// (the second phase of the popup flow). Empty for "key:E".
+	TargetEntityID string `json:"target_entity_id,omitempty"`
+	ActionID       string `json:"action_id,omitempty"`
+}
+
+// availableAction is a single action the client should display in the
+// interaction popup. The extension builds this list from the entity's
+// Actions property and current state.
+type availableAction struct {
+	EntityID    string `json:"entity_id"`
+	ActionID    string `json:"action_id"`
+	Label       string `json:"label"`
+	EntityLabel string `json:"entity_label,omitempty"`
 }
 
 // actionReplyMsg is the extension's reply to an actionDispatchMsg.
@@ -1166,11 +1223,16 @@ type actionReplyMsg struct {
 	Updates []struct {
 		EntityID string `json:"entity_id"`
 		State    string `json:"state"`
-	} `json:"updates"`
+	} `json:"updates,omitempty"`
+	AppearanceUpdates []struct {
+		EntityID string `json:"entity_id"`
+		Gid      uint32 `json:"gid"`
+	} `json:"appearance_updates,omitempty"`
 	Animations []struct {
 		EntityID    string `json:"entity_id"`
 		AnimationID uint32 `json:"animation_id"`
-	} `json:"animations"`
+	} `json:"animations,omitempty"`
+	AvailableActions []availableAction `json:"available_actions,omitempty"`
 }
 
 // applyAction handles a player-initiated ActionFrame (InputHandlerSystem —
@@ -1186,11 +1248,42 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 	}
 	px, py := e.Position.X, e.Position.Y
 	adjacent := s.adjacentEntitiesLocked(e.ID, px, py)
+
+	// Collect target entities referenced by adjacent entities' Interactions
+	// target_ids. These may be far away (e.g. ceiling lights controlled by a
+	// wall switch). Worldsim looks them up in s.entities so extensions can
+	// read their current state in a single dispatch.
+	targetSet := make(map[string]struct{})
+	for _, a := range adjacent {
+		for _, effects := range a.Interactions {
+			for _, fx := range effects {
+				for _, tid := range fx.TargetIDs {
+					if tid == "" {
+						continue
+					}
+					targetSet[tid] = struct{}{}
+				}
+			}
+		}
+	}
+	var targets []adjacentEntityInfo
+	for tid := range targetSet {
+		if te, ok := s.entities[tid]; ok && te.Position != nil {
+			targets = append(targets, adjacentEntityInfo{
+				EntityID:       te.ID,
+				EntityType:     te.EntityType,
+				OwnerExtension: te.OwnerExtension,
+				State:          te.State,
+				Gid:            te.Gid,
+				GidOn:          te.GidOn,
+			})
+		}
+	}
 	s.mu.Unlock()
 
 	extIDs := s.extMgr.ExtensionsForInput(action.GetInput())
 	if len(extIDs) == 0 {
-		s.sendActionResult(ctx, clientID, action.GetSeq(), false, "no_handler")
+		s.sendActionResult(ctx, clientID, action.GetSeq(), false, "no_handler", nil)
 		return
 	}
 
@@ -1198,6 +1291,9 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 		EntityID:         e.ID,
 		Input:            action.GetInput(),
 		AdjacentEntities: adjacent,
+		TargetEntities:   targets,
+		TargetEntityID:   action.GetEntityId(),
+		ActionID:         action.GetActionId(),
 	})
 	if err != nil {
 		s.logger.WarnContext(ctx, "action dispatch marshal", "err", err)
@@ -1205,6 +1301,7 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 	}
 
 	handled := false
+	var allAvailableActions []availableAction
 	for _, extID := range extIDs {
 		subject := fmt.Sprintf("extension.%s.action", extID)
 		reqCtx, cancel := context.WithTimeout(ctx, actionInputTimeout)
@@ -1223,6 +1320,7 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 		if resp.Handled {
 			handled = true
 			s.applyActionReply(&resp)
+			allAvailableActions = append(allAvailableActions, resp.AvailableActions...)
 		}
 	}
 
@@ -1230,7 +1328,7 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 	if !handled {
 		reason = "timeout"
 	}
-	s.sendActionResult(ctx, clientID, action.GetSeq(), handled, reason)
+	s.sendActionResult(ctx, clientID, action.GetSeq(), handled, reason, allAvailableActions)
 }
 
 // adjacentEntitiesLocked returns non-avatar entities within trigger range of
@@ -1251,9 +1349,15 @@ func (s *Simulator) adjacentEntitiesLocked(actingID string, px, py float32) []ad
 			continue
 		}
 		result = append(result, adjacentEntityInfo{
-			EntityID:       e.ID,
-			EntityType:     e.EntityType,
-			OwnerExtension: e.OwnerExtension,
+			EntityID:         e.ID,
+			EntityType:       e.EntityType,
+			OwnerExtension:   e.OwnerExtension,
+			State:            e.State,
+			Gid:              e.Gid,
+			GidOn:            e.GidOn,
+			OnInteractAction: e.OnInteractAction,
+			Actions:          e.Actions,
+			Interactions:     e.Interactions,
 		})
 	}
 	return result
@@ -1270,6 +1374,12 @@ func (s *Simulator) applyActionReply(resp *actionReplyMsg) {
 			e.dirtyState = true
 		}
 	}
+	for _, u := range resp.AppearanceUpdates {
+		if e, ok := s.entities[u.EntityID]; ok && e.Gid != u.Gid {
+			e.Gid = u.Gid
+			e.dirtyAppearance = true
+		}
+	}
 	for _, a := range resp.Animations {
 		if e, ok := s.entities[a.EntityID]; ok {
 			e.pendingAnimations = append(e.pendingAnimations, a.AnimationID)
@@ -1280,9 +1390,18 @@ func (s *Simulator) applyActionReply(resp *actionReplyMsg) {
 // sendActionResult publishes an ActionResultFrame to the client on its
 // replication subject (the pusher forwards ServerFrame bytes verbatim
 // regardless of which oneof case is set, so no new subject is needed).
-func (s *Simulator) sendActionResult(ctx context.Context, clientID string, seq uint32, ok bool, reason string) {
+func (s *Simulator) sendActionResult(ctx context.Context, clientID string, seq uint32, ok bool, reason string, availableActions []availableAction) {
+	var pbActions []*pb.AvailableAction
+	for _, a := range availableActions {
+		pbActions = append(pbActions, &pb.AvailableAction{
+			EntityId:    a.EntityID,
+			ActionId:    a.ActionID,
+			Label:       a.Label,
+			EntityLabel: a.EntityLabel,
+		})
+	}
 	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_ActionResult{
-		ActionResult: &pb.ActionResultFrame{Seq: seq, Ok: ok, Reason: reason},
+		ActionResult: &pb.ActionResultFrame{Seq: seq, Ok: ok, Reason: reason, AvailableActions: pbActions},
 	}}
 	frameBytes, err := proto.Marshal(frame)
 	if err != nil {
@@ -1833,7 +1952,8 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 			// component with their SpriteBase, even when it's empty — otherwise
 			// the client would fall back to a client-side hash and desync.
 			if e.Gid != 0 || e.NetworkSession != nil {
-				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase})
+				interactable := e.EntityType != "" || e.OwnerExtension != ""
+				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase, Interactable: interactable})
 				components = append(components, &pb.ComponentData{ComponentId: compAppearance, Data: appearanceBytes})
 			}
 			if e.State != "" {
@@ -1880,7 +2000,8 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				})
 			}
 			if e.dirtyAppearance {
-				appBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase})
+				interactable := e.EntityType != "" || e.OwnerExtension != ""
+				appBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase, Interactable: interactable})
 				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
 					EntityId:    e.ID,
 					ComponentId: compAppearance,
