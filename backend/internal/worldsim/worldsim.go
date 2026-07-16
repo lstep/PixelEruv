@@ -157,6 +157,13 @@ type Entity struct {
 	// color. DND fully excludes the player from A/V. Session-only — not
 	// persisted to PocketBase; resets to statusAvailable on connect.
 	Status uint32
+	// lastHeartbeat is the last time the pusher confirmed the WebSocket is
+	// alive (via client.<id>.heartbeat, published on each successful WS ping).
+	// The client reaper despawns entities whose heartbeat is older than
+	// clientHeartbeatTimeout, so an entity survives a lost client.disconnected
+	// (e.g. pusher crash/restart) instead of lingering forever. Only set for
+	// player avatars (provisioned via client.connected).
+	lastHeartbeat time.Time
 }
 
 type NetworkSession struct {
@@ -493,6 +500,21 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe client.disconnected: %w", err)
 	}
 
+	// client.<id>.heartbeat — pusher confirms the WebSocket is alive on each
+	// successful WS ping. Updates the entity's lastHeartbeat so the client
+	// reaper can detect and despawn orphaned entities (pusher crash/restart,
+	// lost client.disconnected) instead of leaving ghost avatars forever.
+	if _, err := s.nc.Subscribe("client.*.heartbeat", func(m *nats.Msg) {
+		clientID := subjectClientID(m.Subject, "heartbeat")
+		s.mu.Lock()
+		if e, ok := s.clients[clientID]; ok {
+			e.lastHeartbeat = time.Now()
+		}
+		s.mu.Unlock()
+	}); err != nil {
+		return fmt.Errorf("subscribe client.heartbeat: %w", err)
+	}
+
 	// client.<id>.input — queue input for the tick loop
 	if _, err := s.nc.Subscribe("client.*.input", func(m *nats.Msg) {
 		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.apply_input")
@@ -689,6 +711,11 @@ func (s *Simulator) Run(ctx context.Context) error {
 	// Start extension stale checker.
 	go s.extMgr.StartStaleChecker(ctx)
 
+	// Start client reaper: despawn player avatars whose pusher heartbeat has
+	// gone silent (pusher crash/restart, lost client.disconnected). Without
+	// this, orphaned entities linger forever and inflate the player count.
+	go s.startClientReaper(ctx)
+
 	// Run map integrity check at startup.
 	s.runIntegrityCheck()
 
@@ -730,6 +757,55 @@ func (s *Simulator) startHealthPublisher(ctx context.Context) {
 		case <-ticker.C:
 			s.publishHealth()
 		}
+	}
+}
+
+// clientHeartbeatTimeout is how long without a pusher heartbeat a player avatar
+// may live before the reaper despawns it. The pusher publishes a heartbeat on
+// every successful WS ping (every PingInterval, 30s), so 90s tolerates 3 lost
+// pings before reaping a legitimately-connected player.
+const clientHeartbeatTimeout = 90 * time.Second
+
+// startClientReaper periodically despawns player avatars whose pusher
+// heartbeat has gone silent. This catches entities orphaned when the pusher
+// crashes/restarts or a client.disconnected message is lost — without it they
+// linger in s.clients forever, inflating the player count and leaving ghost
+// avatars on other players' screens.
+func (s *Simulator) startClientReaper(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.reapStaleClients()
+		}
+	}
+}
+
+// reapStaleClients collects and despawns client entities whose lastHeartbeat is
+// older than clientHeartbeatTimeout. Stale IDs are gathered under the lock;
+// despawnClient is called per-ID outside the lock (it does PB I/O and takes the
+// lock itself).
+func (s *Simulator) reapStaleClients() {
+	s.mu.Lock()
+	now := time.Now()
+	var stale []string
+	for clientID, e := range s.clients {
+		if now.Sub(e.lastHeartbeat) > clientHeartbeatTimeout {
+			stale = append(stale, clientID)
+		}
+	}
+	s.mu.Unlock()
+
+	for _, clientID := range stale {
+		s.logger.Warn("reaping stale client", "client", clientID)
+		audit.Emit(s.nc, "client.reaped", audit.SeverityWarn,
+			audit.Actor{ClientID: clientID},
+			audit.Details{"timeout": clientHeartbeatTimeout.String()},
+			"")
+		s.despawnClient(context.Background(), clientID)
 	}
 }
 
@@ -903,6 +979,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		PlayerOptions: playerOptions,
 		spawnedTo:     make(map[string]bool),
 		currentZones:  make(map[string]bool),
+		lastHeartbeat: time.Now(),
 	}
 	// Create a mobile proximity zone that follows this avatar. Other players
 	// entering it triggers zone.enter, which the proximity clustering step

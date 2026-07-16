@@ -1,5 +1,25 @@
 # Dashboard
 
+## Client Reaper — orphaned player entities (ghost avatars / inflated player count)
+
+**Branch:** `feat/interaction-system` (uncommitted)
+**Status:** Implemented — `make proto`, `go build ./...`, `go test ./internal/worldsim/` all pass.
+
+The `/audit/world` dashboard counted more players than were actually connected. Root cause: worldsim had no stale-client reaper. When the pusher crashed/restarted or a `client.disconnected` NATS message was lost, the player avatar stayed in `s.clients` forever — inflating the count and leaving a ghost avatar on other players' screens. (The admin portal `backend/cmd/admin` does not touch worldsim; entities only enter `s.clients` via `provisionClient` on `client.connected` from the pusher.)
+
+Fix mirrors the existing extension stale-checker pattern:
+1. **Pusher** publishes `client.<id>.heartbeat` to NATS on each successful WS keepalive ping (every `PingInterval`, 30s).
+2. **Worldsim** subscribes to `client.*.heartbeat`, updates `Entity.lastHeartbeat`.
+3. **Worldsim** `startClientReaper` goroutine (started in `Run`) calls `reapStaleClients` every 10s; any client whose `lastHeartbeat` is older than `clientHeartbeatTimeout` (90s = 3 missed pings) is despawned via the existing `despawnClient` (queues DestroyEntity, saves position to PB, emits `client.reaped` audit).
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/internal/worldsim/worldsim.go` | `Entity.lastHeartbeat` field; set in `provisionClient`; `client.*.heartbeat` subscription; `clientHeartbeatTimeout` const; `startClientReaper`/`reapStaleClients`; launched in `Run` |
+| `backend/internal/pusher/pusher.go` | Publish `client.<id>.heartbeat` on successful keepalive ping |
+| `backend/internal/worldsim/worldsim_reaper_test.go` | New `TestReapStaleClients_DespawnsOrphans` |
+
 ## A/V Proximity Latency Fix (Issue #88)
 
 **Branch:** `main` (uncommitted)
