@@ -53,7 +53,7 @@ build:
 # them into dist/web/. The root maps/ and spritesheets/ directories are the
 # authoritative sources; frontend/public/assets/maps and frontend/public/sprites
 # are generated copies.
-sync-assets: sync-maps sync-sprites sync-icon
+sync-assets: sync-maps sync-sprites sync-icon sync-game-assets
 
 sync-maps:
 	@mkdir -p frontend/public/assets/maps
@@ -66,6 +66,13 @@ sync-sprites:
 sync-icon:
 	@mkdir -p frontend/public/assets
 	cp assets/pixel-eruv-icon.svg frontend/public/assets/pixel-eruv-icon.svg
+
+# sync-game-assets copies sounds and non-character sprites (e.g.
+# light-glow.png) from the authoritative assets/ directory.
+sync-game-assets:
+	@mkdir -p frontend/public/assets/sounds frontend/public/assets/sprites
+	cp -R assets/sounds/. frontend/public/assets/sounds/
+	cp -R assets/sprites/. frontend/public/assets/sprites/
 
 # Build frontend static assets into dist/web/
 web: sync-assets

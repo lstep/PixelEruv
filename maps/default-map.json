@@ -207,11 +207,31 @@
                          "name":"entity_type",
                          "type":"string",
                          "value":"light_switch"
-                        }, 
+                        },
+                        {
+                         "name":"owner_extension",
+                         "type":"string",
+                         "value":"props"
+                        },
                         {
                          "name":"trigger_radius",
                          "type":"float",
                          "value":1.5
+                        },
+                        {
+                         "name":"gid_on",
+                         "type":"int",
+                         "value":381
+                        },
+                        {
+                         "name":"on_interact_action",
+                         "type":"string",
+                         "value":"toggle"
+                        },
+                        {
+                         "name":"interactions",
+                         "type":"string",
+                         "value":"{\"toggle\":[{\"action\":\"toggle\",\"target_ids\":[\"light-switch-1\"]}]}"
                         }],
                  "rotation":0,
                  "type":"",
@@ -219,6 +239,50 @@
                  "width":32,
                  "x":191.88,
                  "y":317.426
+                },
+                {
+                 "gid":400,
+                 "height":32,
+                 "id":11,
+                 "name":"light-1",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"entity_type",
+                         "type":"string",
+                         "value":"light"
+                        },
+                        {
+                         "name":"owner_extension",
+                         "type":"string",
+                         "value":"props"
+                        },
+                        {
+                         "name":"trigger_radius",
+                         "type":"float",
+                         "value":1.5
+                        },
+                        {
+                         "name":"gid_on",
+                         "type":"int",
+                         "value":401
+                        },
+                        {
+                         "name":"actions",
+                         "type":"string",
+                         "value":"toggle,activate,deactivate"
+                        },
+                        {
+                         "name":"interactions",
+                         "type":"string",
+                         "value":"{\"toggle\":[{\"action\":\"toggle\",\"target_ids\":[\"light-1\"]}],\"activate\":[{\"action\":\"set_state\",\"payload\":\"on\",\"target_ids\":[\"light-1\"]}],\"deactivate\":[{\"action\":\"set_state\",\"payload\":\"off\",\"target_ids\":[\"light-1\"]}]}"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":224,
+                 "y":320
                 }],
          "opacity":1,
          "properties":[
