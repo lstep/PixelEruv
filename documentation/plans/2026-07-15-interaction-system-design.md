@@ -52,10 +52,10 @@ future readers understand not just *what* was decided but *why*.
 The codebase already had most of the plumbing:
 
 - The "E" key sends a `key:E` ActionFrame to the server
-  (`GameScene.ts` line 736).
+  (`GameScene.ts` line 810).
 - Worldsim's `applyAction()` finds adjacent entities within trigger
   radius and dispatches to extensions registered for the input type
-  via NATS request-reply RPC (`worldsim.go` line 1141).
+  via NATS request-reply RPC (`worldsim.go` line 1180).
 - `ext-props` already toggles a `light_switch` entity type between
   "on"/"off" state and returns Updates + Animations
   (`ext-props/main.go` line 136).
@@ -64,7 +64,7 @@ The codebase already had most of the plumbing:
   `replication.proto` line 28).
 - `applyActionReply()` applies state updates to entities by ID lookup
   in `s.entities` — **without adjacency filtering** (`worldsim.go`
-  line 1225). This is critical: it means an extension can update
+  line 1264). This is critical: it means an extension can update
   far-away entities if it knows their IDs.
 
 **Gaps:** frontend doesn't handle component 2 or PlayAnimation
@@ -1315,7 +1315,7 @@ for (const anim of batch.animations) {
 **Interaction popup:**
 
 New method `openInteractionPopup(actions: AvailableActionView[])`
-modeled on the existing `openDropdown()` pattern (line 1532). Groups
+modeled on the existing `openDropdown()` pattern (line 1737). Groups
 actions by `entityLabel`, shows buttons with `label` text. On click:
 `this.ws?.sendAction("action:execute", action.entityId, action.actionId)`
 and close popup.
