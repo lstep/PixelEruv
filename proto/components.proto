@@ -39,6 +39,7 @@ message Appearance {
   uint32 gid = 1;          // Tiled global tile ID (0 = no sprite)
   reserved 2;              // was sprite_index (replaced by sprite_base)
   string sprite_base = 3;  // sprite_bases record ID; empty for props / guests
+  bool interactable = 4;   // true for entities that support interactions (client-side sparks)
 }
 
 // Component ID 4 — DisplayName
