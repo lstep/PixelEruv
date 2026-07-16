@@ -7,7 +7,9 @@ RUN npm ci
 COPY frontend/ ./
 # Sync game assets (sounds, non-character sprites) from the authoritative
 # assets/ directory into frontend/public/ so Vite bundles them.
+# frontend/public/assets/ is gitignored, so mkdir is required before COPY.
 # See Makefile sync-game-assets target.
+RUN mkdir -p frontend/public/assets/sounds frontend/public/assets/sprites
 COPY assets/sounds/ frontend/public/assets/sounds/
 COPY assets/sprites/ frontend/public/assets/sprites/
 RUN npx vite build
