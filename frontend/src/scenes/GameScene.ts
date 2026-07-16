@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { fromBinary } from "@bufbuild/protobuf";
-import { AppearanceSchema, DisplayNameSchema } from "../proto/components_pb";
-import { WsClient, decodePosition, ReplicationBatchView, ConnectionState } from "../net/WsClient";
+import { AppearanceSchema, DisplayNameSchema, EntityStateSchema } from "../proto/components_pb";
+import { WsClient, decodePosition, ReplicationBatchView, ConnectionState, AvailableActionView } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
 import { VideoBar } from "../ui/VideoBar";
 import { ScreenShareOverlay } from "../ui/ScreenShareOverlay";
@@ -15,6 +15,9 @@ import type { ChatPanel } from "../ui/ChatPanel";
 import { getUsername } from "../username";
 
 const TILE_SIZE = 32;
+
+// Animation IDs shared between extensions and the frontend.
+const ANIM_CLICK = 3;   // click sound effect
 
 // --- Decoration layers / depth bands ---
 // See documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md
@@ -354,6 +357,20 @@ interface Avatar {
   // True for base entities (props) rendered as tile sprites — these don't
   // animate or lerp, they just sit at their replicated position.
   isProp: boolean;
+  // Entity state string (EntityState component, comp ID 2). For props,
+  // extensions set this to "on"/"off" or other opaque values. Used to
+  // show/hide the light glow overlay and filter popup actions.
+  state: string;
+  // True for entities that support interactions (Appearance.interactable
+  // flag). Used by the client-side sparks-on-approach polling.
+  interactable: boolean;
+  // Light glow overlay (null for non-light props). A 7x7-tile PNG with a
+  // radial gradient, shown when state === "on".
+  lightGlow: Phaser.GameObjects.Image | null;
+  // Tracks whether the sparks animation has been shown for the current
+  // proximity entry. Reset when the player leaves the trigger radius so
+  // it can fire again on re-entry.
+  sparksShown: boolean;
   // Remote avatars: last two server positions with arrival timestamps
   // for entity interpolation (Gambetta Part III). posA is the older
   // update, posB is the newer. The sprite interpolates between them over
@@ -425,6 +442,9 @@ export class GameScene extends Phaser.Scene {
   private dayNightOverlay: DayNightOverlay | null = null;
   // Floating on-screen joystick for touch devices. Null on desktop.
   private joystick: VirtualJoystick | null = null;
+  // Interaction popup container (null when closed). Shows available
+  // actions when pressing E near a popup-mode entity.
+  private interactionPopup: Phaser.GameObjects.Container | null = null;
   // Info dropdown opened by clicking a name tag's status dot. Only one open
   // at a time. Shows "Hello world" for regular users, IP + device ID for
   // admins, plus stub "Invite" and (admin-only) "Ban" buttons.
@@ -578,6 +598,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // Interaction system assets.
+    this.load.audio("clic", "/assets/sounds/clic.wav");
+    this.load.image("lightGlow", "/assets/sprites/light-glow.png");
   }
 
   create(): void {
@@ -982,6 +1005,7 @@ export class GameScene extends Phaser.Scene {
         this.statusByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
+        this.closeInteractionPopup();
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
         this.inputDirty = true;
@@ -1028,6 +1052,13 @@ export class GameScene extends Phaser.Scene {
           msg.setText(`You are banned ${expiry}\n${reason}`);
         }
       },
+      onActionResult: (result) => {
+        if (result.availableActions.length > 0) {
+          this.openInteractionPopup(result.availableActions);
+        } else {
+          this.closeInteractionPopup();
+        }
+      },
     });
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
@@ -1053,6 +1084,7 @@ export class GameScene extends Phaser.Scene {
       this.screenShareOverlay = null;
       this.avClient = null;
       this.closeDropdown();
+      this.closeInteractionPopup();
       topMenu?.detachAvControls();
       // Remove generated glow textures so re-creating the scene doesn't
       // warn about duplicate keys.
@@ -1237,6 +1269,25 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    // --- Sparks on approach: poll distance to interactable props ---
+    if (local) {
+      const lx = local.sprite.x / TILE_SIZE;
+      const ly = local.sprite.y / TILE_SIZE;
+      for (const av of this.avatars.values()) {
+        if (!av.isProp || !av.interactable) continue;
+        const dx = av.sprite.x / TILE_SIZE - lx;
+        const dy = av.sprite.y / TILE_SIZE - ly;
+        const dist = Math.hypot(dx, dy);
+        const inRange = dist <= 2.0; // 2-tile trigger radius
+        if (inRange && !av.sparksShown) {
+          this.playSparks(av);
+          av.sparksShown = true;
+        } else if (!inRange && av.sparksShown) {
+          av.sparksShown = false;
+        }
+      }
+    }
+
     // --- A/V: spatial volume + video bar tick ---
     if (this.avClient && this.videoBar) {
       const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
@@ -1358,6 +1409,8 @@ export class GameScene extends Phaser.Scene {
       let y = 10 * TILE_SIZE;
       let gid = 0;
       let spriteBase = "";
+      let interactable = false;
+      let state = "";
       let displayName = "";
       let isGuest = false;
       let isAdmin = false;
@@ -1373,6 +1426,11 @@ export class GameScene extends Phaser.Scene {
           const appearance = fromBinary(AppearanceSchema, comp.data);
           gid = appearance.gid;
           spriteBase = appearance.spriteBase;
+          interactable = appearance.interactable;
+        } else if (comp.componentId === 2) {
+          // EntityState component — opaque state string (e.g. "on"/"off")
+          const es = fromBinary(EntityStateSchema, comp.data);
+          state = es.state;
         } else if (comp.componentId === 4) {
           // DisplayName component — player avatar name tag
           const dn = fromBinary(DisplayNameSchema, comp.data);
@@ -1400,6 +1458,10 @@ export class GameScene extends Phaser.Scene {
             dir: 0,
             moving: false,
             isProp: true,
+            state,
+            interactable,
+            lightGlow: null,
+            sparksShown: false,
             remotePosA: null,
             remotePosB: null,
             predX: 0,
@@ -1407,7 +1469,11 @@ export class GameScene extends Phaser.Scene {
             nameTag: null,
             glow: null,
           });
-          console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid}`);
+          // Show glow overlay if the prop starts in the "on" state.
+          if (state === "on" && this.textures.exists("lightGlow")) {
+            this.showLightGlow(this.avatars.get(spawn.entityId)!);
+          }
+          console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid} state=${state}`);
           continue;
         }
       }
@@ -1433,6 +1499,10 @@ export class GameScene extends Phaser.Scene {
         dir: 0,
         moving: false,
         isProp: false,
+        state: "",
+        interactable: false,
+        lightGlow: null,
+        sparksShown: false,
         remotePosA: null,
         remotePosB: { x, y: y + TILE_SIZE / 2, t: performance.now() },
         predX: x / TILE_SIZE,
@@ -1527,20 +1597,42 @@ export class GameScene extends Phaser.Scene {
         }
       } else if (upd.componentId === 3) {
         // Appearance component — hot-swap the character sheet if sprite_base
-        // changed. Only applies to player avatars (props use gid, unchanged).
-        if (!avatar.isProp) {
-          const app = fromBinary(AppearanceSchema, upd.data);
+        // changed (player avatars), or swap the tile sprite frame if gid
+        // changed (props, e.g. light turning on/off).
+        const app = fromBinary(AppearanceSchema, upd.data);
+        if (avatar.isProp) {
+          // Props: swap the tile sprite to the new gid frame.
+          if (app.gid !== 0) {
+            const mapped = gidToFrame(app.gid, this.tilesets);
+            if (mapped) {
+              avatar.sprite.setTexture(mapped.sheet, mapped.frame);
+              avatar.charKey = mapped.sheet;
+            }
+          }
+        } else {
+          // Player avatars: hot-swap the character sheet.
           const newKey = app.spriteBase
             ? app.spriteBase
             : CHAR_SPRITES[spriteIndexForEntity(upd.entityId)];
           if (newKey !== avatar.charKey) {
             avatar.sprite.setTexture(newKey, DIR_FRAME_START[avatar.dir]);
             avatar.charKey = newKey;
-            // Re-play the current animation on the new texture.
             const animKey = avatar.moving
               ? `${newKey}_walk_${DIR_NAMES[avatar.dir]}`
               : `${newKey}_idle_${DIR_NAMES[avatar.dir]}`;
             avatar.sprite.play(animKey, true);
+          }
+        }
+      } else if (upd.componentId === 2) {
+        // EntityState component — opaque state string (e.g. "on"/"off").
+        // For props, show/hide the light glow overlay based on state.
+        const es = fromBinary(EntityStateSchema, upd.data);
+        avatar.state = es.state;
+        if (avatar.isProp) {
+          if (es.state === "on") {
+            this.showLightGlow(avatar);
+          } else {
+            this.hideLightGlow(avatar);
           }
         }
       }
@@ -1555,6 +1647,7 @@ export class GameScene extends Phaser.Scene {
         }
         avatar.nameTag?.destroy();
         avatar.glow?.destroy();
+        avatar.lightGlow?.destroy();
         avatar.sprite.destroy();
         this.avatars.delete(dest.entityId);
         this.displayNameByEntity.delete(dest.entityId);
@@ -1563,6 +1656,15 @@ export class GameScene extends Phaser.Scene {
         this.statusByEntity.delete(dest.entityId);
         this.adminInfoByEntity.delete(dest.entityId);
         console.log(`destroyed ${dest.entityId}`);
+      }
+    }
+
+    // Play animations (PlayAnimation replication messages).
+    for (const anim of batch.animations) {
+      const avatar = this.avatars.get(anim.entityId);
+      if (!avatar) continue;
+      if (anim.animationId === ANIM_CLICK) {
+        this.sound.play("clic", { volume: 0.5 });
       }
     }
   }
@@ -1854,6 +1956,128 @@ export class GameScene extends Phaser.Scene {
     this.dropdownContainer?.destroy();
     this.dropdownContainer = null;
     this.openDropdownEntityId = null;
+  }
+
+  // showLightGlow creates (if needed) and shows the light glow overlay
+  // above a prop entity. The overlay is a 7x7-tile PNG with a radial
+  // gradient, centered on the prop's base.
+  private showLightGlow(avatar: Avatar): void {
+    if (!this.textures.exists("lightGlow")) return;
+    if (!avatar.lightGlow) {
+      avatar.lightGlow = this.add.image(avatar.sprite.x, avatar.sprite.y, "lightGlow");
+      avatar.lightGlow.setOrigin(0.5, 0.5);
+      avatar.lightGlow.setDepth(avatar.sprite.depth - 0.1);
+      avatar.lightGlow.setBlendMode(Phaser.BlendModes.ADD);
+    }
+    avatar.lightGlow.setVisible(true);
+    avatar.lightGlow.setPosition(avatar.sprite.x, avatar.sprite.y);
+  }
+
+  // hideLightGlow hides the light glow overlay for a prop entity.
+  private hideLightGlow(avatar: Avatar): void {
+    avatar.lightGlow?.setVisible(false);
+  }
+
+  // playSparks plays a one-shot sparks animation above the entity to
+  // signal it is interactable. Client-side only — no server round-trip.
+  private playSparks(avatar: Avatar): void {
+    // Simple one-shot: a small yellow star that fades out above the entity.
+    const spark = this.add.text(
+      avatar.sprite.x,
+      avatar.sprite.y - 20,
+      "✦",
+      { fontSize: "16px", color: "#fde047" },
+    );
+    spark.setOrigin(0.5, 0.5);
+    spark.setDepth(avatar.sprite.depth + 0.5);
+    this.tweens.add({
+      targets: spark,
+      y: spark.y - 16,
+      alpha: { from: 1, to: 0 },
+      duration: 800,
+      onComplete: () => spark.destroy(),
+    });
+  }
+
+  // openInteractionPopup shows a popup with available actions for the
+  // player to choose from. Positioned at the screen center since
+  // multiple entities may be involved.
+  private openInteractionPopup(actions: AvailableActionView[]): void {
+    this.closeInteractionPopup();
+
+    const cam = this.cameras.main;
+    const container = this.add.container(cam.worldView.centerX, cam.worldView.centerY);
+    const children: Phaser.GameObjects.GameObject[] = [];
+
+    const panelW = 160;
+    const pad = 8;
+    const btnHeight = 22;
+    const btnGap = 4;
+
+    // Group actions by entityLabel for display.
+    const groups = new Map<string, AvailableActionView[]>();
+    for (const a of actions) {
+      const key = a.entityLabel || a.entityId;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(a);
+    }
+
+    let y = pad;
+    for (const [label, acts] of groups) {
+      // Group header
+      const header = this.add.text(-panelW / 2 + pad, y, label, {
+        fontFamily: "Nunito, sans-serif",
+        fontSize: "10px",
+        color: "#94a3b8",
+      });
+      header.setOrigin(0, 0);
+      children.push(header);
+      y += 14;
+
+      // Action buttons
+      for (const act of acts) {
+        const btn = this.add.text(-panelW / 2 + pad, y, act.label, {
+          fontFamily: "Nunito, sans-serif",
+          fontSize: "12px",
+          color: "#ffffff",
+          fontStyle: "bold",
+          backgroundColor: "#3e3e4a",
+          padding: { left: 8, right: 8, top: 4, bottom: 4 },
+        });
+        btn.setOrigin(0, 0);
+        btn.setInteractive({ useHandCursor: true });
+        btn.on("pointerover", () => btn.setStyle({ backgroundColor: "#52525e" }));
+        btn.on("pointerout", () => btn.setStyle({ backgroundColor: "#3e3e4a" }));
+        btn.on("pointerdown", () => {
+          this.ws?.sendAction("action:execute", act.entityId, act.actionId);
+          this.closeInteractionPopup();
+        });
+        children.push(btn);
+        y += btnHeight + btnGap;
+      }
+      y += 4;
+    }
+
+    y -= btnGap + 4;
+    const panelH = y + pad;
+
+    // Background
+    const bg = this.add.graphics();
+    bg.fillStyle(0x333340, 0.95);
+    bg.fillRoundedRect(-panelW / 2, 0, panelW, panelH, 6);
+    bg.setDepth(-1);
+    children.unshift(bg);
+
+    container.add(children);
+    container.setScrollFactor(0);
+    container.setDepth(10000);
+    this.interactionPopup = container;
+  }
+
+  // closeInteractionPopup destroys the current interaction popup if any.
+  private closeInteractionPopup(): void {
+    this.interactionPopup?.destroy();
+    this.interactionPopup = null;
   }
 
   // resolveDisplayName returns the display name for an entity, used by the
