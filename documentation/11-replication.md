@@ -308,17 +308,20 @@ registry, generated at build time from the component definitions.
 
 | Component ID | Component | Protobuf message |
 |---|---|---|
-| 1 | `Position` | `PositionData { float x; float y; string map_id; string dir; }` |
-| 2 | `Velocity` | `VelocityData { float vx; float vy; }` |
-| 3 | `Interactable` | `InteractableData { uint32 type; float radius; }` |
-| 4 | `Traversable` | `TraversableData { bool traversable; }` |
-| 5 | `AvatarAppearance` | `AvatarAppearanceData { ... }` |
-| 6 | `ZoneMembership` | `ZoneMembershipData { string zone_id; string joined_at; }` |
-| 7 | `NetworkSession` | *(not replicated — server-only)* |
-| 8 | `Item` | `ItemData { string item_type; string display_name; string icon; bool stackable; uint32 quantity; }` |
-| 9 | `InventorySlot` | `InventorySlotData { string owner_entity_id; }` *(replicated to owner only)* |
-| 10 | `Equipped` | `EquippedData { string owner_entity_id; string slot; }` *(replicated to owner only)* |
-| 11 | `Equipment` | `EquipmentData { repeated EquipmentSlot slots; }` *(replicated to all in AOI)* |
+| 1 | `Position` | `PositionData { float x; float y; string map_id; uint32 dir; }` |
+| 2 | `EntityState` | `EntityStateData { string state; }` — generic state for interactive props ("on", "off", "locked", ...). Set by extensions via action replies. See `documentation/plans/2026-07-15-interaction-system-design.md`. |
+| 3 | `Appearance` | `AppearanceData { uint32 gid; string sprite_base; bool interactable; }` — Tiled GID for base entities, sprite_base for avatars, interactable flag for client-side sparks. `gid` is swapped to `gid_on` when state changes. |
+| 4 | `DisplayName` | `DisplayNameData { string name; bool is_guest; bool is_admin; uint32 status; }` — player avatar name tag |
+| 5 | `Velocity` | *(reserved — not currently used)* |
+| 6 | `Interactable` | *(server-only — not replicated; the `interactable` bool in Appearance replaces it for client-side rendering)* |
+| 7 | `Traversable` | `TraversableData { bool traversable; }` |
+| 8 | `AvatarAppearance` | *(deprecated — replaced by Appearance for props, sprite_base for avatars)* |
+| 9 | `ZoneMembership` | `ZoneMembershipData { string zone_id; string joined_at; }` |
+| 10 | `NetworkSession` | *(not replicated — server-only)* |
+| 11 | `Item` | `ItemData { string item_type; string display_name; string icon; bool stackable; uint32 quantity; }` |
+| 12 | `InventorySlot` | `InventorySlotData { string owner_entity_id; }` *(replicated to owner only)* |
+| 13 | `Equipped` | `EquippedData { string owner_entity_id; string slot; }` *(replicated to owner only)* |
+| 14 | `Equipment` | `EquipmentData { repeated EquipmentSlot slots; }` *(replicated to all in AOI)* |
 | ... | ... | ... |
 
 > `NetworkSession` is never replicated — it is a World-Simulator-only
@@ -386,22 +389,45 @@ model: the client replication code is fixed and generic.
 
 ## 7. Wire format summary
 
-All replication messages are wrapped in a single envelope:
+All replication messages are sent as a batch per tick:
 
 ```protobuf
-message ReplicationMessage {
-  oneof payload {
-    SpawnEntity spawn = 1;
-    UpdateComponent update = 2;
-    DestroyEntity destroy = 3;
-    PlayAnimation animation = 4;
-  }
+message SpawnEntity {
+  string entity_id = 1;
+  repeated ComponentData components = 2;
+  uint32 snapshot_seq = 3;
+}
+
+message UpdateComponent {
+  string entity_id = 1;
+  uint32 component_id = 2;
+  bytes data = 3;                  // protobuf-encoded component payload
+  uint32 snapshot_seq = 4;
+}
+
+message DestroyEntity {
+  string entity_id = 1;
+  uint32 snapshot_seq = 2;
+}
+
+message PlayAnimation {
+  string entity_id = 1;
+  uint32 animation_id = 2;
 }
 
 message ReplicationBatch {
-  uint32 snapshot_seq = 1;
-  repeated ReplicationMessage messages = 2;
+  uint32 last_input_seq = 1;       // last processed input seq (for reconciliation)
+  repeated SpawnEntity spawns = 2;
+  repeated UpdateComponent updates = 3;
+  repeated DestroyEntity destroys = 4;
+  repeated PlayAnimation animations = 5;
 }
+
+message ComponentData {
+  uint32 component_id = 1;
+  bytes data = 2;
+}
+```
 ```
 
 One `ReplicationBatch` is sent per client per tick. The `snapshot_seq` allows

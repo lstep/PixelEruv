@@ -632,14 +632,25 @@ Payload:
 ```
 
 The kernel collects **all** replies within a timeout window (e.g. 500 ms). All
-replies are applied — updates are applied to the ECS, `consume_items` removes
-items from the player's inventory. The kernel then sends a single
-`ActionResultFrame{ ok: true }` to the client. If no reply arrives within the
-timeout, the kernel sends `ActionResultFrame{ ok: false, reason: "timeout" }`.
+replies are applied — `updates` set entity state, `appearance_updates` swap
+sprite GIDs, `animations` queue PlayAnimation messages, and `consume_items`
+removes items from the player's inventory. The kernel aggregates
+`available_actions` from all replies and sends a single
+`ActionResultFrame{ ok: true, available_actions: [...] }` to the client. If
+no reply arrives within the timeout, the kernel sends
+`ActionResultFrame{ ok: false, reason: "timeout" }`.
 
 If no extension registered for the input type, the kernel sends
 `ActionResultFrame{ ok: false, reason: "no_handler" }` immediately (no NATS
 round-trip).
+
+For the generic interaction system (ext-props), the dispatch also includes
+`target_entities` — entities referenced by `interactions` `target_ids` that
+may be far away (e.g. ceiling lights controlled by a wall switch). The kernel
+looks these up in the ECS and includes their state/gid in the dispatch so
+extensions can read and update them in a single round-trip. See
+`documentation/plans/2026-07-15-interaction-system-design.md` for the full
+design.
 
 ### Performance
 

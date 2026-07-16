@@ -110,13 +110,20 @@ sequenceDiagram
 
 ## 3. Interaction with input trigger broadcast
 
-An `ActionFrame` carries an `input_type` (e.g. `click:left`, `key:E`) and
-optional target tile coordinates (for clicks). The World Simulator computes
-contextual data (range, LOS, entities on tile / adjacent entities, equipment
-snapshot) and broadcasts to all extensions that registered for that input
-type. Each extension self-filters and replies asynchronously. All replies
-within the timeout are applied. The kernel has no TriggerSystem — all
+An `ActionFrame` carries an `input` (e.g. `click:left`, `key:E`,
+`action:execute`) and optional `entity_id`/`action_id` (for popup-mode
+choices). The World Simulator computes contextual data (range, LOS, entities
+on tile / adjacent entities, target entities from `interactions` target_ids,
+equipment snapshot) and broadcasts to all extensions that registered for that
+input type. Each extension self-filters and replies asynchronously. All
+replies within the timeout are applied. The kernel has no TriggerSystem — all
 interaction behavior is in extensions.
+
+For the two-phase interaction flow (see
+`documentation/plans/2026-07-15-interaction-system-design.md`), the first
+`key:E` press may return `available_actions` (popup mode) without executing
+effects. The user picks an action, and the client sends a second
+`ActionFrame` with `input: "action:execute"`, `entity_id`, and `action_id`.
 
 ```mermaid
 sequenceDiagram
@@ -127,32 +134,47 @@ sequenceDiagram
     participant W as WorldSim
     participant E as Extension(s)
 
-    B->>P: ActionFrame { seq, input_type: "click:left", target_map_id, target_x, target_y, params }
+    B->>P: ActionFrame { seq, input: "key:E" }
     P->>N: publish client.<client_id>.input
     N->>W: deliver ActionFrame
 
-    W->>W: look up extensions registered for "click:left"
+    W->>W: look up extensions registered for "key:E"
 
     alt no extension registered
         W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: false, reason: "no_handler" })
         N->>P: deliver batch
         P-->>B: ServerFrame.action_result
     else extensions registered
-        W->>W: compute range, LOS, entities_on_tile, equipment snapshot
-        W->>N: publish input.click.left { request_id, source_entity_id, target_tile, entities_on_tile, has_los, range, equipment, reply_to }
+        W->>W: compute adjacent_entities, target_entities (from interactions), equipment snapshot
+        W->>N: publish extension.<ext_id>.action { source_entity_id, input, adjacent_entities, target_entities, entity_id, action_id }
         N->>E: deliver to all registered extensions
 
         par Each extension self-filters and replies
-            E->>E: self-filter (check entities_on_tile, equipment, has_los, etc.)
-            E->>N: publish input.click.left.reply.<req_id> { extension_id, updates, consume_items }
+            E->>E: self-filter by owner_extension, process effects (toggle, set_state, ...)
+            E->>N: reply { handled, updates, appearance_updates, animations, available_actions }
             N->>W: deliver reply
         end
 
         Note over W: collect all replies within timeout
-        W->>W: apply all updates + consume_items → dirty flags
-        W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: true })
+        W->>W: apply updates + appearance_updates + animations → dirty flags
+        W-->>N: publish client.<client_id>.replication (ActionResultFrame { ok: true, available_actions: [...] })
         N->>P: deliver batch
         P-->>B: ServerFrame.action_result
+
+        opt available_actions non-empty (popup mode)
+            B->>B: show interaction popup with available_actions
+            B->>P: ActionFrame { seq, input: "action:execute", entity_id, action_id }
+            P->>N: publish client.<client_id>.input
+            N->>W: deliver ActionFrame
+            W->>N: publish extension.<ext_id>.action { ..., action_id }
+            N->>E: deliver to extension
+            E->>N: reply { handled, updates, appearance_updates, animations }
+            N->>W: deliver reply
+            W->>W: apply updates → dirty flags
+            W-->>N: publish replication (ActionResultFrame { ok: true })
+            N->>P: deliver batch
+            P-->>B: ServerFrame.action_result
+        end
     end
 
     Note over W: result flows back to client via the §2 replication loop
