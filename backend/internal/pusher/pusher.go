@@ -689,6 +689,13 @@ func (s *Server) keepalive(ctx context.Context, c *websocket.Conn, clientID stri
 				return
 			}
 			cancel()
+			// Tell worldsim the WebSocket is alive so its client reaper
+			// doesn't despawn this entity if a client.disconnected is lost
+			// (e.g. pusher crash/restart). Fire-and-forget; loss is tolerated
+			// by the reaper's 3x timeout window.
+			if err := s.nc.Publish("client."+clientID+".heartbeat", nil); err != nil {
+				s.logger.Warn("nats publish heartbeat", "client", clientID, "err", err)
+			}
 		}
 	}
 }
