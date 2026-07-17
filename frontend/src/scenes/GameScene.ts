@@ -11,6 +11,7 @@ import type { MapAssets } from "../mapLoader";
 import { loadMapAssets } from "../mapLoader";
 import type { SpriteBaseAsset } from "../spriteLoader";
 import type { TopMenu } from "../ui/TopMenu";
+import { parsePlayerOptions } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
 import { getUsername } from "../username";
 
@@ -1403,18 +1404,12 @@ export class GameScene extends Phaser.Scene {
   private applyPlayerOptions(playerOptions: string): void {
     let showOwnNameTag = true; // default
     let savedZoom: number | null = null;
-    if (playerOptions) {
-      try {
-        const opts = JSON.parse(playerOptions) as { show_own_name_tag?: boolean; zoom?: number };
-        if (typeof opts.show_own_name_tag === "boolean") {
-          showOwnNameTag = opts.show_own_name_tag;
-        }
-        if (typeof opts.zoom === "number" && Number.isFinite(opts.zoom)) {
-          savedZoom = opts.zoom;
-        }
-      } catch {
-        // malformed JSON — use defaults
-      }
+    const opts = parsePlayerOptions(playerOptions);
+    if (typeof opts.show_own_name_tag === "boolean") {
+      showOwnNameTag = opts.show_own_name_tag;
+    }
+    if (typeof opts.zoom === "number" && Number.isFinite(opts.zoom)) {
+      savedZoom = opts.zoom;
     }
     this.showOwnNameTag = showOwnNameTag;
     // Restore saved zoom, clamped to bounds so a stale/out-of-range value
@@ -1441,11 +1436,10 @@ export class GameScene extends Phaser.Scene {
     }
     this.zoomPersistTimer = window.setTimeout(() => {
       this.zoomPersistTimer = null;
-      const raw = this.ws?.getPlayerOptions() ?? "";
-      let opts: { show_own_name_tag?: boolean; zoom?: number } = {};
-      if (raw) {
-        try { opts = JSON.parse(raw); } catch { /* malformed — start fresh */ }
-      }
+      // parsePlayerOptions guards against null/non-object JSON (e.g. a PB
+      // field whose value is the literal string "null"), which would otherwise
+      // throw on the property assignment below and silently drop the zoom write.
+      const opts = parsePlayerOptions(this.ws?.getPlayerOptions() ?? "") as { show_own_name_tag?: boolean; zoom?: number };
       opts.zoom = this.cameras.main.zoom;
       const json = JSON.stringify(opts);
       this.ws?.setPlayerOptions(json);
