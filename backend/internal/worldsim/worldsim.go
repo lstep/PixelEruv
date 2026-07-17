@@ -154,8 +154,9 @@ type Entity struct {
 	PlayerOptions string
 	// Status is the player's presence status (statusAvailable/Busy/DND),
 	// replicated as DisplayName.status and rendered as the nametag pill
-	// color. DND fully excludes the player from A/V. Session-only — not
-	// persisted to PocketBase; resets to statusAvailable on connect.
+	// color. DND fully excludes the player from A/V. Persisted to PocketBase
+	// (players.status) on every change and restored at provision time, so it
+	// survives page reloads. Guests have no PB record and are session-only.
 	Status uint32
 	// lastHeartbeat is the last time the pusher confirmed the WebSocket is
 	// alive (via client.<id>.heartbeat, published on each successful WS ping).
@@ -931,6 +932,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	isAdmin := false
 	hideAdminBadge := false
 	playerOptions := ""
+	entityStatus := uint32(statusAvailable)
 
 	// Look up or create the user in PocketBase for persistent identity.
 	if s.userStore != nil && sub != "" && sub != "dev" {
@@ -945,6 +947,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			isAdmin = user.IsAdmin
 			hideAdminBadge = user.HideAdminBadge
 			playerOptions = user.Options
+			entityStatus = user.Status
 			// Restore saved position if it's valid (not 0,0 — the default).
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
@@ -1015,6 +1018,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		HideAdminBadge: hideAdminBadge,
 		SpriteBase:    spriteBase,
 		PlayerOptions: playerOptions,
+		Status:        entityStatus,
 		spawnedTo:     make(map[string]bool),
 		currentZones:  make(map[string]bool),
 		lastHeartbeat: time.Now(),
@@ -1681,10 +1685,10 @@ func (s *Simulator) handleSetName(ctx context.Context, clientID string, frame *p
 
 // handleSetStatus processes a client-sent SetStatusFrame: validates the enum
 // range (0-2), updates Entity.Status, marks dirtyName so the DisplayName
-// component (which carries status) is re-replicated, and broadcasts the change
-// on worldsim.player_status so ext-av can enforce DND A/V exclusion (skip zone
-// token minting, proactively eject from active zone rooms). Session-only — not
-// persisted to PocketBase. See
+// component (which carries status) is re-replicated, persists the new status to
+// PocketBase (players.status) so it survives page reloads, and broadcasts the
+// change on worldsim.player_status so ext-av can enforce DND A/V exclusion
+// (skip zone token minting, proactively eject from active zone rooms). See
 // documentation/plans/2026-07-15-player-status-design.md.
 func (s *Simulator) handleSetStatus(ctx context.Context, clientID string, frame *pb.SetStatusFrame) {
 	ctx, span := s.tracer.Start(ctx, "worldsim.handle_set_status")
@@ -1713,6 +1717,16 @@ func (s *Simulator) handleSetStatus(ctx context.Context, clientID string, frame 
 	entity.dirtyName = true // status rides on the DisplayName component
 	entityID := entity.ID
 	s.mu.Unlock()
+
+	// Persist to PocketBase so the status survives page reloads. No-op for
+	// guests (no players record). Errors are logged but don't fail the
+	// request — the in-memory status is already live and replicated.
+	if s.userStore != nil {
+		if err := s.userStore.UpdateStatus(entityID, status); err != nil {
+			s.logger.WarnContext(ctx, "persist status", "err", err, "entity", entityID)
+			span.RecordError(err)
+		}
+	}
 
 	audit.Emit(s.nc, "player.set_status", audit.SeverityInfo,
 		audit.Actor{EntityID: entityID, ClientID: clientID},

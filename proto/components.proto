@@ -53,9 +53,9 @@ message DisplayName {
   bool is_guest = 2;  // true for anonymous/guest sessions (no OIDC sub)
   bool is_admin = 3;  // true to render the admin badge (IsAdmin && !HideAdminBadge, server-computed)
   // Player presence status, rendered as the nametag pill color and used to
-  // gate A/V. Session-only (resets to AVAILABLE on connect, not persisted to
-  // PocketBase). 0 = AVAILABLE (green), 1 = BUSY (yellow), 2 = DO_NOT_DISTURB
-  // (red). DND fully excludes the player from A/V rooms. See
-  // documentation/plans/2026-07-15-player-status-design.md.
+  // gate A/V. Persisted to PocketBase (players.status) so it survives page
+  // reloads; restored at provision time. 0 = AVAILABLE (green), 1 = BUSY
+  // (yellow), 2 = DO_NOT_DISTURB (red). DND fully excludes the player from
+  // A/V rooms. See documentation/plans/2026-07-15-player-status-design.md.
   uint32 status = 4;
 }
