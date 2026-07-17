@@ -113,7 +113,8 @@ dist-stage:
 	cp docker/dist/backup-volumes.sh    $(DIST_DIR)/backup-volumes.sh
 	cp docker/dist/restore-volumes.sh   $(DIST_DIR)/restore-volumes.sh
 	cp docker/dist/deploy.sh            $(DIST_DIR)/deploy.sh
-	@chmod +x $(DIST_DIR)/backup-volumes.sh $(DIST_DIR)/restore-volumes.sh $(DIST_DIR)/deploy.sh
+	cp docker/dist/reseed-map.sh        $(DIST_DIR)/reseed-map.sh
+	@chmod +x $(DIST_DIR)/backup-volumes.sh $(DIST_DIR)/restore-volumes.sh $(DIST_DIR)/deploy.sh $(DIST_DIR)/reseed-map.sh
 
 # dist: native platform (convenience alias).
 dist: build web dist-stage
@@ -155,24 +156,11 @@ deploy-remote: dist-x86
 # seed is idempotent (only runs if no maps record exists). This deletes the
 # existing "main" record from PocketBase and restarts worldsim.
 #
-# Requires jq on the remote host. PB admin credentials must match the
-# PB_ADMIN_EMAIL/PB_ADMIN_PASSWORD in the remote docker-compose.yml.
-PB_ADMIN_EMAIL ?= admin@pixeleruv.local
-PB_ADMIN_PASSWORD ?= password123
+# The script (docker/dist/reseed-map.sh) is rsynced to the remote as part of
+# dist/ during deploy-remote. Requires curl and jq on the remote host.
 reseed-map-remote:
-	@echo "==> Deleting 'main' map record on $(REMOTE_HOST) and restarting worldsim"
-	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && \
-		TOKEN=\$$(curl -s -X POST http://localhost:8090/api/admins/auth-with-password \
-			-H 'Content-Type: application/json' \
-			-d '{\"identity\":\"$(PB_ADMIN_EMAIL)\",\"password\":\"$(PB_ADMIN_PASSWORD)\"}' \
-			| jq -r .token) && \
-		RECORD_ID=\$$(curl -s 'http://localhost:8090/api/collections/maps/records?filter=name%3D%27main%27' \
-			-H \"Authorization: \$\$TOKEN\" | jq -r '.items[0].id') && \
-		echo \"Deleting map record: \$\$RECORD_ID\" && \
-		curl -s -X DELETE \"http://localhost:8090/api/collections/maps/records/\$\$RECORD_ID\" \
-			-H \"Authorization: \$\$TOKEN\" && \
-		docker compose restart worldsim"
-	@echo "==> worldsim restarted — map re-seeded from dist/maps/default-map.json"
+	@echo "==> Reseeding map on $(REMOTE_HOST)"
+	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./reseed-map.sh"
 
 up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build
