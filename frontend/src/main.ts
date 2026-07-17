@@ -129,7 +129,7 @@ async function bootstrap(): Promise<void> {
   game.registry.set("chatPanel", chatPanel);
   // Track which map was initially loaded so onReady can detect if the
   // server wants the player on a different map (saved map_id in PB).
-  game.registry.set("loadedMapName", import.meta.env.VITE_MAP_NAME || "main");
+  game.registry.set("loadedMapName", mapAssets.name);
 
   // Show the reload toast after the game canvas exists so it appears on top
   // of the rendered game, not during the dark loading phase.

@@ -1,5 +1,36 @@
 # Dashboard
 
+## Default map selection via `is_default` field
+
+**Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, and `tsc --noEmit` all pass.
+
+The default map (where new players spawn and the map the frontend loads on first paint) is now chosen via an `is_default` boolean field on the `maps` collection in the PocketBase admin UI, replacing the `DEFAULT_MAP` (backend) and `VITE_MAP_NAME` (frontend) env vars. To change the spawn map, set `is_default=true` on exactly one map in the PB admin UI and restart worldsim. If maps exist but none has `is_default=true`, worldsim fails fast at startup with a clear error.
+
+### What changed
+
+- **Migration:** `1753600000_add_is_default_to_maps.go` — adds `is_default` bool field to `maps`; backfills `main` (or first record) as default if no record has it set, so existing deployments keep working.
+- **MapStore:** `MapRecordInfo.IsDefault` field; read in `ListAllMaps`/`FetchMapRecordInfo`; `SeedMapIfMissing` sets `is_default=true` on the seeded record.
+- **Worldsim:** `New` signature drops `defaultMap` param. New `selectDefaultMap(records)` helper returns the `is_default` map or errors if maps exist but none is default. Seeding now triggers only when zero maps exist (was: when the named default was absent).
+- **main.go:** `DEFAULT_MAP` env var removed.
+- **Frontend:** `mapLoader.ts` queries `is_default=true` map when no name given; `MapAssets.name` carries the resolved record name; `VITE_MAP_NAME` removed. `main.ts` uses `mapAssets.name` for `loadedMapName`.
+- **Docker:** `DEFAULT_MAP` removed from both `docker/docker-compose.yml` and `docker/dist/docker-compose.yml`.
+- **Test:** `defaultmap_test.go` — unit tests for `selectDefaultMap` (is_default present, multiple flagged, none flagged, empty).
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/migrations/1753600000_add_is_default_to_maps.go` | New — `is_default` field + backfill |
+| `backend/internal/worldsim/mapdata.go` | `MapRecordInfo.IsDefault` field |
+| `backend/internal/worldsim/mapstore.go` | Read `is_default` in list/fetch; seed sets it |
+| `backend/internal/worldsim/worldsim.go` | `New` signature, `selectDefaultMap`, fail-fast, conditional seeding |
+| `backend/internal/worldsim/defaultmap_test.go` | New — `selectDefaultMap` unit tests |
+| `backend/cmd/worldsim/main.go` | Drop `DEFAULT_MAP` env var |
+| `frontend/src/mapLoader.ts` | Query `is_default` map, `MapAssets.name`, drop `VITE_MAP_NAME` |
+| `frontend/src/main.ts` | Use `mapAssets.name` |
+| `docker/docker-compose.yml`, `docker/dist/docker-compose.yml` | Remove `DEFAULT_MAP` |
+| `documentation/*.md` | Updated operational docs |
+
 ## Client Reaper — orphaned player entities (ghost avatars / inflated player count)
 
 **Branch:** `feat/interaction-system` (uncommitted)

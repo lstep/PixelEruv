@@ -706,11 +706,12 @@ positions, user status) is in JetStream KV. On restart, the World Sim:
 1. Reads all JetStream KV keys for its shard(s) to reconstruct zone state and
    user positions.
 2. Reads world configuration from PocketBase (embedded, via Go SDK).
-3. Auto-seeds the default `maps` record from `MAP_DIR` if no record
-   named after the configured `DEFAULT_MAP` exists (idempotent; runs after
+3. Auto-seeds a `maps` record named `main` (with `is_default=true`) from
+   `MAP_DIR` if no `maps` records exist (idempotent; runs after
    `app.Bootstrap()` and `app.RunAllMigrations()` complete). Mirrors the
    `SpriteStore.SeedIfEmpty` pattern for `sprite_bases`. Worldsim then
-   loads all maps from PocketBase.
+   loads all maps from PocketBase and selects the `is_default=true` map as
+   the spawn map (fails fast if maps exist but none is marked default).
 4. Re-registers all entities in the ECS.
 5. Resumes the tick loop.
 6. Sends a fresh initial snapshot to each connected client (via NATS → Pusher

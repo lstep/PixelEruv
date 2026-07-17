@@ -54,7 +54,6 @@ services:
     environment:
       NATS_URL: "nats://nats:4222"
       TICK_HZ: "20"
-      DEFAULT_MAP: "main"
       PB_DATA_DIR: "/pb_data"
       PB_HTTP_ADDR: "0.0.0.0:8090"
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"

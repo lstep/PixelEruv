@@ -38,6 +38,7 @@ func (s *MapStore) ListAllMaps() ([]*MapRecordInfo, error) {
 			Name:              r.GetString("name"),
 			TiledJSONFilename: r.GetString("tiled_json"),
 			Options:           json.RawMessage(r.GetString("options")),
+			IsDefault:         r.GetBool("is_default"),
 		})
 	}
 	return result, nil
@@ -87,6 +88,8 @@ func (s *MapStore) SeedMapIfMissing(mapName, mapDir, jsonFile string) error {
 
 	record := core.NewRecord(collection)
 	record.Set("name", mapName)
+	// Seeded map is the default on a fresh deploy (no other maps exist yet).
+	record.Set("is_default", true)
 
 	// tiled_json file field.
 	jsonFileObj, err := filesystem.NewFileFromPath(jsonPath)
@@ -132,6 +135,7 @@ func (s *MapStore) FetchMapRecordInfo(mapName string) (*MapRecordInfo, error) {
 		Name:              record.GetString("name"),
 		TiledJSONFilename: record.GetString("tiled_json"),
 		Options:           json.RawMessage(record.GetString("options")),
+		IsDefault:         record.GetBool("is_default"),
 	}, nil
 }
 

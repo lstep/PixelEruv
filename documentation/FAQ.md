@@ -63,10 +63,10 @@ See: [Map Design Guide § Entities](21-map-design-guide.md#entities-object-layer
 
 ### Where do new players appear?
 
-At a random `zone_type=spawn` zone on the default map (configured by
-the `DEFAULT_MAP` env var, default `main`).
-If no spawn zone exists, the fallback is (10, 10). You can have multiple
-spawn zones — worldsim picks one at random each time.
+At a random `zone_type=spawn` zone on the map marked `is_default=true` in
+the `maps` collection (set in the PocketBase admin UI). If no spawn zone
+exists, the fallback is (10, 10). You can have multiple spawn zones —
+worldsim picks one at random each time.
 
 ### How do I add a second map?
 
@@ -76,6 +76,7 @@ spawn zones — worldsim picks one at random each time.
    - `name`: the map name (e.g. `map2`)
    - `tiled_json`: upload the JSON
    - `tilesets`: upload the PNGs
+   - `is_default`: leave `false` (unless you want this to be the spawn map)
 3. Add portal zones on either map to let players travel between them.
 
 Worldsim loads all maps from PocketBase on startup. No restart
@@ -102,7 +103,6 @@ The critical ones for a basic setup:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `DEFAULT_MAP` | `main` | Name of the default map record; new players spawn here |
 | `NATS_URL` | `nats://nats:4222` | NATS connection string |
 | `PB_DATA_DIR` | `./pb_data` | PocketBase data directory |
 | `PUBLIC_HOST` | `localhost` | Hostname for TLS cert and Dex redirect |
@@ -112,8 +112,11 @@ See: [Quick Start § Env vars](quick-start.md#3d-environment-variables-reference
 
 ### How do I change which map is the default for new players?
 
-Set the `DEFAULT_MAP` env var to the map name you want. New players will
-spawn on that map at a random `spawn` zone.
+In the PocketBase admin UI (`http://localhost:8090/_/`), set `is_default=true`
+on the map you want as the spawn map and `is_default=false` on all others,
+then restart worldsim. New players will spawn on that map at a random
+`spawn` zone. If maps exist but none has `is_default=true`, worldsim fails
+fast at startup.
 
 ---
 

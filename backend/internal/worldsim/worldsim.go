@@ -210,7 +210,24 @@ type Simulator struct {
 	snapshotSeq uint32
 }
 
-func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logger) (*Simulator, error) {
+// selectDefaultMap returns the name of the map marked is_default in the PB
+// records. If no map has is_default=true and records is non-empty, it returns
+// an error (the admin must mark exactly one in the PocketBase admin UI). If
+// records is empty, it returns "" — the caller handles that case (seeding or
+// fallback bounds).
+func selectDefaultMap(records []*MapRecordInfo) (string, error) {
+	if len(records) == 0 {
+		return "", nil
+	}
+	for _, r := range records {
+		if r.IsDefault {
+			return r.Name, nil
+		}
+	}
+	return "", fmt.Errorf("no map marked is_default; mark exactly one map in the PocketBase admin UI")
+}
+
+func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simulator, error) {
 	nc, err := nats.Connect(natsURL,
 		nats.Name("worldsim"),
 		nats.ReconnectWait(2*time.Second),
@@ -225,17 +242,14 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 	banStore := NewBanStore(app)
 	spriteStore := NewSpriteStore(app)
 
-	// Auto-seed the default map into PocketBase on first run, so a fresh
-	// deployment boots without a manual upload step. MAP_DIR defaults to
-	// ./maps (bundled in dist/) for production; for local dev, set MAP_DIR
-	// to the repo's maps/ directory. Non-fatal: if seeding fails, worldsim
-	// still starts and LoadMapData below will surface the real error.
+	// Auto-seed the bundled "main" map into PocketBase on first run (when no
+	// maps exist yet), so a fresh deployment boots without a manual upload
+	// step. MAP_DIR defaults to ./maps (bundled in dist/) for production; for
+	// local dev, set MAP_DIR to the repo's maps/ directory. Non-fatal: if
+	// seeding fails, worldsim still starts and the error below surfaces.
 	mapDir := os.Getenv("MAP_DIR")
 	if mapDir == "" {
 		mapDir = "./maps"
-	}
-	if err := mapStore.SeedMapIfMissing(defaultMap, mapDir, "default-map.json"); err != nil {
-		logger.Warn("map seed failed", "err", err, "dir", mapDir)
 	}
 
 	// Load all maps from PocketBase.
@@ -243,6 +257,29 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 	if err != nil {
 		logger.Warn("failed to list maps", "err", err)
 	}
+
+	// Seed only when no maps exist, so we don't overwrite an admin's choice.
+	if len(mapRecords) == 0 {
+		if err := mapStore.SeedMapIfMissing("main", mapDir, "default-map.json"); err != nil {
+			logger.Warn("map seed failed", "err", err, "dir", mapDir)
+		} else {
+			// Re-list to pick up the seeded record.
+			if r, err := mapStore.ListAllMaps(); err == nil {
+				mapRecords = r
+			}
+		}
+	}
+
+	// Derive the default map (where new players spawn) from the is_default
+	// flag in PB. Fails fast if maps exist but none is marked default — the
+	// admin must mark exactly one in the PocketBase admin UI.
+	defaultMap, err := selectDefaultMap(mapRecords)
+	if err != nil {
+		nc.Close()
+		return nil, err
+	}
+	logger.Info("default map selected", "default_map", defaultMap)
+
 	maps := make(map[string]*MapData)
 	zones := make(map[string]*ZoneRegistry)
 	mapFilenames := make(map[string]string)
@@ -258,17 +295,18 @@ func New(natsURL, defaultMap string, app core.App, tickHz int, logger *slog.Logg
 		logger.Info("loaded map", "map", mr.Name, "width", md.Width, "height", md.Height)
 	}
 
-	// Fallback: if no maps were loaded, try loading the default map by name.
+	// Fallback: if no maps were loaded (e.g. seeding failed and PB is empty),
+	// use fallback bounds so worldsim can still start for diagnostics.
 	if len(maps) == 0 {
-		logger.Warn("no maps loaded, trying default map", "default_map", defaultMap)
-		md, err := mapStore.LoadMapData(defaultMap)
-		if err != nil {
-			logger.Warn("failed to load default map, using fallback bounds",
-				"err", err, "map", defaultMap)
-			md = &MapData{Width: 20, Height: 20}
+		fallbackName := defaultMap
+		if fallbackName == "" {
+			fallbackName = "main"
 		}
-		maps[defaultMap] = md
-		zones[defaultMap] = NewZoneRegistry(md.Zones, md.Width, md.Height)
+		logger.Warn("no maps loaded, using fallback bounds", "default_map", fallbackName)
+		md := &MapData{Width: 20, Height: 20}
+		maps[fallbackName] = md
+		zones[fallbackName] = NewZoneRegistry(md.Zones, md.Width, md.Height)
+		defaultMap = fallbackName
 	}
 
 	s := &Simulator{

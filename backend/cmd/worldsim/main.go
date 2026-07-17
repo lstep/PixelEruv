@@ -23,7 +23,6 @@ import (
 func main() {
 	natsURL := envOr("NATS_URL", "nats://localhost:4222")
 	tickHz := envInt("TICK_HZ", 20)
-	defaultMap := envOr("DEFAULT_MAP", "main")
 	pbDataDir := envOr("PB_DATA_DIR", "./pb_data")
 	pbHTTPAddr := envOr("PB_HTTP_ADDR", ":8090")
 
@@ -82,12 +81,12 @@ func main() {
 		}
 	}()
 
-	sim, err := worldsim.New(natsURL, defaultMap, app, tickHz, logger)
+	sim, err := worldsim.New(natsURL, app, tickHz, logger)
 	if err != nil {
 		log.Fatalf("worldsim init: %v", err)
 	}
 
-	logger.Info("worldsim starting", "nats", natsURL, "tick_hz", tickHz, "default_map", defaultMap)
+	logger.Info("worldsim starting", "nats", natsURL, "tick_hz", tickHz)
 	if err := sim.Run(ctx); err != nil {
 		logger.Info("worldsim stopped", "err", err)
 	}

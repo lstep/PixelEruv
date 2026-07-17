@@ -97,6 +97,7 @@ type MapRecordInfo struct {
 	Name              string
 	TiledJSONFilename string
 	Options           json.RawMessage
+	IsDefault         bool
 }
 
 // parseTiledMapJSON parses a Tiled JSON export into MapData: collision grid,
