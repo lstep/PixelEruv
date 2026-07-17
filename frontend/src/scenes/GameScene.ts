@@ -1031,6 +1031,15 @@ export class GameScene extends Phaser.Scene {
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
         this.inputDirty = true;
+        // Re-apply map and player options from the fresh AuthResult so a
+        // reconnect restores the saved zoom level and map options (e.g.
+        // day/night) instead of resetting to defaults. onReady does the same
+        // on initial connect; onReconnect must mirror it because the pusher
+        // mints a fresh session and worldsim re-sends the AuthResult.
+        this.applyMapOptions(this.ws?.getMapOptions() ?? "");
+        this.applyPlayerOptions(this.ws?.getPlayerOptions() ?? "");
+        const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+        tm?.setPlayerOptions(this.ws?.getPlayerOptions() ?? "");
         console.log("reconnected, myEntityId=", this.myEntityId);
       },
       onStateChange: (state: ConnectionState) => {
