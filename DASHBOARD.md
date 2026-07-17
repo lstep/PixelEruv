@@ -1,5 +1,28 @@
 # Dashboard
 
+## Persist player presence status to PocketBase
+
+**Status:** Implemented — `make proto`, `go build ./...`, `go test ./internal/worldsim/`, and `tsc --noEmit` all pass.
+
+Player presence status (Available / Busy / Do Not Disturb) was session-only — stored in `Entity.Status` in worldsim memory, reset to Available on every connect. This caused sync problems: a page reload lost the value, the TopMenu hardcoded `applyStatus(0)` on init, and server/client could disagree.
+
+Status is now persisted to a `status` NumberField on the `players` PocketBase collection and restored on connect, mirroring the pattern used for `display_name`, `sprite_base`, `options`, and `hide_admin_badge`. Reconnect restores as-is (DND stays DND across sessions). Guests have no PB record and remain session-only. Save-on-change (mirrors `UpdateDisplayName`), not save-on-disconnect.
+
+Design doc: `documentation/plans/2026-07-15-player-status-design.md`.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/migrations/1753600000_add_status_to_players.go` | New — `status` NumberField on `players` (default 0) |
+| `backend/internal/worldsim/userstore.go` | `UserRecord.Status`; `UpdateStatus` method; read in `recordToUser` |
+| `backend/internal/worldsim/worldsim.go` | Restore `user.Status` in `provisionClient`; persist in `handleSetStatus`; updated comments |
+| `backend/internal/pusher/pusher.go` | Comment updated (was "Session-only — not persisted to PocketBase") |
+| `proto/components.proto` | `DisplayName.status` comment updated |
+| `frontend/src/ui/TopMenu.ts` | `applyStatusFn` field; `syncStatusFromServer(value)` method (updates UI without echoing a SetStatusFrame) |
+| `frontend/src/scenes/GameScene.ts` | Call `avClient.setStatus` + `topMenu.syncStatusFromServer` for local player on spawn and DisplayName update |
+| `documentation/plans/2026-07-15-player-status-design.md` | New — design doc |
+
 ## Default map selection via `is_default` field
 
 **Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, and `tsc --noEmit` all pass.

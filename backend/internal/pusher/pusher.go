@@ -642,9 +642,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		case *pb.ClientFrame_SetStatus:
 			// Forward status change to worldsim on client.<id>.set_status.
 			// Worldsim validates the enum range (0-2), updates Entity.Status,
-			// marks dirty for replication, and broadcasts on
-			// worldsim.player_status so ext-av can enforce DND A/V exclusion.
-			// Session-only — not persisted to PocketBase.
+			// marks dirty for replication, persists to PocketBase (players.status),
+			// and broadcasts on worldsim.player_status so ext-av can enforce
+			// DND A/V exclusion.
 			pctx, pspan := s.tracer.Start(
 				otelinternal.ContextFromTraceparent(ctx, p.SetStatus.GetTraceparent()),
 				"pusher.nats.publish.set_status",

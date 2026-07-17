@@ -1549,6 +1549,16 @@ export class GameScene extends Phaser.Scene {
       // crisp; lerp 1 = hard snap each frame (no sub-pixel smear).
       if (spawn.entityId === this.myEntityId) {
         this.cameras.main.startFollow(sprite, true, 1, 1);
+        // Sync local A/V + status UI with the server-confirmed status. On a
+        // fresh page reload the server restores the persisted status from
+        // PocketBase and sends it in the SpawnEntity DisplayName component;
+        // without this the TopMenu would stay on "Available" (its init
+        // default) and AvClient wouldn't know about DND until a change.
+        if (displayName) {
+          this.avClient?.setStatus(status);
+          const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+          tm?.syncStatusFromServer(status);
+        }
       }
       console.log(`spawned ${spawn.entityId} at (${x}, ${y})`);
     }
@@ -1605,10 +1615,14 @@ export class GameScene extends Phaser.Scene {
           // Recreate the tag because the pillbox width depends on text width.
           avatar.nameTag?.destroy();
           this.createNameTag(upd.entityId, dn.name, dn.isGuest, dn.isAdmin, dn.status);
-          // Keep the local player's AvClient DND flag in sync with the
-          // server-stamped status (defense-in-depth client-side enforcement).
+          // Keep the local player's AvClient DND flag and TopMenu status
+          // selector in sync with the server-stamped status (defense-in-depth
+          // client-side enforcement + UI reflection without echoing a
+          // SetStatusFrame back to the server).
           if (upd.entityId === this.myEntityId) {
             this.avClient?.setStatus(dn.status);
+            const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+            tm?.syncStatusFromServer(dn.status);
           }
         }
       } else if (upd.componentId === 3) {

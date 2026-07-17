@@ -28,6 +28,11 @@ export class TopMenu {
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
   private setStatusHandler: ((status: number) => void) | null = null;
+  // applyStatusFn is set in the constructor where the status buttons are
+  // built. syncStatusFromServer calls it to reflect the server-confirmed
+  // status (e.g. on page reload after restoring from PocketBase) without
+  // re-firing setStatusHandler (which would echo a SetStatusFrame back).
+  private applyStatusFn: ((value: number) => void) | null = null;
   private playerOptions: string = "";
   private authStoreUnsub: (() => void) | null = null;
   private boundDocClick: () => void;
@@ -358,6 +363,7 @@ export class TopMenu {
       this.camBtn.style.opacity = disabled ? "0.4" : "1";
       this.screenBtn.style.opacity = disabled ? "0.4" : "1";
     };
+    this.applyStatusFn = applyStatus;
     for (const opt of statusOptions) {
       const btn = document.createElement("button");
       btn.textContent = opt.label;
@@ -459,6 +465,15 @@ export class TopMenu {
   // for A/V exclusion enforcement).
   setSetStatusHandler(fn: (status: number) => void): void {
     this.setStatusHandler = fn;
+  }
+
+  // syncStatusFromServer reflects a server-confirmed presence status in the
+  // dropdown UI (button highlight + A/V control enablement) WITHOUT re-firing
+  // setStatusHandler. Called by GameScene when the local player's DisplayName
+  // component arrives from the server — e.g. on initial spawn after a page
+  // reload, where the server restored the persisted status from PocketBase.
+  syncStatusFromServer(value: number): void {
+    this.applyStatusFn?.(value);
   }
 
   // setPlayerOptions updates the stored player options from the server's auth

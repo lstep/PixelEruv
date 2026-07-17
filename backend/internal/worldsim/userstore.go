@@ -22,6 +22,7 @@ type UserRecord struct {
 	IsAdmin     bool
 	Options     string
 	HideAdminBadge bool // players.hide_admin_badge — opt out of the public admin badge
+	Status     uint32 // players.status — presence status (0=AVAILABLE,1=BUSY,2=DND), persisted across sessions
 }
 
 // UserStore handles PocketBase player lookups and persistence via the
@@ -140,6 +141,21 @@ func (s *UserStore) UpdateOptions(entityID, options string) error {
 	return s.app.Save(record)
 }
 
+// UpdateStatus persists the player's presence status to PocketBase. No-op if
+// the entity has no PocketBase record (guests — session-only status).
+func (s *UserStore) UpdateStatus(entityID string, status uint32) error {
+	record, err := s.findByEntityIDRecord(entityID)
+	if err != nil {
+		return fmt.Errorf("find user for status update: %w", err)
+	}
+	if record == nil {
+		return nil
+	}
+
+	record.Set("status", status)
+	return s.app.Save(record)
+}
+
 // UpdateConnectInfo persists the client IP and last_seen_at timestamp for a
 // player. Called on every connect. No-op if the entity has no PocketBase
 // record (guests).
@@ -220,5 +236,6 @@ func recordToUser(r *core.Record) *UserRecord {
 		IsAdmin:     r.GetBool("is_admin"),
 		Options:     r.GetString("options"),
 		HideAdminBadge: r.GetBool("hide_admin_badge"),
+		Status:     uint32(r.GetInt("status")),
 	}
 }
