@@ -11,7 +11,7 @@ import (
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 )
 
-// TestReapStaleClients_DeswpansOrphans verifies the client reaper removes
+// TestReapStaleClients_DespawnsOrphans verifies the client reaper removes
 // player avatars whose pusher heartbeat has gone silent (e.g. pusher
 // crash/restart or a lost client.disconnected), while leaving live players
 // alone. Without the reaper these orphaned entities linger forever and inflate

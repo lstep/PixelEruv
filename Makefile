@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote reseed-map-remote
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -36,7 +36,7 @@ proto:
 
 # Build Go binaries into dist/bin/ for the target GOOS/GOARCH.
 # Defaults to native; overridden by dist-x86 / dist-macos.
-build:
+build: proto
 	@mkdir -p $(DIST_BIN)
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pusher ./cmd/pusher
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/worldsim ./cmd/worldsim
@@ -53,7 +53,7 @@ build:
 # them into dist/web/. The root maps/ and spritesheets/ directories are the
 # authoritative sources; frontend/public/assets/maps and frontend/public/sprites
 # are generated copies.
-sync-assets: sync-maps sync-sprites sync-icon
+sync-assets: sync-maps sync-sprites sync-icon sync-game-assets
 
 sync-maps:
 	@mkdir -p frontend/public/assets/maps
@@ -66,6 +66,13 @@ sync-sprites:
 sync-icon:
 	@mkdir -p frontend/public/assets
 	cp assets/pixel-eruv-icon.svg frontend/public/assets/pixel-eruv-icon.svg
+
+# sync-game-assets copies sounds and non-character sprites (e.g.
+# light-glow.png) from the authoritative assets/ directory.
+sync-game-assets:
+	@mkdir -p frontend/public/assets/sounds frontend/public/assets/sprites
+	cp -R assets/sounds/. frontend/public/assets/sounds/
+	cp -R assets/sprites/. frontend/public/assets/sprites/
 
 # Build frontend static assets into dist/web/
 web: sync-assets
@@ -106,7 +113,8 @@ dist-stage:
 	cp docker/dist/backup-volumes.sh    $(DIST_DIR)/backup-volumes.sh
 	cp docker/dist/restore-volumes.sh   $(DIST_DIR)/restore-volumes.sh
 	cp docker/dist/deploy.sh            $(DIST_DIR)/deploy.sh
-	@chmod +x $(DIST_DIR)/backup-volumes.sh $(DIST_DIR)/restore-volumes.sh $(DIST_DIR)/deploy.sh
+	cp docker/dist/reseed-map.sh        $(DIST_DIR)/reseed-map.sh
+	@chmod +x $(DIST_DIR)/backup-volumes.sh $(DIST_DIR)/restore-volumes.sh $(DIST_DIR)/deploy.sh $(DIST_DIR)/reseed-map.sh
 
 # dist: native platform (convenience alias).
 dist: build web dist-stage
@@ -142,6 +150,17 @@ deploy-remote: dist-x86
 	rsync -avz --delete dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
 	@echo "==> Running deploy.sh on $(REMOTE_HOST)"
 	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./deploy.sh"
+
+# reseed-map-remote: force worldsim to re-seed the default map from the
+# bundled dist/maps/default-map.json. Needed after map changes because the
+# seed is idempotent (only runs if no maps record exists). This deletes the
+# existing "main" record from PocketBase and restarts worldsim.
+#
+# The script (docker/dist/reseed-map.sh) is rsynced to the remote as part of
+# dist/ during deploy-remote. Requires curl and jq on the remote host.
+reseed-map-remote:
+	@echo "==> Reseeding map on $(REMOTE_HOST)"
+	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./reseed-map.sh"
 
 up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build

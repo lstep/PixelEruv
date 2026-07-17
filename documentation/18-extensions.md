@@ -957,6 +957,56 @@ This is no longer needed. In the input trigger model:
 - The `entity.<entity_id>.interact` subject is no longer used. All interaction
   routing goes through the input trigger broadcast.
 
+### Generic interaction system (ext-props)
+
+ext-props is a **generic interaction handler** that processes any entity
+whose `owner_extension` matches `"props"`. The entity's behavior is
+declared entirely in Tiled properties — no code changes are needed to
+add a new interactive entity. See
+`documentation/plans/2026-07-15-interaction-system-design.md` for the
+full design.
+
+**Two interaction modes:**
+
+- **Immediate mode** (`on_interact_action` property): pressing E fires
+  the action immediately. No popup. Used for doors, switches,
+  notification buttons.
+- **Popup mode** (`actions` property): pressing E shows a popup with
+  available actions. The user picks one, which sends `action:execute`.
+  Used for lights and complex entities with multiple options.
+
+**Dispatch payload:** worldsim sends the same dispatch to all
+extensions registered for the input. The dispatch includes
+`adjacent_entities` (within `trigger_radius`) and `target_entities`
+(looked up from `interactions` `target_ids`, may be far away). Each
+extension self-filters by `owner_extension` and processes only the
+action verbs it knows.
+
+**Action verbs handled by ext-props:**
+
+| Verb | Behavior |
+|---|---|
+| `toggle` | Flips state between "on" and "off". Swaps sprite to `gid_on` or `gid_off`. |
+| `set_state` | Sets state to `payload` (e.g. "on", "off", "locked"). Swaps sprite accordingly. |
+| `activate` / `turn_on` | Sets state to "on", swaps sprite to `gid_on`. |
+| `deactivate` / `turn_off` | Sets state to "off", swaps sprite to `gid_off`. |
+
+**Action verbs handled by ext-walls:**
+
+| Verb | Behavior |
+|---|---|
+| `toggle_wall` | Toggles a wall zone between blocking and non-blocking. Targets a zone ID. |
+
+**Reply format:** the extension replies with `updates` (state changes),
+`appearance_updates` (GID swaps), `animations` (animation IDs to play),
+and `available_actions` (for popup mode). Worldsim applies these to
+the ECS and replicates to clients.
+
+**Multi-extension dispatch:** a single entity can declare effects for
+multiple extensions (e.g. a door that swaps its sprite via ext-props
+AND toggles a wall zone via ext-walls). Each extension processes only
+the verbs it knows from the same effects list.
+
 ### Interaction flow
 
 ```
@@ -1407,7 +1457,46 @@ Extension: meeting-v1
   └── Heartbeat every 10s
 ```
 
-### Example 3: Patrol guard NPC (own pathfinding)
+### Example 2b: Generic interactive props (ext-props)
+
+**Language:** Go (generic interpreter — no game-specific logic)
+
+```
+Extension: props
+  ├── On startup:
+  │     ├── Register with World Sim (on_death: despawn)
+  │     ├── Register input trigger for key:E (immediate mode)
+  │     └── Register input trigger for action:execute (popup mode)
+  ├── On key:E dispatch (immediate mode):
+  │     ├── Filter adjacent_entities by owner_extension == "props"
+  │     ├── For each owned entity with on_interact_action:
+  │     │     ├── Look up interactions[on_interact_action] effects
+  │     │     ├── For each effect: process if verb is known
+  │     │     │     ├── toggle: flip state, swap gid (GidOn/GidOff)
+  │     │     │     ├── set_state: set state to payload, swap gid
+  │     │     │     ├── activate/turn_on: set state="on", gid=GidOn
+  │     │     │     └── deactivate/turn_off: set state="off", gid=GidOff
+  │     │     └── Reply with updates + appearance_updates + animations
+  │     └── For each owned entity with actions (popup mode):
+  │           ├── Build available_actions list (filtered by current state)
+  │           │     e.g. hide "activate" when already on
+  │           └── Reply with available_actions (no execution yet)
+  ├── On action:execute dispatch (popup choice):
+  │     ├── Find target entity by entity_id in adjacent_entities
+  │     ├── Look up interactions[action_id] effects
+  │     ├── Process effects (same verbs as immediate mode)
+  │     └── Reply with updates + appearance_updates + animations
+  ├── No entities to spawn (entities are base entities from Tiled)
+  ├── No custom components (uses EntityState + Appearance)
+  └── Heartbeat every 10s
+```
+
+Note: ext-props is a **generic interpreter**. The entity's behavior is
+declared entirely in Tiled properties (`on_interact_action`, `actions`,
+`interactions`). Adding a new interactive entity is a Tiled property
+exercise, not a code change. See
+`documentation/plans/2026-07-15-interaction-system-design.md` and
+`21-map-design-guide.md` § "Entities" for the full property reference.
 
 **Language:** Rust (async NATS client)
 

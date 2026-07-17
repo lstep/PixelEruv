@@ -55,10 +55,19 @@ message PingFrame {}
 // 14-zones-and-interactions.md §3a) — a key press or click that the kernel
 // broadcasts to extensions registered for that input type. Unlike InputFrame
 // (continuous movement), this is a single discrete event.
+//
+// For the two-phase interaction flow (see
+// documentation/plans/2026-07-15-interaction-system-design.md), the client
+// first sends input="key:E" with empty entity_id/action_id. If the server
+// returns available_actions, the user picks one and the client sends a
+// second ActionFrame with input="action:execute", entity_id set to the
+// target entity, and action_id set to the chosen action.
 message ActionFrame {
   uint32 seq = 1;
-  string input = 2;         // e.g. "key:E", "click:left"
+  string input = 2;         // e.g. "key:E", "click:left", "action:execute"
   string traceparent = 3;
+  string entity_id = 4;     // target entity for "action:execute" (empty for "key:E")
+  string action_id = 5;     // which action to run (e.g. "activate", "toggle")
 }
 
 // ChatFrame is a client-sent chat message on a given channel. The server
@@ -130,10 +139,24 @@ message ServerFrame {
 
 // ActionResultFrame reports the outcome of an ActionFrame: whether any
 // extension handled it, and why not if none did (see 18-extensions.md §3a).
+// For popup-mode interactions, available_actions carries the actions the
+// client should display in the interaction popup (see
+// documentation/plans/2026-07-15-interaction-system-design.md).
 message ActionResultFrame {
   uint32 seq = 1;
   bool ok = 2;
   string reason = 3;        // "no_handler", "timeout", "" on success
+  repeated AvailableAction available_actions = 4;  // popup actions (empty for immediate mode)
+}
+
+// AvailableAction is a single action the user can choose from the
+// interaction popup. The client groups actions by entity_label and
+// displays label as the button text.
+message AvailableAction {
+  string entity_id = 1;     // entity the action targets
+  string action_id = 2;     // action verb (e.g. "activate", "toggle")
+  string label = 3;         // user-facing label (e.g. "Activate")
+  string entity_label = 4;  // entity type label for popup grouping (e.g. "light")
 }
 
 message AuthResultFrame {

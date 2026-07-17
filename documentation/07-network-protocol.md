@@ -97,17 +97,24 @@ message InputState {
 
 message ActionFrame {
   uint32 seq = 1;                  // client action sequence number (for reconciliation)
-  string input_type = 2;           // "click:left", "click:right", "click:double", "key:E", etc.
-  string target_map_id = 3;        // the map the clicked tile is on (empty for key presses)
-  uint32 target_x = 4;             // x coordinate of the clicked tile (0 for key presses)
-  uint32 target_y = 5;             // y coordinate of the clicked tile (0 for key presses)
-  bytes params = 6;                // optional action-specific payload (e.g. interaction_type override)
+  string input = 2;                // "click:left", "click:right", "key:E", "action:execute", etc.
+  string traceparent = 3;          // W3C traceparent for this action
+  string entity_id = 4;            // target entity for "action:execute" (empty for "key:E")
+  string action_id = 5;            // which action to run (e.g. "activate", "toggle") — popup mode
+}
+
+message AvailableAction {
+  string entity_id = 1;            // entity the action targets
+  string action_id = 2;            // action verb (e.g. "activate", "toggle")
+  string label = 3;                // user-facing label (e.g. "Activate")
+  string entity_label = 4;         // entity type label for popup grouping (e.g. "light")
 }
 
 message ActionResultFrame {
   uint32 seq = 1;                  // matches the ActionFrame seq
   bool ok = 2;                     // whether the action was accepted
-  string reason = 3;               // "no_handler", "timeout", "rejected"
+  string reason = 3;               // "no_handler", "timeout", "" on success
+  repeated AvailableAction available_actions = 4;  // popup actions (empty for immediate mode)
 }
 
 message TokenRefreshFrame {
@@ -141,20 +148,32 @@ message ControlFrame {
 ### 1.5 Action model (replaces InteractFrame)
 
 - A client sends `ActionFrame` whenever the player clicks a tile or presses an
-  input key. The `input_type` field identifies the input (`click:left`,
-  `click:right`, `click:double`, `key:E`, etc.). For key presses, the target
-  tile fields are empty — the kernel computes adjacent entities from the
-  player's position.
+  input key. The `input` field identifies the input (`click:left`,
+  `click:right`, `key:E`, `action:execute`, etc.). For key presses, the
+  `entity_id` and `action_id` fields are empty — the kernel computes adjacent
+  entities from the player's position.
 - The Pusher forwards it to NATS (pass-through). The World Simulator computes
-  contextual data (range, LOS, entities on tile / adjacent entities, equipment
-  snapshot) and broadcasts to all extensions that registered for that input
-  type:
+  contextual data (range, LOS, entities on tile / adjacent entities, target
+  entities from `interactions` `target_ids`, equipment snapshot) and broadcasts
+  to all extensions that registered for that input type:
   1. **No extension registered?** → `ActionResultFrame{ ok: false, reason: "no_handler" }`.
   2. **Extensions registered** → broadcast to all of them. Each extension
      self-filters and replies asynchronously. The kernel collects all replies
-     within a timeout, applies them all, and sends a single
-     `ActionResultFrame{ ok: true }` to the client.
+     within a timeout, applies state/appearance/animation updates, and sends a
+     single `ActionResultFrame{ ok: true, available_actions: [...] }` to the
+     client.
   3. **No reply within timeout** → `ActionResultFrame{ ok: false, reason: "timeout" }`.
+- **Two-phase interaction flow** (see
+  `documentation/plans/2026-07-15-interaction-system-design.md`):
+  1. **Phase 1** — client sends `ActionFrame{ input: "key:E" }`. If the entity
+     is in popup mode, the extension replies with `available_actions` (no
+     effects executed). The client shows a popup.
+  2. **Phase 2** — user picks an action; client sends
+     `ActionFrame{ input: "action:execute", entity_id: "...", action_id: "..." }`.
+     The extension processes the effects and replies with state/appearance
+     updates.
+  - **Immediate mode** entities skip phase 2: pressing E fires the action
+    directly (no popup). `available_actions` is empty in the reply.
 - The kernel does not have a `TriggerSystem` — all trigger and interaction
   behavior is implemented by extensions. The kernel only computes spatial data
   (range, LOS, entities) and broadcasts.

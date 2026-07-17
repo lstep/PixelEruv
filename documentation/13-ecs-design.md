@@ -64,11 +64,13 @@ The full set will be finalised in `13-ecs-design.md`.
 | `Position` | `x`, `y`, `map_id`, `dir` | Avatars, objects, decorations |
 | `Velocity` | `vx`, `vy` | Moving entities (avatars, vehicles) |
 | `MovementTarget` | `x`, `y`, `map_id`, `speed` | Entities moving toward a target (extension-driven movement; the kernel interpolates toward the target each tick, see `18-extensions.md` § 5.2) |
-| `Interactable` | `interaction_type` (Iframe, Meeting, ExternalLink, …), `trigger_radius` | Interactive objects |
+| `Interactable` | `interaction_type` (Iframe, Meeting, ExternalLink, …), `trigger_radius`, `interactable` (bool) | Interactive objects. The `interactable` bool is set in the Appearance proto for base entities with `EntityType` or `OwnerExtension`, so the frontend can show sparks/highlight without reading server-only components. |
 | `Traversable` | `bool` (dynamically mutable) | Objects, tiles |
 | `AIBehavior` | `state` (Idle, Patrol, Discussion) | NPCs (post-MVP) |
 | `NetworkSession` | `client_id` (links the entity to its Pusher session) | Human-controlled avatars; **absent for NPCs and extension entities** |
 | `AvatarAppearance` | body shape, skin tone, hair, outfit, accessory | Avatars |
+| `EntityState` | `state` (string: "on", "off", "locked", …) | Interactive props (lights, switches, doors). Set by extensions via action replies, replicated to clients so the frontend can render state-based visuals (glow, sprite swap). See `documentation/plans/2026-07-15-interaction-system-design.md`. |
+| `Appearance` | `gid` (uint32), `interactable` (bool) | Base entities from Tiled. `gid` is the current sprite tile ID (swapped to `gid_on` when state changes). `interactable` is true for entities with `EntityType` or `OwnerExtension`, telling the frontend to show sparks on approach. |
 | `Bubble` | `type` (speech, emoji, status), `content`, `expires_at` | Avatars showing a message/status bubble (see `16-avatars.md`) |
 | `Attachment` | `parent_entity_id`, `offset` | An avatar attached to a vehicle/another entity (see `16-avatars.md`) |
 | `ZoneMembership` | `zone_id`, `joined_at` | Entities currently inside a zone |
@@ -85,7 +87,7 @@ The full set will be finalised in `13-ecs-design.md`.
 | System | Queries | Responsibility | Runs in |
 |---|---|---|---|
 | `PlayerMovementSystem` | `Position` + `NetworkSession` + `InputState` | Authoritative player avatar position update per tick. Computes target tile from input, evaluates gate triggers (block/allow cached, ask routed to extension via NATS), updates Position if allowed. This is the only gameplay movement system in the kernel. | World Simulator (kernel) |
-| `InputHandlerSystem` | `Position` + `NetworkSession` + `Equipment` | Evaluates `ActionFrame` input: computes range, line-of-sight (Bresenham raycast), entities on clicked tile / adjacent entities, and equipment snapshot. Broadcasts to all extensions registered for that input type. Collects all replies within a timeout and applies them. Spatial data computation only — does not decide what the action does. | World Simulator (kernel) |
+| `InputHandlerSystem` | `Position` + `NetworkSession` + `Equipment` | Evaluates `ActionFrame` input: computes range, line-of-sight (Bresenham raycast), entities on clicked tile / adjacent entities, and equipment snapshot. For `key:E` and `action:execute`, also collects target entities from `interactions` `target_ids` (may be far away). Broadcasts to all extensions registered for that input type. Collects all replies within a timeout, applies state/appearance/animation updates, and sends a single `ActionResultFrame` with aggregated `available_actions` to the client. Spatial data computation only — does not decide what the action does. | World Simulator (kernel) |
 | `ReplicationSystem` | `NetworkSession` + (changed components) | Encodes dirty components into generic replication messages (`SpawnEntity`, `UpdateComponent`, `DestroyEntity`, `PlayAnimation`) for interested clients. Runs in the World Simulator. See `11-replication.md`. | World Simulator (kernel) |
 | `TriggerSystem` | (deprecated in kernel) | Trigger logic is now implemented by extensions via the trigger registry (see `18-extensions.md` §3a). The kernel evaluates zone gate triggers (block/allow/ask), dispatches zone notify triggers (enter/exit, proximity for mobile circle zones), and broadcasts input events to registered extensions with range/LOS data — but does not implement trigger behavior. | Extension |
 | `BehaviorTreeSystem` | (deprecated in kernel) | NPC AI is implemented by extensions. The kernel does not run AI systems. | Extension |
@@ -105,7 +107,10 @@ both register for the same input trigger (`14-zones-and-interactions.md`
 §3a) without colliding — each self-filters by checking `TriggerOwner` before
 acting. See
 `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`
-Part C for the full interaction flow.
+Part C for the original interaction flow, and
+`documentation/plans/2026-07-15-interaction-system-design.md` for the
+generic interaction system (two-phase RPC, popup mode, multi-extension
+dispatch, `interactions` data model).
 
 ## 7. Open questions for `13-ecs-design.md`
 

@@ -32,6 +32,19 @@ type PropEntity struct {
 	OwnerExtension string
 	TriggerRadius  float32
 	Gid            uint32 // Tiled global tile ID (for sprite rendering)
+	GidOn          uint32                // alternate sprite gid for "on" state (0 = no alternate)
+	OnInteractAction string              // immediate-mode: action_id fired on E press
+	Actions          string              // popup-mode: comma-separated action_ids
+	Interactions     map[string][]Effect // action_id -> effects list
+}
+
+// Effect is a single action to apply to a set of targets, declared in
+// the entity's "interactions" Tiled property. The extension interprets
+// the Action verb; the framework just routes.
+type Effect struct {
+	Action    string   `json:"action"`
+	Payload   string   `json:"payload,omitempty"`
+	TargetIDs []string `json:"target_ids"`
 }
 
 // FindEntityByName returns the base entity with the given name on this map,
@@ -208,10 +221,11 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 				continue
 			}
 			pe := &PropEntity{
-				ID:  obj.Name,
-				Gid: obj.Gid,
-				X:   float32(obj.X) / tileW,
-				Y:   float32(obj.Y) / tileH,
+				ID:           obj.Name,
+				Gid:          obj.Gid,
+				X:            float32(obj.X) / tileW,
+				Y:            float32(obj.Y) / tileH,
+				Interactions: map[string][]Effect{},
 			}
 			for _, prop := range obj.Properties {
 				switch prop.Name {
@@ -226,6 +240,26 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 				case "trigger_radius":
 					if f, ok := prop.Value.(float64); ok {
 						pe.TriggerRadius = float32(f)
+					}
+				case "gid_on":
+					if f, ok := prop.Value.(float64); ok {
+						pe.GidOn = uint32(f)
+					}
+				case "on_interact_action":
+					if s, ok := prop.Value.(string); ok {
+						pe.OnInteractAction = s
+					}
+				case "actions":
+					if s, ok := prop.Value.(string); ok {
+						pe.Actions = s
+					}
+				case "interactions":
+					if s, ok := prop.Value.(string); ok {
+						pe.Interactions = make(map[string][]Effect)
+						if err := json.Unmarshal([]byte(s), &pe.Interactions); err != nil {
+							// Malformed JSON — leave Interactions as empty map.
+							// The entity will be inert (no effects to fire).
+						}
 					}
 				}
 			}

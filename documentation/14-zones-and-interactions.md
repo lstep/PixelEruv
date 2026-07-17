@@ -104,6 +104,36 @@ The kernel does not have a `TriggerSystem` or `ZoneSystem` — all trigger and
 zone behavior is implemented by extensions. The kernel only computes spatial
 data (range, LOS, entities) and broadcasts.
 
+### Generic interaction system (ext-props)
+
+For interactive props (lights, switches, doors), the generic ext-props
+extension handles the full interaction lifecycle without any
+game-specific code. The entity's behavior is declared in Tiled
+properties (`on_interact_action`, `actions`, `interactions`) and
+ext-props interprets them at runtime. See
+`documentation/plans/2026-07-15-interaction-system-design.md` for the
+full design and `21-map-design-guide.md` § "Entities" for the Tiled
+property reference.
+
+**Two interaction modes:**
+
+- **Immediate mode** (`on_interact_action`): pressing E fires the
+  action immediately. No popup. Used for doors, switches.
+- **Popup mode** (`actions`): pressing E shows a popup with available
+  actions. The user picks one, which sends `action:execute` with the
+  chosen `action_id`. Used for lights and complex entities.
+
+**Dispatch payload:** the kernel includes `adjacent_entities` (within
+`trigger_radius`) and `target_entities` (looked up from `interactions`
+`target_ids`, may be far away — e.g. a wall switch controlling ceiling
+lights across the room). Each extension self-filters by
+`owner_extension` and processes only the action verbs it knows.
+
+**Reply:** the extension replies with `updates` (state changes),
+`appearance_updates` (GID swaps), `animations` (animation IDs), and
+`available_actions` (for popup mode). The kernel applies these to the
+ECS and replicates to clients.
+
 ## 3a. Input triggers
 
 Input triggers are one of two trigger types (the other being **zone

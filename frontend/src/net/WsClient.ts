@@ -7,6 +7,20 @@ import { getIdToken, clearIdToken, getDeviceId } from "../auth";
 
 export type ReplicationHandler = (batch: ReplicationBatchView) => void;
 
+export interface AvailableActionView {
+  entityId: string;
+  actionId: string;
+  label: string;
+  entityLabel: string;
+}
+
+export interface ActionResultView {
+  seq: number;
+  ok: boolean;
+  reason: string;
+  availableActions: AvailableActionView[];
+}
+
 // Connection state surfaced to the UI so it can show a "Reconnecting…"
 // overlay. Transitions:
 //   connecting -> open -> reconnecting -> open -> ... -> closed
@@ -44,6 +58,11 @@ export interface ConnectHandlers {
   // The client will not attempt to reconnect. reason is human-readable;
   // banUntil is a unix timestamp (0 = permanent).
   onBanned?: (reason: string, banUntil: number) => void;
+  // Fired when an ActionResultFrame is received. For popup-mode
+  // interactions, availableActions carries the actions to display. For
+  // immediate-mode interactions, availableActions is empty and the side
+  // effects arrive via replication (state/sprite/animation updates).
+  onActionResult?: (result: ActionResultView) => void;
 }
 
 export interface SpawnEntityView {
@@ -61,11 +80,17 @@ export interface DestroyEntityView {
   entityId: string;
 }
 
+export interface PlayAnimationView {
+  entityId: string;
+  animationId: number;
+}
+
 export interface ReplicationBatchView {
   lastInputSeq: number;
   spawns: SpawnEntityView[];
   updates: UpdateComponentView[];
   destroys: DestroyEntityView[];
+  animations: PlayAnimationView[];
 }
 
 export class WsClient {
@@ -207,6 +232,10 @@ export class WsClient {
               destroys: batch.destroys.map((d: any) => ({
                 entityId: d.entityId,
               })),
+              animations: (batch.animations ?? []).map((a: any) => ({
+                entityId: a.entityId,
+                animationId: Number(a.animationId),
+              })),
             });
           } finally {
             span.end();
@@ -217,7 +246,17 @@ export class WsClient {
           break;
         case "actionResult": {
           const ar = serverFrame.payload.value;
-          console.log(`action result: ok=${ar.ok} reason="${ar.reason}" seq=${ar.seq}`);
+          this.handlers.onActionResult?.({
+            seq: Number(ar.seq),
+            ok: ar.ok,
+            reason: ar.reason,
+            availableActions: (ar.availableActions ?? []).map((a: any) => ({
+              entityId: a.entityId,
+              actionId: a.actionId,
+              label: a.label,
+              entityLabel: a.entityLabel,
+            })),
+          });
           break;
         }
         case "avToken": {
@@ -354,7 +393,9 @@ export class WsClient {
   // ActionFrame. Unlike sendInput (continuous movement), this is a single
   // event; the server dispatches it to extensions registered for the input
   // type and replies with an ActionResultFrame (handled in onmessage).
-  sendAction(input: string): number {
+  // For the two-phase interaction flow, pass input="action:execute" with
+  // entityId and actionId set to the chosen popup action.
+  sendAction(input: string, entityId?: string, actionId?: string): number {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return 0;
     this.seq++;
     const span = tracer.startSpan("ws.send_action", {
@@ -369,6 +410,8 @@ export class WsClient {
         create(ActionFrameSchema, {
           seq: this.seq,
           input,
+          entityId: entityId ?? "",
+          actionId: actionId ?? "",
           traceparent: traceparentFor(),
         }),
       );

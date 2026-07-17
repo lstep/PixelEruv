@@ -839,7 +839,8 @@ func handleEffect(fx effect, dispatch *actionDispatchMsg, resp *actionReplyMsg) 
                 State    string `json:"state"`
             }{tid, newState})
             if target.GidOn != 0 {
-                gid := target.Gid
+                gid := target.GidOff
+                if gid == 0 { gid = target.Gid }
                 if isOn { gid = target.GidOn }
                 resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
                     EntityID string `json:"entity_id"`
@@ -856,7 +857,8 @@ func handleEffect(fx effect, dispatch *actionDispatchMsg, resp *actionReplyMsg) 
             }{tid, fx.Payload})
             target := findTargetInDispatch(dispatch, tid)
             if target != nil && target.GidOn != 0 {
-                gid := target.Gid
+                gid := target.GidOff
+                if gid == 0 { gid = target.Gid }
                 if fx.Payload == "on" { gid = target.GidOn }
                 resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
                     EntityID string `json:"entity_id"`
@@ -870,8 +872,18 @@ func handleEffect(fx effect, dispatch *actionDispatchMsg, resp *actionReplyMsg) 
         // ...
 
     case "deactivate", "turn_off":
-        // Same as set_state with payload "off"
-        // ...
+        // Same as set_state with payload "off". Uses GidOff (the
+        // original "off" sprite) rather than Gid (the current gid,
+        // which may be GidOn if the entity is currently "on").
+        for _, tid := range fx.TargetIDs {
+            resp.Updates = append(resp.Updates, {tid, "off"})
+            target := findTargetInDispatch(dispatch, tid)
+            if target != nil {
+                gid := target.GidOff
+                if gid == 0 { gid = target.Gid }
+                resp.AppearanceUpdates = append(resp.AppearanceUpdates, {tid, gid})
+            }
+        }
 
     // "toggle_wall", "send_notification", etc. -> not handled, skip
     }
@@ -1093,9 +1105,14 @@ type Entity struct {
 ```
 
 `GidOff` stores the original gid from map load. The extension reads
-`Gid` and `GidOn` from the dispatch and returns `AppearanceUpdates`
-with the appropriate gid. Worldsim applies them: `e.Gid = u.Gid;
-e.dirtyAppearance = true`.
+`Gid`, `GidOff`, and `GidOn` from the dispatch and returns
+`AppearanceUpdates` with the appropriate gid. Worldsim applies them:
+`e.Gid = u.Gid; e.dirtyAppearance = true`.
+
+`GidOff` is included in the dispatch (section 8.3) so the extension
+can set the sprite back to the "off" frame when deactivating an
+entity that is currently "on" (where `Gid` would be `GidOn`, not the
+original off sprite).
 
 ### 8.3 Dispatch payload (worldsim.go)
 
@@ -1105,7 +1122,8 @@ type adjacentEntityInfo struct {
     EntityType       string   `json:"entity_type,omitempty"`
     OwnerExtension   string   `json:"owner_extension,omitempty"`
     State            string   `json:"state,omitempty"`              // NEW
-    Gid              uint32   `json:"gid,omitempty"`                // NEW
+    Gid              uint32   `json:"gid,omitempty"`                // NEW (current gid)
+    GidOff           uint32   `json:"gid_off,omitempty"`            // NEW (original "off" gid)
     GidOn            uint32   `json:"gid_on,omitempty"`             // NEW
     OnInteractAction string   `json:"on_interact_action,omitempty"` // NEW
     Actions          string   `json:"actions,omitempty"`            // NEW
@@ -1305,9 +1323,8 @@ Also read `app.interactable` at spawn time and store on Avatar.
 for (const anim of batch.animations) {
   const avatar = this.avatars.get(anim.entityId);
   if (!avatar) continue;
-  switch (anim.animationId) {
-    case ANIM_CLICK: this.sound.play("clic"); break;
-    case ANIM_SPARKS: this.playSparks(avatar); break;
+  if (anim.animationId === ANIM_CLICK) {
+    this.sound.play("clic", { volume: 0.5 });
   }
 }
 ```
@@ -1341,6 +1358,12 @@ In `update()`, poll distance from local player to each
 `avatar.interactable` entity. When entering range, play a one-shot
 sparks animation above the entity.
 
+The trigger radius is hardcoded at 2.0 tiles on the client because
+`trigger_radius` is a Tiled property that is not replicated to the
+client in any component. Adding it to the Appearance proto would be
+a heavier change; the hardcoded value is pragmatic and can be
+upgraded later if per-entity radius becomes important.
+
 **Load assets in preload():**
 
 ```typescript
@@ -1358,13 +1381,13 @@ frontend. The existing pattern uses `animationOn=1`, `animationOff=2`
 in ext-props. The frontend needs a matching mapping:
 
 ```typescript
-const ANIM_CLICK = 1;   // click sound
-const ANIM_SPARKS = 3;  // sparks on approach (client-triggered, not from server)
+const ANIM_CLICK = 3;   // click sound (matches animationClick=3 in ext-props)
 ```
 
 Note: sparks on approach is client-side only (no server round-trip),
 so it doesn't use the PlayAnimation replication path. It's triggered
-directly in `update()`.
+directly in `update()` and uses a local spritesheet animation, not an
+animation ID.
 
 
 ## 10. Implementation Steps
@@ -1384,7 +1407,7 @@ directly in `update()`.
 6. Add `GidOff`, `GidOn`, `OnInteractAction`, `Actions`,
    `Interactions` to `Entity` struct in `worldsim.go`. Set them in
    `loadBaseEntities()`.
-7. Extend `adjacentEntityInfo` with `State`, `Gid`, `GidOn`,
+7. Extend `adjacentEntityInfo` with `State`, `Gid`, `GidOff`, `GidOn`,
    `OnInteractAction`, `Actions`, `Interactions`.
 8. Extend `actionDispatchMsg` with `TargetEntities`,
    `TargetEntityID`, `ActionID`.

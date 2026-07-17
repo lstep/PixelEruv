@@ -95,7 +95,7 @@ When reporting information to me, be extremely concise and sacrifice grammar for
   ```bash
   make proto   # requires protoc installed; outputs to backend/internal/pb/ and frontend/src/proto/
   ```
-- Go 1.26.4 (per go.mod). Protoc and buf are not in PATH — install them if `make proto` fails.
+- Go 1.26.4 (per go.mod). Protoc and buf must be installed and in PATH — `make build` depends on `make proto` to regenerate the gitignored `.pb.go` files before compiling.
 
 ### Architecture overview
 
@@ -155,3 +155,14 @@ make debug    # starts motel, NATS container, PocketBase, worldsim + pusher with
 - Keep a DASHBOARD.md up to date: progress, what remains, decisions made. Update it at the end of each session.
 - Before planning, query memory for stable facts about this repo. At the end, save only durable facts that will help future sessions. Do not save secrets, logs, guesses, or one-off errors.
 - Worldsim auto-seeds sprite_bases from `SPRITES_DIR` (default `./sprites`) on startup — non-fatal if it fails.
+
+## Browser Automation
+
+Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
+
+Core workflow:
+
+1. `agent-browser open <url>` - Navigate to page
+2. `agent-browser snapshot -i` - Get interactive elements with refs (@e1, @e2)
+3. `agent-browser click @e1` / `fill @e2 "text"` - Interact using refs
+4. Re-snapshot after page changes
