@@ -4,6 +4,7 @@
     "@bufbuild/protoc-gen-es": "^2.12.1"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "^2.12.1"
+    "@bufbuild/protobuf": "^2.12.1",
+    "agent-browser": "^0.27.0"
   }
 }

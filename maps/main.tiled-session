@@ -1,11 +1,43 @@
 {
-    "activeFile": "default-map.tmx",
+    "activeFile": "advanced-map.tmx",
     "expandedProjectPaths": [
         "."
     ],
+    "file.lastUsedOpenFilter": "All Files (*)",
     "fileStates": {
         "": {
             "scaleInEditor": 1
+        },
+        "advanced-map.tmx": {
+            "scale": 0.8658854166666666,
+            "selectedLayer": 5,
+            "viewCenter": {
+                "x": 509.3052631578948,
+                "y": 320.4812030075188
+            }
+        },
+        "advanced-map.tmx#modern-office": {
+            "scaleInDock": 1
+        },
+        "advanced-map.tmx#room-builder-office": {
+            "scaleInDock": 1
+        },
+        "default-map.json": {
+            "expandedObjectLayers": [
+                6
+            ],
+            "scale": 0.9153645833333333,
+            "selectedLayer": 5,
+            "viewCenter": {
+                "x": 479.59032716927453,
+                "y": 319.5448079658606
+            }
+        },
+        "default-map.json#modern-office": {
+            "scaleInDock": 1
+        },
+        "default-map.json#room-builder-office": {
+            "scaleInDock": 1
         },
         "default-map.tmx": {
             "scale": 0.8658854166666666,
@@ -50,11 +82,13 @@
             "scaleInDock": 1
         }
     },
+    "map.lastUsedFormat": "tmx",
     "openFiles": [
-        "default-map.tmx"
+        "advanced-map.tmx"
     ],
     "project": "",
     "recentFiles": [
+        "advanced-map.tmx",
         "default-map.tmx",
         "main.tmx",
         "map2.tmx"
