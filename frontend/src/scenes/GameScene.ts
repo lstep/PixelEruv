@@ -302,11 +302,14 @@ const ZOOM_MAX = 4;
 const ZOOM_DEFAULT = 2;
 const ZOOM_SENSITIVITY = 0.001;
 
-// Screen-space gap (px) between the name tag pill's tail tip and the top of
-// the avatar sprite. The pill is anchored to the sprite's top edge (fixed in
-// world space) plus this padding divided by zoom, so the gap stays constant
-// across the whole zoom range instead of overlapping the sprite when zoomed
-// in or floating far above it when zoomed out.
+// Name tag vertical anchoring. The pill's tail tip sits above the avatar's
+// head. The sprite frame is 64px tall but the character art is ~48px sitting
+// at the bottom of the frame, so the frame top is ~16 world px above the
+// head. NAME_TAG_HEAD_INSET_PX moves the anchor down into that empty space
+// (world-space, does not scale with zoom); NAME_TAG_PAD_PX is the remaining
+// screen-space gap divided by zoom. Together they keep the pill a constant
+// small distance above the head at every zoom level.
+const NAME_TAG_HEAD_INSET_PX = 8;
 const NAME_TAG_PAD_PX = 1;
 
 // Character sprite sheets — one per player, cycled. Each sheet is 768x192.
@@ -1191,7 +1194,8 @@ export class GameScene extends Phaser.Scene {
         const zoom = this.cameras.main.zoom;
         local.nameTag.x = local.sprite.x;
         local.nameTag.y = local.sprite.y -
-          local.sprite.displayHeight * local.sprite.originY -
+          local.sprite.displayHeight * local.sprite.originY +
+          NAME_TAG_HEAD_INSET_PX -
           NAME_TAG_PAD_PX / zoom;
         local.nameTag.setScale(1 / zoom);
         local.nameTag.setDepth(local.sprite.depth + 0.01);
@@ -1246,7 +1250,8 @@ export class GameScene extends Phaser.Scene {
         const zoom = this.cameras.main.zoom;
         avatar.nameTag.x = avatar.sprite.x;
         avatar.nameTag.y = avatar.sprite.y -
-          avatar.sprite.displayHeight * avatar.sprite.originY -
+          avatar.sprite.displayHeight * avatar.sprite.originY +
+          NAME_TAG_HEAD_INSET_PX -
           NAME_TAG_PAD_PX / zoom;
         avatar.nameTag.setScale(1 / zoom);
         avatar.nameTag.setDepth(avatar.sprite.depth + 0.01);
@@ -1256,7 +1261,8 @@ export class GameScene extends Phaser.Scene {
         const zoom = this.cameras.main.zoom;
         this.dropdownContainer.x = avatar.sprite.x;
         this.dropdownContainer.y = avatar.sprite.y -
-          avatar.sprite.displayHeight * avatar.sprite.originY -
+          avatar.sprite.displayHeight * avatar.sprite.originY +
+          NAME_TAG_HEAD_INSET_PX -
           NAME_TAG_PAD_PX / zoom + 6 / zoom;
         this.dropdownContainer.setScale(1 / zoom);
         this.dropdownContainer.setDepth(avatar.sprite.depth + 0.02);
@@ -1817,7 +1823,8 @@ export class GameScene extends Phaser.Scene {
     const container = this.add.container(
       avatar.sprite.x,
       avatar.sprite.y -
-        avatar.sprite.displayHeight * avatar.sprite.originY -
+        avatar.sprite.displayHeight * avatar.sprite.originY +
+        NAME_TAG_HEAD_INSET_PX -
         NAME_TAG_PAD_PX / this.cameras.main.zoom,
     );
 
@@ -1976,7 +1983,8 @@ export class GameScene extends Phaser.Scene {
     const container = this.add.container(
       avatar.sprite.x,
       avatar.sprite.y -
-        avatar.sprite.displayHeight * avatar.sprite.originY -
+        avatar.sprite.displayHeight * avatar.sprite.originY +
+        NAME_TAG_HEAD_INSET_PX -
         NAME_TAG_PAD_PX / this.cameras.main.zoom +
         6 / this.cameras.main.zoom,
     );
