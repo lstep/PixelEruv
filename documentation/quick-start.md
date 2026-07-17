@@ -190,7 +190,7 @@ docker compose up --build -d
 | `LIVEKIT_NODE_IP` | `127.0.0.1` | compose (LiveKit `--node-ip`) | IP LiveKit advertises in WebRTC ICE candidates. Must be routable from the browser — set to the host's public/LAN IP for remote A/V. |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `devkey` / `devsecret…` | `ext-av` in compose **and** `docker/livekit.yaml` | Shared secret for signing LiveKit join tokens. **Must match** in both places. Rotate for production (§3a). |
 | `TLS_HOSTS` | `localhost,127.0.0.1` | `frontend` in compose | Comma-separated DNS/IP entries for the self-signed cert's SAN. `PUBLIC_HOST` is auto-appended at startup, so you usually don't set this directly. |
-| `DEFAULT_MAP` | `main` | `worldsim` + `ext-av` + `ext-walls` in compose | Name of the default map record; worldsim seeds this on first run and new players spawn here. |
+| `DEFAULT_MAP` | *(removed)* | — | The default map is now chosen via the `is_default` field on the `maps` collection in the PocketBase admin UI, not an env var. |
 | `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `worldsim` in compose | PocketBase superuser credentials (used by worldsim's initial-superuser migration, since PB is embedded). **Change before exposing to the internet.** |
 | `PB_DATA_DIR` | `/pb_data` | `worldsim` in compose | Directory worldsim mounts for PocketBase's SQLite data + uploaded files. Backed by the `pb_data` Docker volume. |
 | `PB_HTTP_ADDR` | `0.0.0.0:8090` | `worldsim` in compose | Address worldsim's embedded PocketBase listens on (admin UI + file API). |
@@ -551,12 +551,13 @@ PocketBase and hot-reloads within ~30s
 when a PocketBase record changes.
 
 > **First run is automatic.** On worldsim's first startup, if no `maps`
-> record named after the configured `DEFAULT_MAP` (default `main`) exists, worldsim uploads
-> `default-map.json` and the tileset PNGs referenced inside it from
-> `MAP_DIR` (bundled at `/maps` in the Docker image). A fresh deploy boots
-> straight into the office map with no manual upload step. The seed is
-> idempotent — once a record exists, worldsim never overwrites it. The
-> steps below are for **replacing** the default map or **adding** new ones.
+> records exist, worldsim uploads `default-map.json` and the tileset PNGs
+> referenced inside it from `MAP_DIR` (bundled at `/maps` in the Docker
+> image) as a record named `main` with `is_default=true`. A fresh deploy
+> boots straight into the office map with no manual upload step. The seed
+> is idempotent — once any record exists, worldsim never overwrites it.
+> The steps below are for **replacing** the default map or **adding** new
+> ones.
 
 ### 7a. Author in Tiled
 

@@ -375,10 +375,10 @@ full design.
 
 > **First run is automatic.** worldsim seeds `default-map.json` + its tileset
 > PNGs from `MAP_DIR` (bundled at `/maps` in Docker) into a `maps` record
-> named after the `DEFAULT_MAP` env var (default `main`) on first startup, if
-> no such record exists. The seed is idempotent — once the record exists,
-> worldsim never overwrites it. The steps below are for **replacing** the
-> default map or **adding** new ones.
+> named `main` (with `is_default=true`) on first startup, if no `maps` records
+> exist. The seed is idempotent — once any record exists, worldsim never
+> overwrites it. The steps below are for **replacing** the default map or
+> **adding** new ones.
 
 1. In Tiled: File → Export As… → choose `*.json` format
 2. Open the PocketBase admin UI at `http://localhost:8090/_/` (served by

@@ -32,22 +32,25 @@ The `maps` collection is created automatically by the migration in
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | text | Human-readable; the frontend loads by this name (`VITE_MAP_NAME`, default `main`) |
+| `name` | text | Human-readable; portal `target_map` and saved `map_id` reference maps by this name |
 | `tiled_json` | file (single) | The Tiled **JSON export** (not `.tmx`) |
 | `tilesets` | file (multiple) | Tileset PNG images referenced by the JSON |
+| `is_default` | bool | Set on exactly one map — this is where new players spawn and the map the frontend loads on first paint |
 
-Worldsim loads all maps from PocketBase on startup. Players can transition
+Worldsim loads all maps from PocketBase on startup. The map with
+`is_default=true` is the default (where new players spawn). If maps exist
+but none has `is_default=true`, worldsim fails fast at startup with a clear
+error — mark exactly one in the PocketBase admin UI. Players can transition
 between maps via **portal zones** — see [Portal zones](#portal-zones) below.
 
 ### First run (automatic)
 
-On worldsim's first startup, if no `maps` record named after the
-configured `DEFAULT_MAP` (default `main`) exists, worldsim uploads
+On worldsim's first startup, if no `maps` records exist, worldsim uploads
 `default-map.json` and the tileset PNGs referenced inside it from
-`MAP_DIR` as a new `maps` record (with `name` set to the configured
-default map). No manual upload step is needed for a fresh deploy — the
-world boots with the bundled office map. This mirrors the
-`SpriteStore.SeedIfEmpty` pattern used for `sprite_bases`.
+`MAP_DIR` as a new `maps` record named `main` with `is_default=true`.
+No manual upload step is needed for a fresh deploy — the world boots with
+the bundled office map. This mirrors the `SpriteStore.SeedIfEmpty` pattern
+used for `sprite_bases`.
 
 > **Note:** PocketBase is embedded in worldsim as a Go library. The seed and
 > all map fetches use PB Go SDK DAO calls in-process, not the HTTP API.
@@ -57,11 +60,10 @@ world boots with the bundled office map. This mirrors the
 | Var | Default | Notes |
 |---|---|---|
 | `MAP_DIR` | `./maps` (native) / `/maps` (Docker) | Directory containing `default-map.json` + tileset PNGs for first-run seeding |
-| `DEFAULT_MAP` | `main` | Name of the default map record; worldsim seeds this on first run and new players spawn here |
 
-The seed is **idempotent**: once a record with the configured name exists,
-worldsim never overwrites it. To replace the map, edit the PocketBase record
-(see "Replacing a map" below). Seeding runs once on startup, after
+The seed is **idempotent**: once any record exists, worldsim never
+overwrites it. To replace the map, edit the PocketBase record (see
+"Replacing a map" below). Seeding runs once on startup, after
 `app.Bootstrap()` and `app.RunAllMigrations()` complete (PocketBase is
 embedded in worldsim as a Go library, so there is no external service to
 wait for).
@@ -79,18 +81,18 @@ wait for).
    references.
 
 4. **Create or edit a `maps` record** — in the PocketBase admin UI, go to the `maps` collection and click "New record" (or edit the existing `main`):
-   - `name`: `main` (or whatever `VITE_MAP_NAME` is set to)
+   - `name`: the map name (e.g. `main`, `office2`)
    - `tiled_json`: upload the exported JSON file
    - `tilesets`: upload the tileset PNG(s) — filenames must match the `image` field in the JSON (e.g. `Room_Builder_Office_32x32.png`, `Modern_Office_32x32.png`)
+   - `is_default`: set to `true` on exactly one map (the one new players spawn on); `false` on all others
 
-5. **Load the app** — the frontend fetches the record by name from PocketBase (served by worldsim on port 8090), retrieves the JSON and tileset images via PB file URLs, and renders the map. worldsim must be running; there is no static fallback.
+5. **Load the app** — the frontend fetches the `is_default=true` record from PocketBase (served by worldsim on port 8090), retrieves the JSON and tileset images via PB file URLs, and renders the map. worldsim must be running; there is no static fallback.
 
 ### Env vars
 
 | Var | Default | Notes |
 |---|---|---|
 | `VITE_POCKETBASE_URL` | `http://localhost:8090` | PocketBase base URL, served by worldsim (browser-reachable) |
-| `VITE_MAP_NAME` | `main` | Name of the initial map record to load |
 
 ## Portal zones
 

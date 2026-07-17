@@ -57,7 +57,7 @@ Keyed by the PocketBase user record ID. Called
 | `entity_id` | string (unique) | The in-world ECS entity ID (string-encoded) assigned on first login |
 | `pos_x` | float | Last saved X position (tiles) |
 | `pos_y` | float | Last saved Y position (tiles) |
-| `map_id` | string | Current map name. Defaults to the `DEFAULT_MAP` env var on first login. Updated on map transitions. |
+| `map_id` | string | Current map name. Defaults to the `is_default=true` map on first login. Updated on map transitions. |
 | `sprite_base` | string | PocketBase record ID in `sprite_bases` selecting the character sheet |
 | `ip` | string (max 64) | Last seen client IP. Updated on every connect. |
 | `last_seen_at` | number (unix) | Timestamp of last connection. Updated on every connect. |
@@ -98,9 +98,10 @@ Each Tiled map file registered in the system.
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string (PB auto) | |
-| `name` | string | Map name (used by portal `target_map`, `VITE_MAP_NAME`, etc.) |
+| `name` | string | Map name (used by portal `target_map`, saved `map_id`, etc.) |
 | `tiled_json` | file | Tiled JSON export |
 | `tilesets` | file (multiple) | Tileset PNG images |
+| `is_default` | bool | Set on exactly one map — the spawn map for new players |
 
 > Zone polygon definitions are stored in the Tiled JSON (parsed by worldsim
 > into the in-memory zone registry on map load), not as separate records.
@@ -238,7 +239,7 @@ communicate via NATS Core.
 5. **World Simulator** reads **NATS JetStream KV** `users.<entity_id>.position`:
    - If present: spawns the entity at the stored position.
    - If absent (first login or expired): spawns at a random `spawn` zone
-     on the default map (configured by the `DEFAULT_MAP` env var).
+     on the map marked `is_default=true` in the `maps` collection.
 6. **World Simulator** reads `users.<entity_id>.status` to restore the user's
    status label.
 7. **World Simulator** registers the entity in the ECS, computes the initial
