@@ -1234,14 +1234,6 @@ export class GameScene extends Phaser.Scene {
         this.dropdownContainer.setScale(1 / zoom);
         this.dropdownContainer.setDepth(avatar.sprite.depth + 0.02);
       }
-      // Keep the interaction popup pinned to screen center at a constant
-      // screen size while open, so camera pan/zoom doesn't move or resize it.
-      if (this.interactionPopup) {
-        const zoom = this.cameras.main.zoom;
-        this.interactionPopup.x = this.cameras.main.worldView.centerX;
-        this.interactionPopup.y = this.cameras.main.worldView.centerY;
-        this.interactionPopup.setScale(1 / zoom);
-      }
       // Animate based on whether the avatar is actually moving on screen.
       const dx = avatar.sprite.x - prevX, dy = avatar.sprite.y - prevY;
       const moving = Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1;
