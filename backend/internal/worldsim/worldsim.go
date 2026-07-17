@@ -208,7 +208,19 @@ type Simulator struct {
 	// to all connected clients. Drained after each tick's replication loop.
 	destroyedEntities []string
 
+	// lastSavedPos records the last position/map persisted to PocketBase per
+	// player entity, so startPositionPersister can skip writes for entities
+	// that haven't moved since the last 30s tick. Cleared in despawnClient.
+	lastSavedPos map[string]savedPos
+
 	snapshotSeq uint32
+}
+
+// savedPos is the last position persisted to PocketBase for a player entity,
+// used by startPositionPersister to skip unchanged entities.
+type savedPos struct {
+	x, y  float32
+	mapID string
 }
 
 // selectDefaultMap returns the name of the map marked is_default in the PB
@@ -331,6 +343,7 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 		entities:         make(map[string]*Entity),
 		clients:          make(map[string]*Entity),
 		entityIDToClient: make(map[string]string),
+		lastSavedPos:     make(map[string]savedPos),
 	}
 
 	// Load base entities for all maps.
@@ -768,6 +781,13 @@ func (s *Simulator) Run(ctx context.Context) error {
 	// pusher can aggregate and serve it via its HTTP /healthz endpoint.
 	go s.startHealthPublisher(ctx)
 
+	// Periodic position persistence (every 30 seconds). Saves each connected
+	// player's position and map_id to PocketBase so a worldsim/pusher crash
+	// doesn't lose more than 30s of movement (despawnClient only fires on a
+	// clean disconnect). Skips entities whose position hasn't changed since
+	// the last save to avoid idle write load.
+	go s.startPositionPersister(ctx)
+
 	ticker := time.NewTicker(s.tickDur)
 	defer ticker.Stop()
 
@@ -796,6 +816,81 @@ func (s *Simulator) startHealthPublisher(ctx context.Context) {
 		case <-ticker.C:
 			s.publishHealth()
 		}
+	}
+}
+
+// positionPersistInterval is how often startPositionPersister checkpoints
+// connected players' positions to PocketBase. 30s bounds the movement loss
+// from a worldsim/pusher crash; despawnClient still saves on clean disconnect.
+const positionPersistInterval = 30 * time.Second
+
+// startPositionPersister periodically saves every connected player's position
+// and map_id to PocketBase. Without this, a worldsim or pusher crash (where
+// client.disconnected never fires) loses the player's position back to their
+// last spawn/restore point. Skips entities whose position hasn't changed since
+// the last save to keep idle write load at zero.
+func (s *Simulator) startPositionPersister(ctx context.Context) {
+	ticker := time.NewTicker(positionPersistInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.persistChangedPositions(ctx)
+		}
+	}
+}
+
+// positionSave is a pending position+map write collected by the persister.
+type positionSave struct {
+	entityID string
+	x, y     float32
+	mapID    string
+}
+
+// collectChangedPositionsLocked returns the set of connected players whose
+// position or map differs from the last value persisted in lastSavedPos.
+// Caller must hold s.mu.
+func (s *Simulator) collectChangedPositionsLocked() []positionSave {
+	var toSave []positionSave
+	for _, e := range s.clients {
+		if e.Position == nil {
+			continue
+		}
+		last, ok := s.lastSavedPos[e.ID]
+		if ok && last.x == e.Position.X && last.y == e.Position.Y && last.mapID == e.Position.MapId {
+			continue
+		}
+		toSave = append(toSave, positionSave{entityID: e.ID, x: e.Position.X, y: e.Position.Y, mapID: e.Position.MapId})
+	}
+	return toSave
+}
+
+// persistChangedPositions snapshots connected players under s.mu, then for
+// each whose position or map differs from the last saved value, saves to
+// PocketBase outside the lock (network I/O) and updates lastSavedPos.
+func (s *Simulator) persistChangedPositions(ctx context.Context) {
+	s.mu.Lock()
+	toSave := s.collectChangedPositionsLocked()
+	s.mu.Unlock()
+
+	if len(toSave) == 0 || s.userStore == nil {
+		return
+	}
+
+	for _, p := range toSave {
+		if err := s.userStore.SavePosition(p.entityID, p.x, p.y); err != nil {
+			s.logger.WarnContext(ctx, "periodic position save failed", "err", err, "entity", p.entityID)
+			continue
+		}
+		if err := s.userStore.SaveMapID(p.entityID, p.mapID); err != nil {
+			s.logger.WarnContext(ctx, "periodic map_id save failed", "err", err, "entity", p.entityID)
+			continue
+		}
+		s.mu.Lock()
+		s.lastSavedPos[p.entityID] = savedPos{x: p.x, y: p.y, mapID: p.mapID}
+		s.mu.Unlock()
 	}
 }
 
@@ -1099,6 +1194,7 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	delete(s.entities, e.ID)
 	delete(s.clients, clientID)
 	delete(s.entityIDToClient, e.ID)
+	delete(s.lastSavedPos, e.ID)
 	// Queue a DestroyEntity so the next replication tick notifies all other
 	// clients. Without this, remaining clients never learn the entity is gone
 	// and the avatar sprite stays on screen after the player disconnects.

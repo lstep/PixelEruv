@@ -1,5 +1,24 @@
 # Dashboard
 
+## Periodic position save + zoom persistence
+
+**Branch:** `feat/periodic-position-and-zoom-persist`
+**Status:** Implemented — `go build ./...`, `go test ./internal/worldsim/`, and `npm run build` all pass.
+
+Two persistence gaps fixed:
+
+1. **Player position was only saved on clean disconnect** (`despawnClient`). A worldsim or pusher crash (where `client.disconnected` never fires) lost the player's position back to their last spawn/restore point. Added `startPositionPersister` — a 30s ticker launched in `Run` that saves each connected player's position+map_id to PocketBase, skipping entities whose position hasn't changed since the last save (zero idle write load). `lastSavedPos` map on `Simulator` tracks the last persisted x/y/map per entity; cleared in `despawnClient`.
+2. **Camera zoom reset to `ZOOM_DEFAULT` on every reload.** Zoom is now stored in the existing `player_options` JSON (alongside `show_own_name_tag`), so it rides the existing `SetPlayerOptionsFrame` → PocketBase `players.options` path — no proto or PB schema changes. The wheel handler debounces (500ms) a `setPlayerOptions` call so a stream of wheel notches coalesces into one server write. `applyPlayerOptions` restores the saved zoom (clamped to `[ZOOM_MIN, ZOOM_MAX]`) on connect. Guests have no PB record and reset to default on reload, consistent with `show_own_name_tag`.
+
+### Files
+
+| File | Changes |
+|---|---|
+| `backend/internal/worldsim/worldsim.go` | `savedPos` type; `Simulator.lastSavedPos` field; init in `New`; `startPositionPersister`/`collectChangedPositionsLocked`/`persistChangedPositions`; `positionPersistInterval` const; launched in `Run`; cleanup in `despawnClient` |
+| `backend/internal/worldsim/worldsim_persist_test.go` | New — `TestCollectChangedPositionsLocked_SkipsUnchanged` |
+| `frontend/src/scenes/GameScene.ts` | `zoomPersistTimer` field; `scheduleZoomPersist` debounced send; wheel handler calls it; `applyPlayerOptions` restores saved zoom |
+| `frontend/src/ui/TopMenu.ts` | `parsePlayerOptions` return type widened to include `zoom?: number` |
+
 ## Persist player presence status to PocketBase
 
 **Status:** Implemented — `make proto`, `go build ./...`, `go test ./internal/worldsim/`, and `tsc --noEmit` all pass.
