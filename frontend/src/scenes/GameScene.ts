@@ -267,6 +267,10 @@ const STALL_THRESHOLD_MS = 150;
 // this distance (in tiles, feet-to-feet) can hear each other's Nearby chat.
 const PROXIMITY_RADIUS_TILES = 2.0;
 const PROXIMITY_RADIUS_PX = PROXIMITY_RADIUS_TILES * TILE_SIZE; // 64
+// Mirrors the worldsim interaction trigger radius (adjacentEntitiesLocked
+// defaultRadius = 1.5 tiles). Used to auto-close the interaction popup when
+// the local player walks out of range of every entity it lists.
+const INTERACTION_RADIUS_TILES = 1.5;
 // Vertical offset from Position.Y to the avatar's feet in tile coords.
 // Avatars render with origin (0.5, 0.75) on a 64px frame placed at
 // (pos.X*32, pos.Y*32+16), so feet sit at Position.Y + 1.0. Collision is
@@ -855,6 +859,11 @@ export class GameScene extends Phaser.Scene {
     kb.on("keydown-E", () => { if (!eHeld) { eHeld = true; this.ws?.sendAction("key:E"); } });
     kb.on("keyup-E", () => { eHeld = false; });
 
+    // ESC closes the interaction popup (matches the "click outside" close
+    // below). The popup's action buttons close it themselves on click, so
+    // by the time the global pointerdown handler runs this is already null.
+    kb.on("keydown-ESC", () => this.closeInteractionPopup());
+
     // Proximity spotlight toggle — shows/hides the soft warm pool around every
     // avatar visualizing the 2-tile chat radius. Group members get a brighter
     // highlight (computed each frame in update()).
@@ -1099,11 +1108,16 @@ export class GameScene extends Phaser.Scene {
 
     // Close the info dropdown when clicking outside it. The dot and buttons
     // set _dropdownClickedThisFrame to suppress this on their own clicks.
+    // Also close the interaction popup on any outside click — its action
+    // buttons call closeInteractionPopup() on their own pointerdown, so by
+    // the time this global handler runs, this.interactionPopup is already
+    // null for in-popup clicks and only non-null for outside clicks.
     this.input.on("pointerdown", () => {
       if (!this._dropdownClickedThisFrame && this.dropdownContainer) {
         this.closeDropdown();
       }
       this._dropdownClickedThisFrame = false;
+      if (this.interactionPopup) this.closeInteractionPopup();
     });
 
     // Clean up A/V video bar + LiveKit room on scene shutdown.
@@ -1248,13 +1262,32 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Keep the interaction popup pinned to screen center at a constant
-    // screen size while open, so camera pan/zoom doesn't move or resize it.
+    // Keep the interaction popup anchored to the local avatar (to its left,
+    // counter-scaled by 1/zoom) and clamped to the viewport, so camera pan,
+    // zoom, or border clamping doesn't move it off the avatar or off-screen.
+    // Auto-close it once the player is out of interaction range of every
+    // entity it lists (mirrors the server's adjacentEntitiesLocked check).
     if (this.interactionPopup) {
-      const zoom = this.cameras.main.zoom;
-      this.interactionPopup.x = this.cameras.main.worldView.centerX;
-      this.interactionPopup.y = this.cameras.main.worldView.centerY;
-      this.interactionPopup.setScale(1 / zoom);
+      this.positionInteractionPopup(this.interactionPopup);
+      const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+      if (local) {
+        const entityIds = this.interactionPopup.getData("entityIds") as string[];
+        const lx = local.sprite.x / TILE_SIZE;
+        const ly = local.sprite.y / TILE_SIZE;
+        const r = INTERACTION_RADIUS_TILES;
+        let anyInRange = false;
+        for (const id of entityIds) {
+          const av = this.avatars.get(id);
+          if (!av) continue;
+          const dx = av.sprite.x / TILE_SIZE - lx;
+          const dy = av.sprite.y / TILE_SIZE - ly;
+          if (dx * dx + dy * dy <= r * r) {
+            anyInRange = true;
+            break;
+          }
+        }
+        if (!anyInRange) this.closeInteractionPopup();
+      }
     }
 
     // --- Proximity spotlight: compute chat group + update glows ---
@@ -2072,13 +2105,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   // openInteractionPopup shows a popup with available actions for the
-  // player to choose from. Positioned at the screen center since
-  // multiple entities may be involved.
+  // player to choose from. Anchored to the left of the local avatar (via
+  // positionInteractionPopup) so it follows the player rather than screen
+  // center, which matters when the camera clamps at a map border or is
+  // zoomed out beyond the map. Multiple entities may be listed, but the
+  // popup is triggered by the local player's interaction, so anchoring to
+  // the local avatar is the intuitive reference point.
   private openInteractionPopup(actions: AvailableActionView[]): void {
     this.closeInteractionPopup();
 
-    const cam = this.cameras.main;
-    const container = this.add.container(cam.worldView.centerX, cam.worldView.centerY);
+    const container = this.add.container(0, 0);
     const children: Phaser.GameObjects.GameObject[] = [];
 
     const panelW = 160;
@@ -2141,12 +2177,18 @@ export class GameScene extends Phaser.Scene {
     children.unshift(bg);
 
     container.add(children);
-    // Match the openDropdown pattern: world-space position + counter-scale
-    // by 1/zoom so the popup stays at a constant screen size regardless of
-    // camera zoom. setScrollFactor(0) is intentionally NOT used — with it,
-    // cam.worldView.centerX/Y (world coords) would be misread as screen
-    // coords, placing the popup off-center and breaking input hit areas.
-    container.setScale(1 / cam.zoom);
+    // Store panel dimensions so positionInteractionPopup can place the
+    // popup to the left of the local avatar and clamp it to the viewport
+    // (both at creation and every frame in update()). Store the entity IDs
+    // the popup lists so update() can auto-close it when the local player
+    // walks out of interaction range of all of them.
+    container.setData("panelW", panelW);
+    container.setData("panelH", panelH);
+    container.setData(
+      "entityIds",
+      actions.map((a) => a.entityId),
+    );
+    this.positionInteractionPopup(container);
     container.setDepth(10000);
     this.interactionPopup = container;
   }
@@ -2155,6 +2197,47 @@ export class GameScene extends Phaser.Scene {
   private closeInteractionPopup(): void {
     this.interactionPopup?.destroy();
     this.interactionPopup = null;
+  }
+
+  // positionInteractionPopup places the interaction popup to the left of the
+  // local avatar, counter-scaled by 1/zoom so it renders at a constant screen
+  // size, and clamped to the visible camera viewport so it never goes
+  // off-screen (e.g. when the camera clamps at a map border or is zoomed out
+  // beyond the map). Falls back to screen center if the local avatar isn't
+  // present yet. panelW/panelH are read from the container's data, set in
+  // openInteractionPopup. Called once at creation and every frame in update().
+  private positionInteractionPopup(container: Phaser.GameObjects.Container): void {
+    const cam = this.cameras.main;
+    const zoom = cam.zoom;
+    const panelW = container.getData("panelW") as number;
+    const panelH = container.getData("panelH") as number;
+    const halfW = panelW / 2 / zoom; // world-space half width of the panel
+    const halfH = panelH / zoom;     // world-space full height of the panel
+    const margin = 4 / zoom;         // 4px screen margin in world units
+
+    const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+    let x: number, y: number;
+    if (local) {
+      // Place the panel's right edge GAP screen-px to the left of the avatar,
+      // and vertically center the panel on the avatar.
+      const GAP = 18 / zoom;
+      x = local.sprite.x - GAP - halfW;
+      y = local.sprite.y - halfH / 2;
+    } else {
+      x = cam.worldView.centerX;
+      y = cam.worldView.centerY;
+    }
+
+    // Clamp so the panel stays within the visible viewport.
+    const vw = cam.worldView;
+    if (x - halfW < vw.left + margin) x = vw.left + margin + halfW;
+    if (x + halfW > vw.right - margin) x = vw.right - margin - halfW;
+    if (y < vw.top + margin) y = vw.top + margin;
+    if (y + halfH > vw.bottom - margin) y = vw.bottom - margin - halfH;
+
+    container.x = x;
+    container.y = y;
+    container.setScale(1 / zoom);
   }
 
   // resolveDisplayName returns the display name for an entity, used by the
