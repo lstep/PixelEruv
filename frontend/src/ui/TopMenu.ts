@@ -505,8 +505,10 @@ export class TopMenu {
 }
 
 // parsePlayerOptions safely parses the player options JSON string, returning
-// an object with known keys. Malformed JSON yields an empty object.
-function parsePlayerOptions(raw: string): { show_own_name_tag?: boolean; zoom?: number } {
+// an object with known keys. Malformed JSON, null, or any non-object value
+// yields an empty object — never throws. Shared by TopMenu and GameScene so
+// both zoom persistence and the name-tag checkbox treat bad input the same.
+export function parsePlayerOptions(raw: string): { show_own_name_tag?: boolean; zoom?: number } {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
