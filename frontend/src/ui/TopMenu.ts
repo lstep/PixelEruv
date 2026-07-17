@@ -359,9 +359,13 @@ export class TopMenu {
       this.micBtn.disabled = disabled;
       this.camBtn.disabled = disabled;
       this.screenBtn.disabled = disabled;
-      this.micBtn.style.opacity = disabled ? "0.4" : "1";
-      this.camBtn.style.opacity = disabled ? "0.4" : "1";
-      this.screenBtn.style.opacity = disabled ? "0.4" : "1";
+      if (disabled) {
+        this.micBtn.style.opacity = "0.4";
+        this.camBtn.style.opacity = "0.4";
+        this.screenBtn.style.opacity = "0.4";
+      } else {
+        this.updateAvLabels();
+      }
     };
     this.applyStatusFn = applyStatus;
     for (const opt of statusOptions) {
