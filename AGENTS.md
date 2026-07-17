@@ -156,6 +156,17 @@ make debug    # starts motel, NATS container, PocketBase, worldsim + pusher with
 - Before planning, query memory for stable facts about this repo. At the end, save only durable facts that will help future sessions. Do not save secrets, logs, guesses, or one-off errors.
 - Worldsim auto-seeds sprite_bases from `SPRITES_DIR` (default `./sprites`) on startup — non-fatal if it fails.
 
+### Frontend camera zoom (Phaser 4)
+
+The GameScene camera zoom is user-adjustable via mouse wheel (ZOOM_MIN=1, ZOOM_MAX=4, default 2). **Any UI element positioned in world space must account for zoom**, or it will end up at the wrong screen position and/or scale with zoom (which also breaks input hit areas).
+
+Established pattern (see `openDropdown`, name tags at `GameScene.ts` ~L1222):
+- Place the container at world coordinates (e.g. `cam.worldView.centerX/Y` for screen-center, or `avatar.sprite.x/y` to follow an entity).
+- Counter-scale: `container.setScale(1 / cam.zoom)` so it renders at constant screen size.
+- If the element should persist while the camera pans/zooms, re-apply position + scale every frame in `update()` (outside any per-avatar loop).
+- **Do NOT use `setScrollFactor(0)` to "fix" zoom** — in Phaser 4 it does not bypass camera zoom, and it makes Phaser misinterpret world-coordinate positions as screen coordinates. Only use `setScrollFactor(0)` for elements whose position is already in screen space (e.g. `this.scale.width/2`, `0,0` top-left), like the disconnect overlay.
+- Verify with the wheel zoom while the element is visible: it must stay at the same screen position and not resize.
+
 ## Browser Automation
 
 Use `agent-browser` for web automation. Run `agent-browser --help` for all commands.
