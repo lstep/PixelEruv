@@ -155,6 +155,7 @@ make debug    # starts motel, NATS container, PocketBase, worldsim + pusher with
 - Keep a DASHBOARD.md up to date: progress, what remains, decisions made. Update it at the end of each session.
 - Before planning, query memory for stable facts about this repo. At the end, save only durable facts that will help future sessions. Do not save secrets, logs, guesses, or one-off errors.
 - Worldsim auto-seeds sprite_bases from `SPRITES_DIR` (default `./sprites`) on startup — non-fatal if it fails.
+- Heredoc chokes on backticks. Write the body to a file first.
 
 ### Frontend camera zoom (Phaser 4)
 
