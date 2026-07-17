@@ -506,7 +506,7 @@ export class TopMenu {
 
 // parsePlayerOptions safely parses the player options JSON string, returning
 // an object with known keys. Malformed JSON yields an empty object.
-function parsePlayerOptions(raw: string): { show_own_name_tag?: boolean } {
+function parsePlayerOptions(raw: string): { show_own_name_tag?: boolean; zoom?: number } {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);

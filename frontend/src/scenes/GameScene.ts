@@ -457,6 +457,10 @@ export class GameScene extends Phaser.Scene {
   // avatar. Defaults to true (visible). Set from the player_options JSON sent
   // by the server on auth.
   private showOwnNameTag = true;
+  // Debounce timer for persisting camera zoom to player_options. The wheel
+  // handler fires per notch; coalescing avoids a SetPlayerOptionsFrame + PB
+  // write on every scroll tick.
+  private zoomPersistTimer: number | null = null;
   // Player option: whether to show the proximity spotlight around avatars.
   // Off by default; toggled with the Q key. When on, every avatar gets a
   // soft warm pool at its feet (2-tile radius). Players in the local
@@ -760,6 +764,7 @@ export class GameScene extends Phaser.Scene {
         ZOOM_MAX,
       );
       this.cameras.main.setZoom(z);
+      this.scheduleZoomPersist();
     });
 
     // Create movement + idle animations for each character sheet. The
@@ -1392,21 +1397,31 @@ export class GameScene extends Phaser.Scene {
   }
 
   // applyPlayerOptions parses the player options JSON and applies player-level
-  // preferences. Currently handles show_own_name_tag (default true). Updates
-  // the local player's name tag visibility if it exists.
+  // preferences. Currently handles show_own_name_tag (default true) and zoom
+  // (restores the saved camera zoom on reload, clamped to zoom bounds).
+  // Updates the local player's name tag visibility if it exists.
   private applyPlayerOptions(playerOptions: string): void {
     let showOwnNameTag = true; // default
+    let savedZoom: number | null = null;
     if (playerOptions) {
       try {
-        const opts = JSON.parse(playerOptions) as { show_own_name_tag?: boolean };
+        const opts = JSON.parse(playerOptions) as { show_own_name_tag?: boolean; zoom?: number };
         if (typeof opts.show_own_name_tag === "boolean") {
           showOwnNameTag = opts.show_own_name_tag;
+        }
+        if (typeof opts.zoom === "number" && Number.isFinite(opts.zoom)) {
+          savedZoom = opts.zoom;
         }
       } catch {
         // malformed JSON — use defaults
       }
     }
     this.showOwnNameTag = showOwnNameTag;
+    // Restore saved zoom, clamped to bounds so a stale/out-of-range value
+    // from an older client can't break the camera.
+    if (savedZoom !== null) {
+      this.cameras.main.setZoom(Phaser.Math.Clamp(savedZoom, ZOOM_MIN, ZOOM_MAX));
+    }
     // Update the local player's name tag visibility if it exists.
     if (this.myEntityId) {
       const avatar = this.avatars.get(this.myEntityId);
@@ -1414,6 +1429,31 @@ export class GameScene extends Phaser.Scene {
         avatar.nameTag.setVisible(showOwnNameTag);
       }
     }
+  }
+
+  // scheduleZoomPersist debounces a SetPlayerOptionsFrame that merges the
+  // current camera zoom into the player_options JSON. 500ms coalesces a
+  // stream of wheel notches into a single server write. Guests have no PB
+  // record so the server-side persist is a no-op, matching show_own_name_tag.
+  private scheduleZoomPersist(): void {
+    if (this.zoomPersistTimer !== null) {
+      clearTimeout(this.zoomPersistTimer);
+    }
+    this.zoomPersistTimer = window.setTimeout(() => {
+      this.zoomPersistTimer = null;
+      const raw = this.ws?.getPlayerOptions() ?? "";
+      let opts: { show_own_name_tag?: boolean; zoom?: number } = {};
+      if (raw) {
+        try { opts = JSON.parse(raw); } catch { /* malformed — start fresh */ }
+      }
+      opts.zoom = this.cameras.main.zoom;
+      const json = JSON.stringify(opts);
+      this.ws?.setPlayerOptions(json);
+      // Keep the TopMenu's cached playerOptions in sync so its checkbox
+      // merge doesn't drop the zoom key we just added.
+      const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+      tm?.setPlayerOptions(json);
+    }, 500);
   }
 
   private handleReplication(batch: ReplicationBatchView): void {
