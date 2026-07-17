@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote
+.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote reseed-map-remote
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -149,6 +149,30 @@ deploy-remote: dist-x86
 	rsync -avz --delete dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
 	@echo "==> Running deploy.sh on $(REMOTE_HOST)"
 	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./deploy.sh"
+
+# reseed-map-remote: force worldsim to re-seed the default map from the
+# bundled dist/maps/default-map.json. Needed after map changes because the
+# seed is idempotent (only runs if no maps record exists). This deletes the
+# existing "main" record from PocketBase and restarts worldsim.
+#
+# Requires jq on the remote host. PB admin credentials must match the
+# PB_ADMIN_EMAIL/PB_ADMIN_PASSWORD in the remote docker-compose.yml.
+PB_ADMIN_EMAIL ?= admin@pixeleruv.local
+PB_ADMIN_PASSWORD ?= password123
+reseed-map-remote:
+	@echo "==> Deleting 'main' map record on $(REMOTE_HOST) and restarting worldsim"
+	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && \
+		TOKEN=\$$(curl -s -X POST http://localhost:8090/api/admins/auth-with-password \
+			-H 'Content-Type: application/json' \
+			-d '{\"identity\":\"$(PB_ADMIN_EMAIL)\",\"password\":\"$(PB_ADMIN_PASSWORD)\"}' \
+			| jq -r .token) && \
+		RECORD_ID=\$$(curl -s 'http://localhost:8090/api/collections/maps/records?filter=name%3D%27main%27' \
+			-H \"Authorization: \$\$TOKEN\" | jq -r '.items[0].id') && \
+		echo \"Deleting map record: \$\$RECORD_ID\" && \
+		curl -s -X DELETE \"http://localhost:8090/api/collections/maps/records/\$\$RECORD_ID\" \
+			-H \"Authorization: \$\$TOKEN\" && \
+		docker compose restart worldsim"
+	@echo "==> worldsim restarted — map re-seeded from dist/maps/default-map.json"
 
 up: sync-assets
 	docker compose -f $(COMPOSE_FILE) up --build
