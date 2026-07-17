@@ -302,6 +302,13 @@ const ZOOM_MAX = 4;
 const ZOOM_DEFAULT = 2;
 const ZOOM_SENSITIVITY = 0.001;
 
+// Screen-space gap (px) between the name tag pill's tail tip and the top of
+// the avatar sprite. The pill is anchored to the sprite's top edge (fixed in
+// world space) plus this padding divided by zoom, so the gap stays constant
+// across the whole zoom range instead of overlapping the sprite when zoomed
+// in or floating far above it when zoomed out.
+const NAME_TAG_PAD_PX = 1;
+
 // Character sprite sheets — one per player, cycled. Each sheet is 768x192.
 // The limezu characters are ~48px tall (taller than a 32px tile): the head
 // occupies the bottom of one 32px row and the body fills the next row. We
@@ -1183,7 +1190,9 @@ export class GameScene extends Phaser.Scene {
       if (local.nameTag) {
         const zoom = this.cameras.main.zoom;
         local.nameTag.x = local.sprite.x;
-        local.nameTag.y = local.sprite.y - 52 / zoom;
+        local.nameTag.y = local.sprite.y -
+          local.sprite.displayHeight * local.sprite.originY -
+          NAME_TAG_PAD_PX / zoom;
         local.nameTag.setScale(1 / zoom);
         local.nameTag.setDepth(local.sprite.depth + 0.01);
       }
@@ -1236,7 +1245,9 @@ export class GameScene extends Phaser.Scene {
       if (avatar.nameTag) {
         const zoom = this.cameras.main.zoom;
         avatar.nameTag.x = avatar.sprite.x;
-        avatar.nameTag.y = avatar.sprite.y - 52 / zoom;
+        avatar.nameTag.y = avatar.sprite.y -
+          avatar.sprite.displayHeight * avatar.sprite.originY -
+          NAME_TAG_PAD_PX / zoom;
         avatar.nameTag.setScale(1 / zoom);
         avatar.nameTag.setDepth(avatar.sprite.depth + 0.01);
       }
@@ -1244,7 +1255,9 @@ export class GameScene extends Phaser.Scene {
       if (this.dropdownContainer && this.openDropdownEntityId === avatar.entityId) {
         const zoom = this.cameras.main.zoom;
         this.dropdownContainer.x = avatar.sprite.x;
-        this.dropdownContainer.y = avatar.sprite.y - 52 / zoom + 6 / zoom;
+        this.dropdownContainer.y = avatar.sprite.y -
+          avatar.sprite.displayHeight * avatar.sprite.originY -
+          NAME_TAG_PAD_PX / zoom + 6 / zoom;
         this.dropdownContainer.setScale(1 / zoom);
         this.dropdownContainer.setDepth(avatar.sprite.depth + 0.02);
       }
@@ -1801,7 +1814,12 @@ export class GameScene extends Phaser.Scene {
       this.closeDropdown();
     }
 
-    const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
+    const container = this.add.container(
+      avatar.sprite.x,
+      avatar.sprite.y -
+        avatar.sprite.displayHeight * avatar.sprite.originY -
+        NAME_TAG_PAD_PX / this.cameras.main.zoom,
+    );
 
     // --- Name text (scalable web font, not pixel art) ---
     const text = this.add.text(0, 0, name, {
@@ -1955,7 +1973,13 @@ export class GameScene extends Phaser.Scene {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
 
-    const container = this.add.container(avatar.sprite.x, avatar.sprite.y - 52);
+    const container = this.add.container(
+      avatar.sprite.x,
+      avatar.sprite.y -
+        avatar.sprite.displayHeight * avatar.sprite.originY -
+        NAME_TAG_PAD_PX / this.cameras.main.zoom +
+        6 / this.cameras.main.zoom,
+    );
     const children: Phaser.GameObjects.GameObject[] = [];
 
     const panelW = 130;
