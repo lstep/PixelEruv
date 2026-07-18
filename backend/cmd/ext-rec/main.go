@@ -4,8 +4,9 @@
 // message on recording.start / recording.stop. ext-rec authorizes the host
 // via worldsim.entity_info (admin only), starts or stops a LiveKit Room
 // Composite Egress, and records the meeting in the PocketBase `recordings`
-// collection. State (active Egress IDs) is in-memory and lost on restart —
-// v1 mitigation TBD (orphan cleanup via ListEgress).
+// collection. State (active Egress IDs) is in-memory and lost on restart;
+// reconcileOrphanEgresses runs at startup to recover via ListEgress +
+// worldsim.recording.list_active.
 //
 // Two mutually exclusive targets per recording, chosen at start time:
 //   - "mp4":   local file under RECORDINGS_DIR (default ./recordings).
@@ -119,6 +120,23 @@ type recordingUpdateMsg struct {
 type recordingUpdateReply struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+}
+
+// recordingActiveRow mirrors worldsim.recordingActiveRow (trimmed PB row).
+type recordingActiveRow struct {
+	MeetingID    string   `json:"meeting_id"`
+	Room         string   `json:"room"`
+	Target       string   `json:"target"`
+	EgressID     string   `json:"egress_id"`
+	StartedBy    string   `json:"started_by"`
+	Participants []string `json:"participants,omitempty"`
+	StartTime    int64    `json:"start_time"`
+}
+
+type recordingListActiveReply struct {
+	OK    bool                 `json:"ok"`
+	Rows  []recordingActiveRow `json:"rows,omitempty"`
+	Error string               `json:"error,omitempty"`
 }
 
 // recordingStateMsg is published on client.<id>.recording_state for the host.
@@ -277,6 +295,129 @@ func main() {
 			return fmt.Errorf("recording.update: %s", resp.Error)
 		}
 		return nil
+	}
+
+	// listActiveRecordings calls worldsim.recording.list_active to get all
+	// PB rows with status="active". Used by reconcileOrphanEgresses at startup.
+	listActiveRecordings := func() ([]recordingActiveRow, error) {
+		reply, err := nc.Request("worldsim.recording.list_active", nil, 3*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("recording.list_active request: %w", err)
+		}
+		var resp recordingListActiveReply
+		if err := json.Unmarshal(reply.Data, &resp); err != nil {
+			return nil, fmt.Errorf("recording.list_active unmarshal: %w", err)
+		}
+		if !resp.OK {
+			return nil, fmt.Errorf("recording.list_active: %s", resp.Error)
+		}
+		return resp.Rows, nil
+	}
+
+	// reconcileOrphanEgresses runs at startup to recover activeRecs state
+	// lost on restart. It cross-references active PB rows (status="active")
+	// with active LiveKit egresses:
+	//   - PB row + running egress → restore activeRecs (stop button + auto-stop work)
+	//   - PB row + dead egress     → mark PB row as "error" (egress died)
+	//   - Running egress + no PB row → stop the orphan egress
+	reconcileOrphanEgresses := func() {
+		// 1. Get active PB rows.
+		rows, err := listActiveRecordings()
+		if err != nil {
+			logger.Warn("reconcile: list active recordings", "err", err)
+			return
+		}
+
+		// 2. Get active LiveKit egresses.
+		listResp, err := egressClient.ListEgress(ctx, &livekit.ListEgressRequest{Active: true})
+		if err != nil {
+			logger.Warn("reconcile: list egresses", "err", err)
+			return
+		}
+
+		// Build a set of active egress IDs → EgressInfo (for filename recovery).
+		type egressMeta struct {
+			roomName string
+			filename string // recovered from the RoomComposite request's FileOutput
+		}
+		activeEgresses := make(map[string]egressMeta)
+		for _, ei := range listResp.GetItems() {
+			egressID := ei.GetEgressId()
+			meta := egressMeta{roomName: ei.GetRoomName()}
+			// Recover the filename from the RoomComposite request's file output.
+			if rc := ei.GetRoomComposite(); rc != nil {
+				for _, fo := range rc.GetFileOutputs() {
+					if fp := fo.GetFilepath(); fp != "" {
+						meta.filename = filepath.Base(fp)
+						break
+					}
+				}
+			}
+			activeEgresses[egressID] = meta
+		}
+
+		logger.Info("reconcile: active PB rows", "count", len(rows), "active egresses", len(activeEgresses))
+
+		// 3. Reconcile PB rows.
+		mu.Lock()
+		for _, row := range rows {
+			if row.EgressID == "" {
+				logger.Warn("reconcile: PB row has no egress_id, marking error", "meeting", row.MeetingID)
+				go updateRecordingRow(recordingUpdateMsg{
+					MeetingID: row.MeetingID,
+					Status:    "error",
+					EndTime:   time.Now().UnixMilli(),
+				})
+				continue
+			}
+			meta, egressRunning := activeEgresses[row.EgressID]
+			if !egressRunning {
+				// Egress died or was never started. Mark the PB row as error.
+				logger.Warn("reconcile: egress not running, marking error",
+					"meeting", row.MeetingID, "egress", row.EgressID)
+				go updateRecordingRow(recordingUpdateMsg{
+					MeetingID: row.MeetingID,
+					Status:    "error",
+					EndTime:   time.Now().UnixMilli(),
+				})
+				continue
+			}
+			// Egress is running → restore activeRecs entry.
+			rec := &activeRec{
+				EgressID:     row.EgressID,
+				Room:         row.Room,
+				Target:       row.Target,
+				StartedBy:    row.StartedBy,
+				StartedAt:    time.UnixMilli(row.StartTime),
+				Participants: row.Participants,
+				MeetingID:    row.MeetingID,
+				Filename:     meta.filename,
+			}
+			activeRecs[row.Room] = rec
+			logger.Info("reconcile: restored active recording",
+				"room", row.Room, "egress", row.EgressID,
+				"meeting", row.MeetingID, "filename", meta.filename)
+		}
+		mu.Unlock()
+
+		// 4. Stop orphan egresses (running but no PB row).
+		pbEgressIDs := make(map[string]bool, len(rows))
+		for _, row := range rows {
+			if row.EgressID != "" {
+				pbEgressIDs[row.EgressID] = true
+			}
+		}
+		for egressID, meta := range activeEgresses {
+			if !pbEgressIDs[egressID] {
+				logger.Warn("reconcile: stopping orphan egress (no PB row)",
+					"egress", egressID, "room", meta.roomName)
+				go func(id string) {
+					if _, err := egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: id}); err != nil {
+						logger.Warn("reconcile: stop orphan egress", "err", err, "egress", id)
+					}
+				}(egressID)
+			}
+		}
 	}
 
 	// listRoomParticipants returns the entity_ids (LiveKit participant
@@ -874,6 +1015,10 @@ func main() {
 		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
 		publishReg()
 	}
+
+	// Reconcile orphan egresses: recover activeRecs state lost on restart.
+	// Runs after worldsim is ready (so recording.list_active is available).
+	reconcileOrphanEgresses()
 
 	// Auto-stop ticker: every 1s, check each active recording's room for
 	// participants. If a room has zero participants, mark the time; if it

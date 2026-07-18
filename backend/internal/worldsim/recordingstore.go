@@ -139,9 +139,60 @@ func (s *RecordingStore) Update(msg recordingUpdateMsg) error {
 	return s.app.Save(record)
 }
 
-// subscribeRecordingStore sets up the worldsim.recording.create and
-// worldsim.recording.update request-reply handlers so ext-rec can persist
-// recording metadata without direct PocketBase access.
+// recordingActiveRow is a trimmed recording row returned by list_active.
+type recordingActiveRow struct {
+	MeetingID    string   `json:"meeting_id"`
+	Room         string   `json:"room"`
+	Target       string   `json:"target"`
+	EgressID     string   `json:"egress_id"`
+	StartedBy    string   `json:"started_by"`
+	Participants []string `json:"participants,omitempty"`
+	StartTime    int64    `json:"start_time"` // unix millis
+}
+
+// recordingListActiveReply is the reply for worldsim.recording.list_active.
+type recordingListActiveReply struct {
+	OK     bool                  `json:"ok"`
+	Rows   []recordingActiveRow  `json:"rows,omitempty"`
+	Error  string                `json:"error,omitempty"`
+}
+
+// ListActive returns all recordings with status="active".
+func (s *RecordingStore) ListActive() ([]recordingActiveRow, error) {
+	records, err := s.app.FindRecordsByFilter(
+		"recordings",
+		"status = 'active'",
+		"-start_time",
+		0, 0,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("find active recordings: %w", err)
+	}
+	rows := make([]recordingActiveRow, 0, len(records))
+	for _, r := range records {
+		row := recordingActiveRow{
+			MeetingID: r.GetString("meeting_id"),
+			Room:      r.GetString("room"),
+			Target:    r.GetString("target"),
+			EgressID:  r.GetString("egress_id"),
+			StartedBy: r.GetString("started_by"),
+			StartTime: r.GetDateTime("start_time").Time().UnixMilli(),
+		}
+		if raw := r.GetString("participants"); raw != "" {
+			var participants []string
+			if err := json.Unmarshal([]byte(raw), &participants); err == nil {
+				row.Participants = participants
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// subscribeRecordingStore sets up the worldsim.recording.create,
+// worldsim.recording.update, and worldsim.recording.list_active
+// request-reply handlers so ext-rec can persist recording metadata
+// without direct PocketBase access.
 func (s *Simulator) subscribeRecordingStore() error {
 	if _, err := s.nc.Subscribe("worldsim.recording.create", func(msg *nats.Msg) {
 		var req recordingCreateMsg
@@ -177,6 +228,19 @@ func (s *Simulator) subscribeRecordingStore() error {
 			return
 		}
 		reply, _ := json.Marshal(recordingUpdateReply{OK: true})
+		msg.Respond(reply)
+	}); err != nil {
+		return err
+	}
+	if _, err := s.nc.Subscribe("worldsim.recording.list_active", func(msg *nats.Msg) {
+		rows, err := s.recordingStore.ListActive()
+		if err != nil {
+			s.logger.Warn("recording.list_active", "err", err)
+			reply, _ := json.Marshal(recordingListActiveReply{Error: err.Error()})
+			msg.Respond(reply)
+			return
+		}
+		reply, _ := json.Marshal(recordingListActiveReply{OK: true, Rows: rows})
 		msg.Respond(reply)
 	}); err != nil {
 		return err
