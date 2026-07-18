@@ -2392,6 +2392,21 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
+    // 3. Shadow pass: cut out any cell whose center is occluded from the
+    //    light by a wall cell or wall zone (raycast, excluding the
+    //    destination cell). Steps 1 and 2 only remove the occluder itself;
+    //    this stops the gradient from bleeding past walls onto the floor
+    //    behind them. Reuses isLightOccluded (same test as sprite brightening).
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        if (this.isBlocked(tx, ty)) continue; // already cut in step 1
+        const ccx = (tx + 0.5) * TILE_SIZE;
+        const ccy = (ty + 0.5) * TILE_SIZE;
+        if (this.isLightOccluded(lightX, lightY, ccx, ccy)) {
+          ctx.fillRect(tx * TILE_SIZE - originX, ty * TILE_SIZE - originY, TILE_SIZE, TILE_SIZE);
+        }
+      }
+    }
     ctx.globalCompositeOperation = "source-over";
     tex.refresh();
   }
