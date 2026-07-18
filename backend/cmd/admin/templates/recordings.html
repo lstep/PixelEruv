@@ -124,9 +124,13 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 
 {{/* Stats panel: count, total size, disk gauge. GaugeDashOffset and
    UsedPercent are precomputed in diskUsage() so the template avoids
-   arithmetic (Go text/template has no built-in math funcs). */}}
-{{$gaugeClass := "gauge-fill"}}{{if lt .Disk.FreePercent 10.0}}{{$gaugeClass = "gauge-fill warn"}}{{end}}{{if lt .Disk.FreePercent 5.0}}{{$gaugeClass = "gauge-fill crit"}}{{end}}
-{{$freeRowClass := ""}}{{if lt .Disk.FreePercent 5.0}}{{$freeRowClass = "free-low"}}{{end}}
+   arithmetic (Go text/template has no built-in math funcs). The
+   warn/crit classes are only applied when TotalBytes > 0; a statfs
+   failure returns a zero diskInfo and we show a neutral gauge + an
+   "unavailable" label instead of a misleading 100% red. */}}
+{{$diskOK := gt .Disk.TotalBytes 0}}
+{{$gaugeClass := "gauge-fill"}}{{if and $diskOK (lt .Disk.FreePercent 10.0)}}{{$gaugeClass = "gauge-fill warn"}}{{end}}{{if and $diskOK (lt .Disk.FreePercent 5.0)}}{{$gaugeClass = "gauge-fill crit"}}{{end}}
+{{$freeRowClass := ""}}{{if and $diskOK (lt .Disk.FreePercent 5.0)}}{{$freeRowClass = "free-low"}}{{end}}
 <div class="stats">
   <div class="stat-card">
     <span class="stat-label">Recordings</span>
@@ -146,12 +150,16 @@ tr:hover td { background: rgba(78,154,241,0.05); }
           stroke-dasharray="226.2"
           stroke-dashoffset="{{printf "%.1f" .Disk.GaugeDashOffset}}"></circle>
       </svg>
-      <span class="gauge-pct">{{printf "%.0f" .Disk.UsedPercent}}%</span>
+      <span class="gauge-pct">{{if $diskOK}}{{printf "%.0f" .Disk.UsedPercent}}%{{else}}n/a{{end}}</span>
     </div>
     <div class="gauge-details">
+      {{if $diskOK}}
       <div class="gd-row"><span class="gd-label">Total</span><span class="gd-val">{{.Disk.TotalHuman}}</span></div>
       <div class="gd-row"><span class="gd-label">Used</span><span class="gd-val">{{.Disk.UsedHuman}}</span></div>
       <div class="gd-row {{$freeRowClass}}"><span class="gd-label">Free</span><span class="gd-val">{{.Disk.FreeHuman}} ({{printf "%.1f" .Disk.FreePercent}}%)</span></div>
+      {{else}}
+      <div class="gd-row"><span class="gd-label">Disk stats unavailable</span><span class="gd-val"></span></div>
+      {{end}}
     </div>
   </div>
 </div>
