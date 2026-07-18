@@ -389,9 +389,6 @@ interface Avatar {
   // a radial gradient, masked per-frame by walls and wall zones. Shown when
   // lightIntensity > 0.
   lightGlow: Phaser.GameObjects.Image | null;
-  // True when a preFX.addGlow is currently applied to sprite (so we don't
-  // re-add every frame). Cleared when the sprite is no longer lit.
-  preFXGlowActive: boolean;
   // Tracks whether the sparks animation has been shown for the current
   // proximity entry. Reset when the player leaves the trigger radius so
   // it can fire again on re-entry.
@@ -1691,7 +1688,6 @@ export class GameScene extends Phaser.Scene {
             lightColor,
             lightRadius,
             lightGlow: null,
-            preFXGlowActive: false,
             sparksShown: false,
             remotePosA: null,
             remotePosB: null,
@@ -1738,7 +1734,6 @@ export class GameScene extends Phaser.Scene {
         lightColor,
         lightRadius,
         lightGlow: null,
-        preFXGlowActive: false,
         sparksShown: false,
         remotePosA: null,
         remotePosB: { x, y: y + TILE_SIZE / 2, t: performance.now() },
@@ -2239,7 +2234,7 @@ export class GameScene extends Phaser.Scene {
 
   // updateLights is called every frame from update() when lightsEnabled is
   // true. For each active light it redraws the masked glow CanvasTexture at
-  // the light's current position, then brightens nearby sprites via preFX.
+  // the light's current position.
   private updateLights(): void {
     if (this.activeLights.size === 0) return;
     for (const id of this.activeLights) {
@@ -2251,7 +2246,6 @@ export class GameScene extends Phaser.Scene {
       this.showLightGlow(avatar);
       this.redrawLightGlowMask(avatar);
     }
-    this.applyLightSpriteBrightening();
   }
 
   // showLightGlow creates (if needed) and shows the light glow overlay for
@@ -2392,68 +2386,28 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
-    // 3. Shadow pass: cut out any cell whose center is occluded from the
-    //    light by a wall cell or wall zone (raycast, excluding the
-    //    destination cell). Steps 1 and 2 only remove the occluder itself;
-    //    this stops the gradient from bleeding past walls onto the floor
-    //    behind them. Reuses isLightOccluded (same test as sprite brightening).
-    for (let ty = minTy; ty <= maxTy; ty++) {
-      for (let tx = minTx; tx <= maxTx; tx++) {
-        if (this.isBlocked(tx, ty)) continue; // already cut in step 1
-        const ccx = (tx + 0.5) * TILE_SIZE;
-        const ccy = (ty + 0.5) * TILE_SIZE;
+    // 3. Shadow pass: cut out any sub-cell whose center is occluded from
+    //    the light by a wall cell or wall zone (raycast). Steps 1 and 2
+    //    only remove the occluder itself; this stops the gradient from
+    //    bleeding past walls onto the floor behind them. Sampled at
+    //    SHADOW_STEP (well below TILE_SIZE) rather than per-tile, since
+    //    wall zone edges rarely land on tile boundaries — a per-tile cut
+    //    would round the shadow edge out to the nearest tile line, visible
+    //    as a dark seam short of the actual wall. Reuses isLightOccluded
+    //    (same test as sprite brightening).
+    const SHADOW_STEP = 8;
+    for (let sy = originY; sy < originY + size; sy += SHADOW_STEP) {
+      for (let sx = originX; sx < originX + size; sx += SHADOW_STEP) {
+        const ccx = sx + SHADOW_STEP / 2;
+        const ccy = sy + SHADOW_STEP / 2;
+        if (this.isBlocked(Math.floor(ccx / TILE_SIZE), Math.floor(ccy / TILE_SIZE))) continue; // already cut in step 1
         if (this.isLightOccluded(lightX, lightY, ccx, ccy)) {
-          ctx.fillRect(tx * TILE_SIZE - originX, ty * TILE_SIZE - originY, TILE_SIZE, TILE_SIZE);
+          ctx.fillRect(sx - originX, sy - originY, SHADOW_STEP, SHADOW_STEP);
         }
       }
     }
     ctx.globalCompositeOperation = "source-over";
     tex.refresh();
-  }
-
-  // applyLightSpriteBrightening applies or removes preFX.addGlow on each
-  // sprite based on whether it's lit by any active light with an unoccluded
-  // line of sight. WebGL only — on Canvas renderer, preFX is unavailable.
-  private applyLightSpriteBrightening(): void {
-    const isWebGL = this.sys.game.renderer.type === Phaser.WEBGL;
-    for (const avatar of this.avatars.values()) {
-      if (!isWebGL) {
-        // No preFX on Canvas; clear any stale flag and skip.
-        if (avatar.preFXGlowActive) avatar.preFXGlowActive = false;
-        continue;
-      }
-      // Find the strongest unoccluded light illuminating this sprite.
-      let bestIntensity = 0;
-      let bestColor = 0;
-      const spriteBaseX = avatar.sprite.x;
-      const spriteBaseY = avatar.sprite.y;
-      for (const lightId of this.activeLights) {
-        const light = this.avatars.get(lightId);
-        if (!light) continue;
-        const lx = light.sprite.x;
-        const ly = light.sprite.y;
-        const radius = this.effectiveLightRadius(light) * TILE_SIZE;
-        const dist = Math.hypot(spriteBaseX - lx, spriteBaseY - ly);
-        if (dist > radius) continue;
-        // Occlusion test: segment from light center to sprite base, in tile
-        // coords, against collisionGrid (cell sampling) + raw wallZone shapes.
-        if (this.isLightOccluded(lx, ly, spriteBaseX, spriteBaseY)) continue;
-        if (light.lightIntensity > bestIntensity) {
-          bestIntensity = light.lightIntensity;
-          bestColor = this.effectiveLightColor(light);
-        }
-      }
-      if (bestIntensity > 0) {
-        if (!avatar.preFXGlowActive) {
-          avatar.sprite.enableFilters();
-          avatar.sprite.filters?.internal.addGlow(bestColor, 4);
-          avatar.preFXGlowActive = true;
-        }
-      } else if (avatar.preFXGlowActive) {
-        avatar.sprite.filters?.internal.clear();
-        avatar.preFXGlowActive = false;
-      }
-    }
   }
 
   // isLightOccluded tests whether the segment from (lx,ly) to (tx,ty) in
