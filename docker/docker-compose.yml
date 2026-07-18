@@ -103,6 +103,9 @@ services:
       # (email verification links), and LiveKit public URL.
       # Defaults to localhost (same-machine dev).
       PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+    volumes:
+      # Read-only access to recordings for download via /recordings/ (admin-auth).
+      - recordings:/var/www/recordings:ro
     restart: unless-stopped
 
   ext-demo:
@@ -157,12 +160,23 @@ services:
     #   LIVEKIT_NODE_IP=192.168.1.10 docker compose up
     # For remote access, ensure UDP 50000-50020 are open on the host firewall.
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    depends_on:
+      - redis
     ports:
       - "7880:7880"   # WebSocket signaling
       - "7881:7881"   # TCP (fallback)
       - "50000-50020:50000-50020/udp" # WebRTC ICE range
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+
+  # Redis — message bus for LiveKit psrpc. Required for the LiveKit server
+  # to forward Egress RPC calls (StartRoomCompositeEgress, StopEgress, etc.)
+  # to the Egress service. Both livekit and livekit-egress depend on this.
+  # No host port mapping: containers reach it via the docker network at
+  # redis:6379. Avoids conflicts with a host-level redis on 127.0.0.1:6379.
+  redis:
+    image: redis:7-alpine
     restart: unless-stopped
 
   ext-av:
@@ -185,6 +199,74 @@ services:
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://${PUBLIC_HOST:-localhost}:7880}"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+    restart: unless-stopped
+
+  # Chown the recordings volume to uid 1001:0 (egress user) on startup.
+  # The egress container runs as non-root and can't write to a root-owned
+  # volume. One-shot — exits after chowning.
+  recordings-init:
+    image: alpine:3.20
+    command: ["chown", "-R", "1001:0", "/recordings"]
+    volumes:
+      - recordings:/recordings
+    restart: "no"
+
+  # LiveKit Egress service — records room composites to file (MP4) or streams
+  # to RTMP (YouTube). ext-rec calls its API via the LiveKit server-sdk-go;
+  # the SDK posts to the LiveKit server (port 7880), which forwards to Egress
+  # via psrpc over Redis. Needs CPU for transcoding and disk for MP4 output.
+  # The recordings volume is shared with ext-rec so both can access files.
+  livekit-egress:
+    image: livekit/egress:v1.9.0
+    depends_on:
+      recordings-init:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_started
+    environment:
+      EGRESS_CONFIG_FILE: "/etc/egress.yaml"
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
+      - recordings:/recordings
+    restart: unless-stopped
+
+  # ext-rec — recording extension. Admin-hosted start/stop of Room Composite
+  # Egress for zone A/V rooms. Two targets: "mp4" (local file) or "youtube"
+  # (RTMP stream). One recording per room at a time. Host = admin for v1.
+  ext-rec:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: ext-rec
+    depends_on:
+      nats:
+        condition: service_started
+      worldsim:
+        condition: service_started
+      livekit:
+        condition: service_started
+      livekit-egress:
+        condition: service_started
+      recordings-init:
+        condition: service_completed_successfully
+    environment:
+      NATS_URL: "nats://nats:4222"
+      EXTENSION_ID: "rec"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+      RECORDINGS_DIR: "/recordings"
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+      # YouTube RTMP target — leave empty to disable YouTube streaming (MP4
+      # still works). Set in .env to enable.
+      YOUTUBE_RTMP_URL: "${YOUTUBE_RTMP_URL:-}"
+      YOUTUBE_STREAM_KEY: "${YOUTUBE_STREAM_KEY:-}"
+    volumes:
+      - recordings:/recordings
     restart: unless-stopped
 
   # OpenObserve (OTel backend) is not included in the stack by default.
@@ -233,8 +315,16 @@ services:
       ADMIN_HTTP_ADDR: ":8083"
       ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:-changeme}"
       PB_API_URL: "http://worldsim:8090/api"
+      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
+      PB_ADMIN_PASSWORD: "password123"
+      RECORDINGS_DIR: "/recordings"
+      NATS_URL: "nats://nats:4222"
+    volumes:
+      # Read-write access to recordings for file deletion from the management UI.
+      - recordings:/recordings
     restart: unless-stopped
 
 volumes:
   pb_data:
   audit_data:
+  recordings:

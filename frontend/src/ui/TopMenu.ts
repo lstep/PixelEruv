@@ -7,6 +7,7 @@
 import { isLoggedIn, redirectToLogin, redirectToRegister, logout, pb } from "../auth";
 import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
+import type { WsClient } from "../net/WsClient";
 import type { ChatPanel } from "./ChatPanel";
 
 const PILL_STYLE =
@@ -24,6 +25,12 @@ export class TopMenu {
   private audioBtn: HTMLButtonElement;
   private authBtn: HTMLButtonElement;
   private registerBtn: HTMLButtonElement;
+  private recBtn: HTMLButtonElement;
+  private recMenu: HTMLDivElement | null = null;
+  private recWs: WsClient | null = null;
+  private recIsAdmin: (() => boolean) | null = null;
+  private recGetRoom: (() => string | null) | null = null;
+  private recActive = false; // true while a recording is active in the current room
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
@@ -95,6 +102,26 @@ export class TopMenu {
       this.updateAvLabels();
     });
     this.container.appendChild(this.screenBtn);
+
+    // Record button — admin-only, shown when the player is in an A/V room.
+    // Click when idle opens a small menu with "Record to MP4" / "Stream to
+    // YouTube". Click when active stops the recording.
+    this.recBtn = document.createElement("button");
+    this.recBtn.textContent = "Record";
+    this.recBtn.title = "Record this A/V meeting (admin only)";
+    this.recBtn.style.cssText = PILL_STYLE + "display:none;";
+    this.recBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (this.recActive) {
+        // Stop the active recording.
+        const room = this.recGetRoom?.() ?? null;
+        if (room && this.recWs) this.recWs.sendRecording("stop", room);
+      } else {
+        // Toggle the target picker.
+        this.toggleRecMenu();
+      }
+    });
+    this.container.appendChild(this.recBtn);
 
     // "Enable Audio" button — shown when the browser's autoplay policy
     // blocks remote audio playback. Clicking calls room.startAudio()
@@ -432,6 +459,7 @@ export class TopMenu {
     });
     this.boundDocClick = () => {
       this.dropdown.style.display = "none";
+      this.closeRecMenu();
     };
     document.addEventListener("click", this.boundDocClick);
     this.dropdown.addEventListener("click", (e) => e.stopPropagation());
@@ -460,6 +488,118 @@ export class TopMenu {
     this.camBtn.style.display = "none";
     this.screenBtn.style.display = "none";
     this.audioBtn.style.display = "none";
+    this.recBtn.style.display = "none";
+    this.recWs = null;
+    this.recIsAdmin = null;
+    this.recGetRoom = null;
+    this.recActive = false;
+    this.closeRecMenu();
+  }
+
+  // attachRecordingControl wires the record button to the WsClient + admin
+  // check + room getter. Called by GameScene after attachAvControls. The
+  // button is only visible when the player is an admin AND in an A/V room;
+  // updateRecVisibility() is called on each frame from the scene update.
+  attachRecordingControl(ws: WsClient, isAdmin: () => boolean, getRoom: () => string | null): void {
+    this.recWs = ws;
+    this.recIsAdmin = isAdmin;
+    this.recGetRoom = getRoom;
+  }
+
+  // updateRecVisibility shows/hides the record button based on admin status
+  // and whether the player is in an A/V room. Called from the scene update.
+  updateRecVisibility(): void {
+    const admin = this.recIsAdmin?.() ?? false;
+    const room = this.recGetRoom?.() ?? null;
+    const shouldShow = admin && room !== null;
+    this.recBtn.style.display = shouldShow ? "block" : "none";
+    if (!shouldShow) this.closeRecMenu();
+  }
+
+  // setRecordingState is called by the GameScene when a RecordingStateFrame
+  // arrives (ext-rec → host). Updates the button label and active flag.
+  setRecordingState(status: "active" | "stopped" | "error", error?: string): void {
+    if (status === "active") {
+      this.recActive = true;
+      this.recBtn.textContent = "● Stop REC";
+      this.recBtn.style.background = "#c0392b";
+      this.closeRecMenu();
+    } else {
+      this.recActive = false;
+      this.recBtn.textContent = "Record";
+      this.recBtn.style.background = "";
+      if (status === "error" && error) {
+        console.warn("recording error:", error);
+      }
+    }
+  }
+
+  // setRecordingActive is called by the GameScene when a RecordingActiveFrame
+  // arrives (ext-rec → all participants). For manual stops, the host also
+  // receives a recording_state frame; for admin_stop and auto_empty stops,
+  // this is the only signal that reaches the host, so it must fully reset
+  // the button state.
+  setRecordingActive(active: boolean): void {
+    // Non-host admins still show the record button (they could stop it too).
+    // The active flag is only meaningful for the host's stop button; for
+    // non-hosts, the GameScene shows the REC indicator separately.
+    if (active && !this.recActive) {
+      // A recording started in this room by someone else. The host's stop
+      // button is only for the host that started it; disable ours.
+      this.recBtn.style.opacity = "0.5";
+      this.recBtn.title = "A recording is already active in this room";
+    } else if (!active) {
+      // Recording ended (manual stop, admin stop, or auto-empty). Reset the
+      // host's button so it shows "Record" again, not a stale "Stop REC".
+      this.recActive = false;
+      this.recBtn.textContent = "Record";
+      this.recBtn.style.background = "";
+      this.recBtn.style.opacity = "";
+      this.recBtn.title = "Record this A/V meeting (admin only)";
+    }
+  }
+
+  private toggleRecMenu(): void {
+    if (this.recMenu) {
+      this.closeRecMenu();
+      return;
+    }
+    const room = this.recGetRoom?.() ?? null;
+    if (!room || !this.recWs) return;
+
+    const menu = document.createElement("div");
+    menu.style.cssText =
+      "position:absolute;background:#2d2d3a;border-radius:8px;padding:4px;z-index:30;display:flex;flex-direction:column;gap:2px;min-width:180px;";
+    const rect = this.recBtn.getBoundingClientRect();
+    menu.style.left = `${rect.left}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+
+    const makeItem = (label: string, target: "mp4" | "youtube") => {
+      const item = document.createElement("button");
+      item.textContent = label;
+      item.style.cssText =
+        "padding:8px 12px;font-size:14px;font-family:sans-serif;background:transparent;color:#fff;border:none;border-radius:4px;cursor:pointer;text-align:left;";
+      item.addEventListener("mouseenter", () => (item.style.background = "#3d3d4a"));
+      item.addEventListener("mouseleave", () => (item.style.background = "transparent"));
+      item.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.recWs?.sendRecording("start", room, target);
+        this.closeRecMenu();
+      });
+      return item;
+    };
+
+    menu.appendChild(makeItem("Record to MP4", "mp4"));
+    menu.appendChild(makeItem("Stream to YouTube", "youtube"));
+    document.body.appendChild(menu);
+    this.recMenu = menu;
+  }
+
+  private closeRecMenu(): void {
+    if (this.recMenu) {
+      this.recMenu.remove();
+      this.recMenu = null;
+    }
   }
 
   // setChatPanel wires the chat sidebar and shows the Chat toggle button.

@@ -1,0 +1,26 @@
+# LiveKit Egress service config for local dev.
+# API keys must match livekit.yaml and ext-rec's LIVEKIT_API_KEY/SECRET.
+# The Egress service communicates with the LiveKit server via psrpc over
+# Redis — both must point at the same Redis instance.
+api_key: devkey
+api_secret: devsecretdevsecretdevsecretdevsecret123
+
+# WebSocket URL of the LiveKit server (Docker-internal).
+ws_url: ws://livekit:7880
+
+# Trust the LiveKit server's self-signed context (dev only).
+insecure: true
+
+# Redis message bus — must match the LiveKit server's redis config.
+redis:
+  address: redis:6379
+
+# HTTP ports (all optional, defaults shown).
+health_port: 8081
+template_port: 7980
+prometheus_port: 8888
+debug_handler_port: 9090
+
+# Local file output root — must match the volume mount in docker-compose.
+# Egress writes MP4 files here; ext-rec reads them (shared volume).
+log_level: info

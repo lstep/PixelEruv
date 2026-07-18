@@ -29,6 +29,7 @@ backend/ext-demo
 backend/ext-walls
 backend/ext-props
 backend/ext-av
+backend/ext-rec
 backend/audit
 backend/admin
 

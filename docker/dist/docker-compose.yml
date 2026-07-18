@@ -88,6 +88,9 @@ services:
     environment:
       TLS_HOSTS: "localhost,127.0.0.1"
       PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+    volumes:
+      # Read-only access to recordings for download via /recordings/ (admin-auth).
+      - ./recordings:/var/www/recordings:ro
     restart: unless-stopped
 
   ext-demo:
@@ -140,12 +143,21 @@ services:
   livekit:
     image: livekit/livekit-server:v1.13.2
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    depends_on:
+      - redis
     ports:
       - "7880:7880"   # WebSocket signaling
       - "7881:7881"   # TCP (fallback)
       - "50000-50020:50000-50020/udp" # WebRTC ICE range
     volumes:
       - ./docker/livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+
+  # Redis — message bus for LiveKit psrpc (Egress RPC forwarding).
+  # No host port mapping: containers reach it via the docker network at
+  # redis:6379. The host often runs its own redis on 127.0.0.1:6379.
+  redis:
+    image: redis:7-alpine
     restart: unless-stopped
 
   ext-av:
@@ -166,6 +178,71 @@ services:
       LIVEKIT_PUBLIC_URL: "${LIVEKIT_PUBLIC_URL:-ws://${PUBLIC_HOST:-localhost}:7880}"
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+    restart: unless-stopped
+
+  # LiveKit Egress service — records room composites to file (MP4) or streams
+  # to RTMP (YouTube). ext-rec calls its API via the LiveKit server-sdk-go;
+  # the SDK posts to the LiveKit server, which forwards to Egress via psrpc
+  # over Redis. The egress container runs as uid 1001 (gid 0); the
+  # recordings-init service chowns the shared volume on startup so egress
+  # can write MP4 files and ext-rec can read them.
+  recordings-init:
+    image: alpine:3.20
+    command: ["chown", "-R", "1001:0", "/recordings"]
+    volumes:
+      - ./recordings:/recordings
+    restart: "no"
+
+  livekit-egress:
+    image: livekit/egress:v1.9.0
+    depends_on:
+      recordings-init:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_started
+    environment:
+      EGRESS_CONFIG_FILE: "/etc/egress.yaml"
+    volumes:
+      - ./docker/egress.yaml:/etc/egress.yaml:ro
+      - ./recordings:/recordings
+    restart: unless-stopped
+
+  # ext-rec — recording extension. Admin-hosted start/stop of Room Composite
+  # Egress for zone A/V rooms. Two targets: "mp4" (local file) or "youtube"
+  # (RTMP stream). One recording per room at a time. Host = admin for v1.
+  ext-rec:
+    build:
+      context: .
+      dockerfile: docker/backend-rec.Dockerfile
+      args:
+        BINARY: ext-rec
+    depends_on:
+      nats:
+        condition: service_started
+      worldsim:
+        condition: service_started
+      livekit:
+        condition: service_started
+      livekit-egress:
+        condition: service_started
+      recordings-init:
+        condition: service_completed_successfully
+    environment:
+      NATS_URL: "nats://nats:4222"
+      EXTENSION_ID: "rec"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+      RECORDINGS_DIR: "/recordings"
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+      YOUTUBE_RTMP_URL: "${YOUTUBE_RTMP_URL:-}"
+      YOUTUBE_STREAM_KEY: "${YOUTUBE_STREAM_KEY:-}"
+    volumes:
+      - ./recordings:/recordings
     restart: unless-stopped
 
   # OpenObserve (OTel backend) is not included by default — it requires
@@ -211,6 +288,13 @@ services:
       ADMIN_HTTP_ADDR: ":8083"
       ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:-changeme}"
       PB_API_URL: "http://worldsim:8090/api"
+      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
+      PB_ADMIN_PASSWORD: "password123"
+      RECORDINGS_DIR: "/recordings"
+      NATS_URL: "nats://nats:4222"
+    volumes:
+      # Read-write access to recordings for file deletion from the management UI.
+      - ./recordings:/recordings
     restart: unless-stopped
 
 volumes:

@@ -74,6 +74,37 @@ Prerequisites
 * Docker and Docker Compose (for the bundled path), or
 * Go 1.26+, Node 22+, and a NATS server (for the native/dev path)
 
+💾 Requirements
+
+Software:
+
+* Docker 24+ and Docker Compose v2 (bundled path), or
+* Go 1.26+, Node 22+, protoc + buf (native/dev path), plus a NATS server
+* A LiveKit instance (bundled in the Docker stack) for A/V meetings
+* ffmpeg — only required inside the `ext-rec` container for audio extraction
+  (already included in the `ext-rec` Docker image; no host install needed)
+
+Disk space (production deployment, all-Docker):
+
+| Component | Approx. size |
+|---|---|
+| Docker images (10 backend + 1 frontend + LiveKit + Egress + NATS + Redis + PocketBase + Mailhog) | ~2.5 GB |
+| PocketBase data volume (`pb_data`) | grows with users/maps; ~50 MB for a small team |
+| Audit data volume (SQLite) | grows with events; ~10-100 MB/year for a small team |
+| Recordings volume (`/opt/pixeleruv/recordings`) | **unbounded** — ~1 MB/min for MP4 + ~0.1 MB/min for MP3 at q:a 2. A 1h meeting is ~60 MB MP4 + ~6 MB MP3. Monitor via the disk usage indicator on `/admin/recordings` (turns red below 5% free). |
+| Backups (`/opt/pixeleruv/backups`) | one tarball per deploy per volume; prune manually |
+
+**Plan for at least 5 GB free** for a fresh deployment (images + headroom),
+plus whatever your recording retention policy requires. Recordings are the
+main growth driver — there is no auto-prune; admins must delete via
+`/admin/recordings` or cron a cleanup of the bind-mounted directory.
+
+Memory:
+
+* ~1.5 GB RAM for the base stack (NATS, PocketBase, pusher, worldsim, extensions, LiveKit).
+* Add ~512 MB per concurrent A/V meeting participant for LiveKit media.
+* Add ~256 MB per concurrent ffmpeg audio extraction (capped at 2 by default).
+
 Bundled (Docker Compose)
 
     make up
@@ -169,7 +200,7 @@ Then open `https://192.168.1.10:4043` and accept the self-signed cert warning
 once. For a real domain + Let's Encrypt cert, put a host nginx proxy in front
 (see [`docs/quick-start.md`](docs/quick-start.md)).
 
-� LiveKit API secret
+🔑 LiveKit API secret
 
 LiveKit rejects secrets shorter than 32 characters. The dev config ships with
 a 40-char placeholder (`devsecretdevsecretdevsecretdevsecret123`) set in both
@@ -186,7 +217,7 @@ After rotating the secret, restart `livekit` and `ext-av`, and have any
 connected browser rejoin the room (old tokens are signed with the old secret
 and will fail with `token signature is invalid` until refreshed).
 
-�🔍 Debugging with motel
+🔍 Debugging with motel
 
 The backend (pusher, worldsim, all four extensions) and frontend are
 instrumented with OpenTelemetry traces and logs. Telemetry is **off by

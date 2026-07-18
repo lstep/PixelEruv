@@ -19,6 +19,7 @@ message ClientFrame {
     SetSpriteBaseFrame set_sprite_base = 7;
     SetPlayerOptionsFrame set_player_options = 8;
     SetStatusFrame set_status = 9;
+    RecordingRequestFrame recording = 10;
   }
 }
 
@@ -120,6 +121,19 @@ message SetStatusFrame {
   string traceparent = 2;
 }
 
+// RecordingRequestFrame is an admin request to start or stop recording (or
+// live-streaming) the LiveKit A/V room they are currently in. The pusher
+// forwards it to ext-rec on the recording.<action> NATS subject. ext-rec
+// authorizes via worldsim.entity_info (admin only) and starts/stops a
+// LiveKit Room Composite Egress. See
+// documentation/plans/2026-07-18-recording-design.md.
+message RecordingRequestFrame {
+  string action = 1;    // "start" | "stop"
+  string room = 2;      // LiveKit room name (zone-<slug>)
+  string target = 3;    // "mp4" | "youtube" (ignored on stop)
+  string traceparent = 4;
+}
+
 // === Server → Client frames ===
 
 message ServerFrame {
@@ -134,6 +148,8 @@ message ServerFrame {
     MapTransitionFrame map_transition = 8;
     AdminInfoFrame admin_info = 9;
     MapOptionsUpdateFrame map_options_update = 10;
+    RecordingStateFrame recording_state = 11;
+    RecordingActiveFrame recording_active = 12;
   }
 }
 
@@ -248,4 +264,27 @@ message AdminInfoFrame {
     string device_id = 5;    // client device ID (for ban targeting)
   }
   repeated EntityAdminInfo entities = 1;
+}
+
+// RecordingStateFrame is sent by ext-rec to the host that requested a
+// recording start/stop. status is "active", "stopped", or "error"; on error,
+// the error field carries a human-readable message. egress_id is the LiveKit
+// Egress ID once a recording is active.
+message RecordingStateFrame {
+  string room = 1;
+  string status = 2;    // "active" | "stopped" | "error"
+  string target = 3;    // "mp4" | "youtube"
+  string egress_id = 4;
+  string error = 5;
+}
+
+// RecordingActiveFrame is broadcast by ext-rec to every participant in a
+// LiveKit room when a recording starts or stops, so the client can show a
+// REC indicator + consent toast. ext-rec publishes per-client on
+// client.<id>.recording_active; the pusher forwards each as a ServerFrame.
+message RecordingActiveFrame {
+  string room = 1;
+  bool active = 2;
+  string target = 3;    // "mp4" | "youtube"
+  string reason = 4;    // "" | "manual" | "admin_stop" | "auto_empty" (only set when active=false)
 }

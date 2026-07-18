@@ -21,6 +21,7 @@ RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Ve
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-walls ./cmd/ext-walls
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-props ./cmd/ext-props
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-av ./cmd/ext-av
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-rec ./cmd/ext-rec
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/audit ./cmd/audit
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/admin ./cmd/admin
 
@@ -64,6 +65,14 @@ FROM alpine:3.20 AS ext-av
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/ext-av /usr/local/bin/ext-av
 ENTRYPOINT ["ext-av"]
+
+# --- ext-rec image ---
+# ffmpeg is needed to extract audio (MP3) from the Egress MP4 after a
+# recording stops.
+FROM alpine:3.20 AS ext-rec
+RUN apk add --no-cache ca-certificates ffmpeg
+COPY --from=builder /out/ext-rec /usr/local/bin/ext-rec
+ENTRYPOINT ["ext-rec"]
 
 # --- audit image ---
 # Templates and static files are embedded in the binary via go:embed.

@@ -44,6 +44,7 @@ build: proto
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-walls ./cmd/ext-walls
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-props ./cmd/ext-props
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-av ./cmd/ext-av
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/ext-rec ./cmd/ext-rec
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/audit ./cmd/audit
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/admin ./cmd/admin
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
@@ -87,10 +88,12 @@ dist-stage:
 	@# --- stage Docker support files into dist/docker/ ---
 	@mkdir -p $(DIST_DIR)/docker
 	cp docker/dist/backend.Dockerfile   $(DIST_DIR)/docker/backend.Dockerfile
+	cp docker/dist/backend-rec.Dockerfile $(DIST_DIR)/docker/backend-rec.Dockerfile
 	cp docker/dist/frontend.Dockerfile  $(DIST_DIR)/docker/frontend.Dockerfile
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
 	cp docker/dist/example.nginx.conf   $(DIST_DIR)/example.nginx.conf
 	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
+	cp docker/egress.yaml               $(DIST_DIR)/docker/egress.yaml
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
 	@# --- stage static welcome page (copy entire directory) ---
 	@mkdir -p $(DIST_DIR)/docker/welcome
@@ -148,7 +151,7 @@ REMOTE_PATH ?= /opt/pixeleruv
 
 deploy-remote: dist-x86
 	@echo "==> Rsyncing dist/ to $(REMOTE_HOST):$(REMOTE_PATH)/"
-	rsync -avz --delete dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
+	rsync -avz --delete --exclude recordings/ --exclude backups/ --exclude .env dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
 	@echo "==> Running deploy.sh on $(REMOTE_HOST)"
 	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./deploy.sh"
 

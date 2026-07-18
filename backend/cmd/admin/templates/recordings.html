@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings - PixelEruv Admin</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+  --danger: #e74c3c;
+  --ok: #2ecc71;
+  --warn: #f39c12;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 1rem 2rem; }
+h1 { margin-bottom: 0.5rem; }
+.user { color: var(--muted); margin-bottom: 1rem; }
+.nav { margin-bottom: 1.5rem; }
+.nav a { color: var(--accent); text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+.search { background: var(--surface); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.search label { font-size: 0.8rem; color: var(--muted); display: flex; flex-direction: column; gap: 0.25rem; }
+.search input, .search select { background: var(--bg); color: var(--text); border: 1px solid var(--surface2); border-radius: 4px; padding: 0.4rem 0.6rem; font-size: 0.9rem; }
+.search button { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 0.4rem 1rem; cursor: pointer; font-size: 0.9rem; }
+.search button:hover { opacity: 0.9; }
+.search a { color: var(--muted); font-size: 0.85rem; text-decoration: none; padding: 0.4rem 0.5rem; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }
+th, td { padding: 0.6rem 0.8rem; text-align: left; font-size: 0.85rem; }
+th { background: var(--surface2); color: var(--accent); font-weight: 600; white-space: nowrap; }
+td { border-top: 1px solid var(--surface2); }
+tr:hover td { background: rgba(78,154,241,0.05); }
+.status-active { color: var(--danger); font-weight: 600; }
+.status-completed { color: var(--ok); }
+.status-error { color: var(--warn); }
+.status-stopped { color: var(--ok); }
+.mono { font-family: monospace; font-size: 0.8rem; }
+.truncate { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl { color: var(--accent); text-decoration: none; }
+.dl:hover { text-decoration: underline; }
+.del-form { display: inline; }
+.del-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+.del-btn:hover { background: var(--danger); color: #fff; }
+.stop-form { display: inline; margin-right: 0.3rem; }
+.stop-btn { background: transparent; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+.stop-btn:hover { background: var(--warn); color: #fff; }
+.play-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; text-decoration: none; margin-right: 0.3rem; }
+.play-btn:hover { background: var(--accent); color: #fff; }
+.video-cell { white-space: nowrap; }
+.empty { text-align: center; color: var(--muted); padding: 2rem; }
+.total { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
+.disk { font-size: 0.85rem; margin-bottom: 0.5rem; }
+.disk-low { color: var(--danger); font-weight: 600; }
+.disk-ok { color: var(--muted); }
+.delete-all-bar { margin-bottom: 1rem; }
+
+/* Stats panel: card grid with a circular disk-usage gauge. */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.stat-card { background: var(--surface); border: 1px solid var(--surface2); border-radius: 10px; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.stat-card .stat-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--text); line-height: 1.1; }
+.stat-card .stat-sub { color: var(--muted); font-size: 0.8rem; }
+.stat-card.disk-card { flex-direction: row; align-items: center; gap: 1rem; }
+.gauge { position: relative; width: 84px; height: 84px; flex-shrink: 0; }
+.gauge svg { transform: rotate(-90deg); }
+.gauge .gauge-track { fill: none; stroke: var(--surface2); stroke-width: 8; }
+.gauge .gauge-fill { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease, stroke 0.2s; }
+.gauge .gauge-fill.warn { stroke: var(--warn); }
+.gauge .gauge-fill.crit { stroke: var(--danger); }
+.gauge .gauge-pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; font-weight: 700; color: var(--text); }
+.gauge-details { display: flex; flex-direction: column; gap: 0.15rem; }
+.gauge-details .gd-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.8rem; }
+.gauge-details .gd-label { color: var(--muted); }
+.gauge-details .gd-val { color: var(--text); font-family: monospace; }
+.gauge-details .gd-row.free-low .gd-val { color: var(--danger); font-weight: 600; }
+.del-all-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
+.del-all-btn:hover { background: var(--danger); color: #fff; }
+.backfill-form { display: inline; margin-left: 0.5rem; }
+.backfill-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
+.backfill-btn:hover { background: var(--accent); color: #fff; }
+.audio-pending { color: var(--muted); font-style: italic; font-size: 0.85rem; }
+.audio-failed { color: var(--danger); font-weight: 600; cursor: help; text-decoration: underline dotted; }
+
+/* Thumbnail cell: small preview that enlarges on hover. The full-size
+   image is rendered using the same src (no separate file); CSS scales
+   it up on hover via a positioned overlay. */
+.thumb-cell { width: 80px; }
+.thumb { width: 64px; height: 36px; object-fit: cover; border-radius: 3px; border: 1px solid var(--surface2); cursor: zoom-in; display: block; }
+.thumb:hover { position: relative; }
+/* Hover preview: a fixed-position overlay centered in the viewport so
+   the full frame is visible regardless of row scroll position. Pure
+   CSS — no JS. The .thumb-cell:hover .thumb-preview rule shows it. */
+.thumb-preview { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 80vw; max-height: 80vh; width: auto; height: auto; border-radius: 6px; border: 1px solid var(--surface2); box-shadow: 0 8px 24px rgba(0,0,0,0.6); z-index: 200; pointer-events: none; background: #000; }
+.thumb-cell:hover .thumb-preview { display: block; }
+.logout { margin-top: 2rem; }
+.logout a { color: var(--muted); text-decoration: none; }
+.version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
+
+/* Modal video player */
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center; }
+.modal.open { display: flex; }
+.modal-content { background: var(--surface); border-radius: 8px; padding: 1rem; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; gap: 0.5rem; }
+.modal-content video { max-width: 85vw; max-height: 75vh; border-radius: 4px; background: #000; }
+.modal-close { align-self: flex-end; background: transparent; color: var(--muted); border: none; font-size: 1.5rem; cursor: pointer; line-height: 1; }
+.modal-close:hover { color: var(--text); }
+.modal-title { color: var(--text); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>Recordings</h1>
+<p class="user">Logged in as {{.Email}}</p>
+<div class="nav"><a href="/admin/">&larr; Back to Admin</a></div>
+
+<form class="search" method="GET" action="/admin/recordings">
+  <label>Room <input type="text" name="room" value="{{.Room}}" placeholder="zone-meeting-room-1"></label>
+  <label>Status
+    <select name="status">
+      <option value=""{{if eq .Status ""}} selected{{end}}>Any</option>
+      <option value="active"{{if eq .Status "active"}} selected{{end}}>Active</option>
+      <option value="completed"{{if eq .Status "completed"}} selected{{end}}>Completed</option>
+      <option value="stopped"{{if eq .Status "stopped"}} selected{{end}}>Stopped</option>
+      <option value="error"{{if eq .Status "error"}} selected{{end}}>Error</option>
+    </select>
+  </label>
+  <label>Target
+    <select name="target">
+      <option value=""{{if eq .Target ""}} selected{{end}}>Any</option>
+      <option value="mp4"{{if eq .Target "mp4"}} selected{{end}}>MP4</option>
+      <option value="youtube"{{if eq .Target "youtube"}} selected{{end}}>YouTube</option>
+    </select>
+  </label>
+  <label>Started by <input type="text" name="started_by" value="{{.StartedBy}}" placeholder="e_admin"></label>
+  <button type="submit">Search</button>
+  <a href="/admin/recordings">Clear</a>
+</form>
+
+{{/* Stats panel: count, total size, disk gauge. GaugeDashOffset and
+   UsedPercent are precomputed in diskUsage() so the template avoids
+   arithmetic (Go text/template has no built-in math funcs). The
+   warn/crit classes are only applied when TotalBytes > 0; a statfs
+   failure returns a zero diskInfo and we show a neutral gauge + an
+   "unavailable" label instead of a misleading 100% red. */}}
+{{$diskOK := gt .Disk.TotalBytes 0}}
+{{$gaugeClass := "gauge-fill"}}{{if and $diskOK (lt .Disk.FreePercent 10.0)}}{{$gaugeClass = "gauge-fill warn"}}{{end}}{{if and $diskOK (lt .Disk.FreePercent 5.0)}}{{$gaugeClass = "gauge-fill crit"}}{{end}}
+{{$freeRowClass := ""}}{{if and $diskOK (lt .Disk.FreePercent 5.0)}}{{$freeRowClass = "free-low"}}{{end}}
+<div class="stats">
+  <div class="stat-card">
+    <span class="stat-label">Recordings</span>
+    <span class="stat-value">{{.Total}}</span>
+    <span class="stat-sub">total rows</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">On-disk size</span>
+    <span class="stat-value">{{.TotalSize}}</span>
+    <span class="stat-sub">MP4 + MP3 combined</span>
+  </div>
+  <div class="stat-card disk-card">
+    <div class="gauge">
+      <svg width="84" height="84" viewBox="0 0 84 84">
+        <circle class="gauge-track" cx="42" cy="42" r="36"></circle>
+        <circle class="{{$gaugeClass}}" cx="42" cy="42" r="36"
+          stroke-dasharray="226.2"
+          stroke-dashoffset="{{printf "%.1f" .Disk.GaugeDashOffset}}"></circle>
+      </svg>
+      <span class="gauge-pct">{{if $diskOK}}{{printf "%.0f" .Disk.UsedPercent}}%{{else}}n/a{{end}}</span>
+    </div>
+    <div class="gauge-details">
+      {{if $diskOK}}
+      <div class="gd-row"><span class="gd-label">Total</span><span class="gd-val">{{.Disk.TotalHuman}}</span></div>
+      <div class="gd-row"><span class="gd-label">Used</span><span class="gd-val">{{.Disk.UsedHuman}}</span></div>
+      <div class="gd-row {{$freeRowClass}}"><span class="gd-label">Free</span><span class="gd-val">{{.Disk.FreeHuman}} ({{printf "%.1f" .Disk.FreePercent}}%)</span></div>
+      {{else}}
+      <div class="gd-row"><span class="gd-label">Disk stats unavailable</span><span class="gd-val"></span></div>
+      {{end}}
+    </div>
+  </div>
+</div>
+{{if .Rows}}
+<div class="delete-all-bar">
+  <button class="del-all-btn" onclick="confirmDeleteAll()">Delete all recordings</button>
+  <form class="backfill-form" method="POST" action="/admin/recordings/backfill-thumbnails" onsubmit="return confirm('Backfill thumbnails for all MP4 recordings missing one? This runs ffmpeg for each and may take a while.');">
+    <button type="submit" class="backfill-btn">Backfill thumbnails</button>
+  </form>
+</div>
+{{end}}
+
+{{if .Rows}}
+<table>
+  <thead>
+    <tr>
+      <th>Thumb</th>
+      <th>Meeting ID</th>
+      <th>Room</th>
+      <th>Target</th>
+      <th>Status</th>
+      <th>Started by</th>
+      <th>Start</th>
+      <th>Duration</th>
+      <th>Participants</th>
+      <th>Video</th>
+      <th>Audio</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Rows}}
+    <tr>
+      <td class="thumb-cell">
+        {{if .HasThumbnail}}
+          <img class="thumb" src="{{.ThumbnailURL}}" alt="thumbnail" loading="lazy">
+          <img class="thumb-preview" src="{{.ThumbnailURL}}" alt="full-size frame">
+        {{else}}&mdash;{{end}}
+      </td>
+      <td class="mono truncate" title="{{.MeetingID}}">{{.MeetingID}}</td>
+      <td>{{.Room}}</td>
+      <td>{{.Target}}</td>
+      <td class="status-{{.Status}}">{{.Status}}</td>
+      <td class="mono" title="Participants: {{.Participants}}">{{.StartedBy}}</td>
+      <td class="mono">{{.StartTime}}</td>
+      <td>{{.Duration}}</td>
+      <td class="mono truncate" title="{{.Participants}}">{{.Participants}}</td>
+      <td class="video-cell">
+        {{if .HasFile}}
+          <button class="play-btn" onclick="playRecording('{{.FileURL}}', '{{.Room}} - {{.StartTime}}')">Play</button>
+          <a class="dl" href="{{.FileURL}}" download title="{{if .FileSize}}{{.FileSize}}{{else}}file not on disk{{end}}">MP4</a>
+        {{else}}&mdash;{{end}}
+      </td>
+      <td>
+        {{if .HasAudio}}
+          <a class="dl" href="{{.AudioURL}}" download title="{{if .AudioSize}}{{.AudioSize}}{{else}}file not on disk{{end}}">MP3</a>
+        {{else if eq .AudioStatus "pending"}}
+          <span class="audio-pending">extracting...</span>
+        {{else if eq .AudioStatus "failed"}}
+          <span class="audio-failed" title="{{.AudioError}}">failed</span>
+        {{else}}&mdash;{{end}}
+      </td>
+      <td>
+        {{if eq .Status "active"}}
+          <form class="stop-form" method="POST" action="/admin/recordings/stop" onsubmit="return confirm('Stop this recording now? LiveKit will finalize the MP4 and audio extraction will run. This is the clean stop path.');">
+            <input type="hidden" name="room" value="{{.Room}}">
+            <input type="hidden" name="meeting_id" value="{{.MeetingID}}">
+            <button type="submit" class="stop-btn">Stop</button>
+          </form>
+        {{end}}
+        <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4, MP3, and JPG files.');">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <input type="hidden" name="file_url" value="{{.FileURL}}">
+          <input type="hidden" name="audio_url" value="{{.AudioURL}}">
+          <input type="hidden" name="thumbnail_url" value="{{.ThumbnailURL}}">
+          <button type="submit" class="del-btn">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No recordings found.</p>
+{{end}}
+
+<div class="logout"><a href="/admin/logout">Logout</a></div>
+<p class="version">v{{.Version}}</p>
+
+<div class="modal" id="videoModal" onclick="if(event.target===this)closeRecording()">
+  <div class="modal-content">
+    <button class="modal-close" onclick="closeRecording()" aria-label="Close">&times;</button>
+    <p class="modal-title" id="videoTitle"></p>
+    <video id="videoPlayer" controls></video>
+  </div>
+</div>
+<script>
+function playRecording(url, title) {
+  var v = document.getElementById('videoPlayer');
+  v.src = url;
+  document.getElementById('videoTitle').textContent = title;
+  document.getElementById('videoModal').classList.add('open');
+  v.play();
+}
+function closeRecording() {
+  var v = document.getElementById('videoPlayer');
+  v.pause();
+  v.src = '';
+  document.getElementById('videoModal').classList.remove('open');
+}
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeRecording(); });
+
+function confirmDeleteAll() {
+  var ok = confirm('This will permanently delete ALL recordings (every PB record and every MP4 file on disk). This action is NOT reversible.\n\nType DELETE ALL in the next prompt to confirm.');
+  if (!ok) return;
+  var typed = prompt('Type DELETE ALL to confirm:');
+  if (typed !== 'DELETE ALL') {
+    alert('Confirmation did not match. Aborted.');
+    return;
+  }
+  var f = document.createElement('form');
+  f.method = 'POST';
+  f.action = '/admin/recordings/delete-all';
+  var i = document.createElement('input');
+  i.type = 'hidden';
+  i.name = 'confirm';
+  i.value = 'DELETE ALL';
+  f.appendChild(i);
+  document.body.appendChild(f);
+  f.submit();
+}
+</script>
+</body>
+</html>

@@ -71,6 +71,8 @@ type session struct {
 	avSub     *nats.Subscription
 	chatSub   *nats.Subscription
 	adminSub  *nats.Subscription
+	recSub    *nats.Subscription
+	recActSub *nats.Subscription
 	closeOnce sync.Once
 }
 
@@ -404,6 +406,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		if sess.adminSub != nil {
 			sess.adminSub.Unsubscribe()
 		}
+		if sess.recSub != nil {
+			sess.recSub.Unsubscribe()
+		}
+		if sess.recActSub != nil {
+			sess.recActSub.Unsubscribe()
+		}
 		s.sessions.Delete(clientID)
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
 		audit.Emit(s.nc, "client.disconnected", audit.SeverityInfo,
@@ -482,6 +490,89 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		} else {
 			sess.adminSub = adminSub
 		}
+	}
+
+	// Subscribe to recording state messages from ext-rec. ext-rec publishes
+	// JSON on client.<id>.recording_state (to the host that requested
+	// start/stop) and client.<id>.recording_active (to each participant in a
+	// recorded room). The pusher wraps each in the matching ServerFrame proto
+	// and forwards to the browser.
+	recSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.recording_state", clientID), func(m *nats.Msg) {
+		var msg struct {
+			Room     string `json:"room"`
+			Status   string `json:"status"`
+			Target   string `json:"target"`
+			EgressID string `json:"egress_id"`
+			Error    string `json:"error"`
+		}
+		if err := json.Unmarshal(m.Data, &msg); err != nil {
+			s.logger.Warn("recording_state unmarshal", "client", clientID, "err", err)
+			return
+		}
+		frame := &pb.ServerFrame{
+			Payload: &pb.ServerFrame_RecordingState{
+				RecordingState: &pb.RecordingStateFrame{
+					Room:     msg.Room,
+					Status:   msg.Status,
+					Target:   msg.Target,
+					EgressId: msg.EgressID,
+					Error:    msg.Error,
+				},
+			},
+		}
+		frameBytes, err := proto.Marshal(frame)
+		if err != nil {
+			s.logger.Warn("recording_state marshal", "client", clientID, "err", err)
+			return
+		}
+		writeCtx, cancel := context.WithTimeout(authCtx, 5*time.Second)
+		defer cancel()
+		if err := c.Write(writeCtx, websocket.MessageBinary, frameBytes); err != nil {
+			s.logger.Warn("ws write recording_state", "client", clientID, "err", err)
+		}
+	})
+	if err != nil {
+		s.logger.Warn("nats sub recording_state", "client", clientID, "err", err)
+	} else {
+		sess.recSub = recSub
+	}
+
+	recActSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.recording_active", clientID), func(m *nats.Msg) {
+		var msg struct {
+			Room   string `json:"room"`
+			Active bool   `json:"active"`
+			Target string `json:"target"`
+			Reason string `json:"reason"`
+		}
+		if err := json.Unmarshal(m.Data, &msg); err != nil {
+			s.logger.Warn("recording_active unmarshal", "client", clientID, "err", err)
+			return
+		}
+		frame := &pb.ServerFrame{
+			Payload: &pb.ServerFrame_RecordingActive{
+				RecordingActive: &pb.RecordingActiveFrame{
+					Room:   msg.Room,
+					Active: msg.Active,
+					Target: msg.Target,
+					Reason: msg.Reason,
+				},
+			},
+		}
+		frameBytes, err := proto.Marshal(frame)
+		if err != nil {
+			s.logger.Warn("recording_active marshal", "client", clientID, "err", err)
+			return
+		}
+		writeCtx, cancel := context.WithTimeout(authCtx, 5*time.Second)
+		defer cancel()
+		if err := c.Write(writeCtx, websocket.MessageBinary, frameBytes); err != nil {
+			s.logger.Warn("ws write recording_active", "client", clientID, "err", err)
+		}
+	})
+	if err != nil {
+		s.logger.Warn("nats sub recording_active", "client", clientID, "err", err)
+	} else {
+		sess.recActSub = recActSub
 	}
 
 	// Send AuthResultFrame with the entity ID, map_id, admin flag, and options
@@ -666,9 +757,45 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish set_status", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_Recording:
+			// Forward recording start/stop to ext-rec on recording.<action>.
+			// ext-rec authorizes via worldsim.entity_info (admin only) and
+			// starts/stops a LiveKit Egress. The pusher adds client_id and
+			// entity_id from the session; room and target come from the frame.
+			action := p.Recording.GetAction()
+			if action != "start" && action != "stop" {
+				s.logger.Warn("recording frame invalid action", "client", clientID, "action", action)
+				continue
+			}
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.Recording.GetTraceparent()),
+				"pusher.nats.publish.recording",
+			)
+			pspan.SetAttributes(
+				attribute.String("client.id", clientID),
+				attribute.String("recording.action", action),
+				attribute.String("recording.room", p.Recording.GetRoom()),
+				attribute.String("recording.target", p.Recording.GetTarget()),
+			)
+			payload := map[string]string{
+				"client_id": clientID,
+				"entity_id": entityID,
+				"room":      p.Recording.GetRoom(),
+				"target":    p.Recording.GetTarget(),
+			}
+			payloadBytes, _ := json.Marshal(payload)
+			subject := "recording." + action
+			msg := &nats.Msg{Subject: subject, Data: payloadBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish recording")
+				s.logger.Warn("nats publish recording", "client", clientID, "err", err)
+			}
+			pspan.End()
+		}
 		}
 	}
-}
 
 // keepalive sends a WebSocket protocol-level ping every PingInterval. The
 // browser auto-responds with a pong, keeping idle connections alive. On ping
