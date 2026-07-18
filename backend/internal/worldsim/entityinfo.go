@@ -19,6 +19,7 @@ type entityInfoReply struct {
 	Status      uint32 `json:"status"`
 	DisplayName string `json:"display_name"`
 	MapID       string `json:"map_id"`
+	ClientID    string `json:"client_id,omitempty"`
 }
 
 // subscribeEntityInfo sets up the worldsim.entity_info request-reply handler.
@@ -49,6 +50,9 @@ func (s *Simulator) subscribeEntityInfo() error {
 			Status:      e.Status,
 			DisplayName: e.DisplayName,
 			MapID:       e.Position.GetMapId(),
+		}
+		if e.NetworkSession != nil {
+			reply.ClientID = e.NetworkSession.ClientID
 		}
 		data, err := json.Marshal(reply)
 		if err != nil {

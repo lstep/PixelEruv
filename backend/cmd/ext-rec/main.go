@@ -26,10 +26,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/livekit/protocol/livekit"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/lstep/pixeleruv/backend/internal/audit"
 	"github.com/lstep/pixeleruv/backend/internal/otel"
 	"github.com/lstep/pixeleruv/backend/internal/version"
@@ -72,6 +77,41 @@ type entityInfoReply struct {
 	Status      uint32 `json:"status"`
 	DisplayName string `json:"display_name"`
 	MapID       string `json:"map_id"`
+	ClientID    string `json:"client_id,omitempty"`
+}
+
+// recordingCreateMsg is the request payload for worldsim.recording.create.
+type recordingCreateMsg struct {
+	MeetingID    string   `json:"meeting_id"`
+	Room         string   `json:"room"`
+	ZoneID       string   `json:"zone_id,omitempty"`
+	MapID        string   `json:"map_id,omitempty"`
+	Target       string   `json:"target"`
+	EgressID     string   `json:"egress_id"`
+	StartedBy    string   `json:"started_by"`
+	Participants []string `json:"participants,omitempty"`
+	StartTime    int64    `json:"start_time"`
+	Status       string   `json:"status"`
+	FileURL      string   `json:"file_url,omitempty"`
+}
+
+type recordingCreateReply struct {
+	OK       bool   `json:"ok"`
+	RecordID string `json:"record_id,omitempty"`
+	Error    string `json:"error,omitempty"`
+}
+
+// recordingUpdateMsg is the request payload for worldsim.recording.update.
+type recordingUpdateMsg struct {
+	MeetingID string `json:"meeting_id"`
+	EndTime   int64  `json:"end_time,omitempty"`
+	Status    string `json:"status,omitempty"`
+	FileURL   string `json:"file_url,omitempty"`
+}
+
+type recordingUpdateReply struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 // recordingStateMsg is published on client.<id>.recording_state for the host.
@@ -146,10 +186,11 @@ func main() {
 	var mu sync.Mutex
 	activeRecs := make(map[string]*activeRec) // keyed by room name
 
-	_ = livekitURL
-	_ = recordingsDir
-	_ = youtubeRTMPURL
-	_ = youtubeStreamKey
+	// LiveKit API clients. The egress client starts/stops recordings; the
+	// room client lists participants (for the participant snapshot and the
+	// recording_active fan-out).
+	egressClient := lksdk.NewEgressClient(livekitURL, livekitAPIKey, livekitAPISecret)
+	roomClient := lksdk.NewRoomServiceClient(livekitURL, livekitAPIKey, livekitAPISecret)
 
 	// publishRecordingState publishes a client.<id>.recording_state message
 	// to the host.
@@ -191,8 +232,99 @@ func main() {
 		return reply, nil
 	}
 
-	// --- recording.start handler (skeleton: validate + reject; start wired in step 5) ---
-	_ = publishRecordingActive // wired in step 5
+	// createRecordingRow calls worldsim.recording.create to insert a PB row.
+	createRecordingRow := func(msg recordingCreateMsg) error {
+		data, _ := json.Marshal(msg)
+		reply, err := nc.Request("worldsim.recording.create", data, 3*time.Second)
+		if err != nil {
+			return fmt.Errorf("recording.create request: %w", err)
+		}
+		var resp recordingCreateReply
+		if err := json.Unmarshal(reply.Data, &resp); err != nil {
+			return fmt.Errorf("recording.create unmarshal: %w", err)
+		}
+		if !resp.OK {
+			return fmt.Errorf("recording.create: %s", resp.Error)
+		}
+		return nil
+	}
+
+	// updateRecordingRow calls worldsim.recording.update to update a PB row.
+	updateRecordingRow := func(msg recordingUpdateMsg) error {
+		data, _ := json.Marshal(msg)
+		reply, err := nc.Request("worldsim.recording.update", data, 3*time.Second)
+		if err != nil {
+			return fmt.Errorf("recording.update request: %w", err)
+		}
+		var resp recordingUpdateReply
+		if err := json.Unmarshal(reply.Data, &resp); err != nil {
+			return fmt.Errorf("recording.update unmarshal: %w", err)
+		}
+		if !resp.OK {
+			return fmt.Errorf("recording.update: %s", resp.Error)
+		}
+		return nil
+	}
+
+	// listRoomParticipants returns the entity_ids (LiveKit participant
+	// identities) currently in the room. Used for the participant snapshot
+	// and the recording_active fan-out.
+	listRoomParticipants := func(roomName string) ([]string, error) {
+		resp, err := roomClient.ListParticipants(ctx, &livekit.ListParticipantsRequest{Room: roomName})
+		if err != nil {
+			return nil, fmt.Errorf("list participants: %w", err)
+		}
+		ids := make([]string, 0, len(resp.Participants))
+		for _, p := range resp.Participants {
+			ids = append(ids, p.Identity)
+		}
+		return ids, nil
+	}
+
+	// buildEgressRequest constructs a RoomCompositeEgressRequest for the
+	// given target. MP4 writes to RECORDINGS_DIR; YouTube streams RTMP.
+	buildEgressRequest := func(room, target string) (*livekit.RoomCompositeEgressRequest, error) {
+		req := &livekit.RoomCompositeEgressRequest{
+			RoomName: room,
+			Layout:   "speaker",
+		}
+		switch target {
+		case "mp4":
+			filepath := filepath.Join(recordingsDir, fmt.Sprintf("%s-%d.mp4", room, time.Now().Unix()))
+			req.FileOutputs = []*livekit.EncodedFileOutput{{
+				FileType: livekit.EncodedFileType_MP4,
+				Filepath: filepath,
+			}}
+		case "youtube":
+			if youtubeRTMPURL == "" || youtubeStreamKey == "" {
+				return nil, fmt.Errorf("YOUTUBE_RTMP_URL and YOUTUBE_STREAM_KEY must be set for youtube target")
+			}
+			rtmpURL := strings.TrimRight(youtubeRTMPURL, "/") + "/" + youtubeStreamKey
+			req.StreamOutputs = []*livekit.StreamOutput{{
+				Protocol: livekit.StreamProtocol_RTMP,
+				Urls:     []string{rtmpURL},
+			}}
+		default:
+			return nil, fmt.Errorf("invalid target %q", target)
+		}
+		return req, nil
+	}
+
+	// fanOutRecordingActive publishes recording_active to all participants in
+	// the room. Each participant's client_id is resolved via entity_info.
+	fanOutRecordingActive := func(room, target string, active bool, participants []string) {
+		msg := recordingActiveMsg{Room: room, Active: active, Target: target}
+		for _, entityID := range participants {
+			info, err := fetchEntityInfo(entityID)
+			if err != nil || info.ClientID == "" {
+				logger.Warn("fanOut: could not resolve client_id", "entity", entityID, "err", err)
+				continue
+			}
+			publishRecordingActive(info.ClientID, msg)
+		}
+	}
+
+	// --- recording.start handler ---
 	nc.Subscribe("recording.start", func(m *nats.Msg) {
 		var req recordingStartMsg
 		if err := json.Unmarshal(m.Data, &req); err != nil {
@@ -244,14 +376,82 @@ func main() {
 		}
 		mu.Unlock()
 
-		// TODO(step 5): start Room Composite Egress, insert PB row, audit emit,
-		// publish recording_state (active) + recording_active to participants.
-		logger.Info("recording.start authorized (start not yet implemented)",
-			"entity", req.EntityID, "room", req.Room, "target", req.Target)
-		_ = activeRecs
+		// Build and start the Egress.
+		egressReq, err := buildEgressRequest(req.Room, req.Target)
+		if err != nil {
+			logger.Warn("build egress request", "err", err)
+			publishRecordingState(req.ClientID, recordingStateMsg{
+				Room: req.Room, Status: "error", Target: req.Target, Error: err.Error(),
+			})
+			return
+		}
+		egressInfo, err := egressClient.StartRoomCompositeEgress(ctx, egressReq)
+		if err != nil {
+			logger.Warn("start egress", "err", err, "room", req.Room)
+			publishRecordingState(req.ClientID, recordingStateMsg{
+				Room: req.Room, Status: "error", Target: req.Target, Error: err.Error(),
+			})
+			return
+		}
+
+		// Snapshot participants for the PB row + recording_active fan-out.
+		participants, _ := listRoomParticipants(req.Room)
+
+		meetingID := uuid.NewString()
+		rec := &activeRec{
+			EgressID:     egressInfo.EgressId,
+			Room:         req.Room,
+			Target:       req.Target,
+			StartedBy:    req.EntityID,
+			StartedAt:    time.Now(),
+			Participants: participants,
+			MeetingID:    meetingID,
+		}
+
+		mu.Lock()
+		activeRecs[req.Room] = rec
+		mu.Unlock()
+
+		// Insert PB row via worldsim.
+		zoneID := ""
+		if strings.HasPrefix(req.Room, "zone-") {
+			zoneID = strings.TrimPrefix(req.Room, "zone-")
+		}
+		createErr := createRecordingRow(recordingCreateMsg{
+			MeetingID:    meetingID,
+			Room:         req.Room,
+			ZoneID:       zoneID,
+			MapID:        info.MapID,
+			Target:       req.Target,
+			EgressID:     egressInfo.EgressId,
+			StartedBy:    req.EntityID,
+			Participants: participants,
+			StartTime:    rec.StartedAt.UnixMilli(),
+			Status:       "active",
+		})
+		if createErr != nil {
+			logger.Warn("create recording row", "err", createErr, "meeting", meetingID)
+			// Non-fatal: the Egress is running; we just couldn't persist metadata.
+		}
+
+		audit.Emit(nc, "recording.start", audit.SeverityInfo,
+			audit.Actor{EntityID: req.EntityID, ClientID: req.ClientID, Extension: extID},
+			audit.Details{
+				"room": req.Room, "target": req.Target, "egress_id": egressInfo.EgressId,
+				"meeting_id": meetingID, "participants": participants,
+			},
+			"")
+
+		publishRecordingState(req.ClientID, recordingStateMsg{
+			Room: req.Room, Status: "active", Target: req.Target, EgressID: egressInfo.EgressId,
+		})
+		fanOutRecordingActive(req.Room, req.Target, true, participants)
+		logger.Info("recording started",
+			"entity", req.EntityID, "room", req.Room, "target", req.Target,
+			"egress", egressInfo.EgressId, "meeting", meetingID, "participants", len(participants))
 	})
 
-	// --- recording.stop handler (skeleton: validate + reject; stop wired in step 5) ---
+	// --- recording.stop handler ---
 	nc.Subscribe("recording.stop", func(m *nats.Msg) {
 		var req recordingStopMsg
 		if err := json.Unmarshal(m.Data, &req); err != nil {
@@ -262,8 +462,6 @@ func main() {
 			logger.Warn("recording.stop missing fields", "req", req)
 			return
 		}
-		// Stop is admin-only too: only the host that started (or another admin)
-		// can stop. We authorize via entity_info for consistency.
 		info, err := fetchEntityInfo(req.EntityID)
 		if err != nil {
 			logger.Warn("entity_info", "err", err)
@@ -290,9 +488,41 @@ func main() {
 			return
 		}
 
-		// TODO(step 5): StopEgress, update PB row, audit emit, publish state/active.
-		logger.Info("recording.stop authorized (stop not yet implemented)",
-			"entity", req.EntityID, "room", req.Room, "egress", rec.EgressID)
+		_, err = egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: rec.EgressID})
+		if err != nil {
+			logger.Warn("stop egress", "err", err, "egress", rec.EgressID)
+			// Continue to clean up state even if StopEgress fails — the Egress
+			// may have already ended (room empty, server restart, etc.).
+		}
+
+		mu.Lock()
+		delete(activeRecs, req.Room)
+		mu.Unlock()
+
+		// Update PB row.
+		updateErr := updateRecordingRow(recordingUpdateMsg{
+			MeetingID: rec.MeetingID,
+			EndTime:   time.Now().UnixMilli(),
+			Status:    "completed",
+		})
+		if updateErr != nil {
+			logger.Warn("update recording row", "err", updateErr, "meeting", rec.MeetingID)
+		}
+
+		audit.Emit(nc, "recording.stop", audit.SeverityInfo,
+			audit.Actor{EntityID: req.EntityID, ClientID: req.ClientID, Extension: extID},
+			audit.Details{
+				"room": req.Room, "target": rec.Target, "egress_id": rec.EgressID,
+				"meeting_id": rec.MeetingID,
+			},
+			"")
+
+		publishRecordingState(req.ClientID, recordingStateMsg{
+			Room: req.Room, Status: "stopped", Target: rec.Target, EgressID: rec.EgressID,
+		})
+		fanOutRecordingActive(req.Room, rec.Target, false, rec.Participants)
+		logger.Info("recording stopped",
+			"entity", req.EntityID, "room", req.Room, "egress", rec.EgressID, "meeting", rec.MeetingID)
 	})
 
 	// --- Extension registration protocol ---
