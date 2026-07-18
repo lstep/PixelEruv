@@ -1178,6 +1178,8 @@ export class GameScene extends Phaser.Scene {
       this.videoBar = null;
       this.screenShareOverlay = null;
       this.avClient = null;
+      this.debugZoneOverlay?.destroy();
+      this.debugZoneOverlay = null;
       this.closeDropdown();
       this.closeInteractionPopup();
       topMenu?.detachAvControls();
