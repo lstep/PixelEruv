@@ -10,7 +10,6 @@ package main
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 
 	"github.com/lstep/pixeleruv/backend/internal/worldsim"
@@ -61,5 +60,4 @@ func main() {
 	if errors > 0 {
 		os.Exit(1)
 	}
-	_ = slog.Default()
 }
