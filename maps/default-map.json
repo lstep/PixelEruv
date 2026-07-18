@@ -329,17 +329,6 @@
                  "y":121.172119487909
                 }],
          "opacity":1,
-         "properties":[
-                {
-                 "name":"layer_type",
-                 "type":"string",
-                 "value":"decoration"
-                }, 
-                {
-                 "name":"sort_mode",
-                 "type":"string",
-                 "value":"dynamic"
-                }],
          "type":"objectgroup",
          "visible":true,
          "x":0,
