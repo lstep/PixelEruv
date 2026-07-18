@@ -80,6 +80,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/admin/recordings/delete", s.handleRecordingsDelete)
 	mux.HandleFunc("/admin/recordings/delete-all", s.handleRecordingsDeleteAll)
 	mux.HandleFunc("/admin/recordings/stop", s.handleRecordingsStop)
+	mux.HandleFunc("/admin/recordings/backfill-thumbnails", s.handleRecordingsBackfillThumbnails)
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
@@ -842,6 +843,98 @@ func (s *Server) handleRecordingsStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Info("stop request published", "room", room, "meeting", meetingID, "by", sess.Email)
+	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
+}
+
+// handleRecordingsBackfillThumbnails finds all recordings with an MP4
+// file but no thumbnail_url and publishes a recording.thumbnail.extract
+// request for each via NATS. ext-rec runs ffprobe+ffmpeg asynchronously
+// and updates the PB rows. The admin UI redirects back to the recordings
+// page; thumbnails appear over the next few seconds to minutes depending
+// on count and MP4 sizes.
+func (s *Server) handleRecordingsBackfillThumbnails(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.nc == nil {
+		http.Error(w, "NATS unavailable; admin service has no bus connection", http.StatusServiceUnavailable)
+		return
+	}
+	token, err := s.pbAdminToken()
+	if err != nil {
+		s.logger.Warn("pb admin token", "err", err)
+		http.Error(w, "failed to authenticate to PocketBase", http.StatusBadGateway)
+		return
+	}
+	// Query PB for MP4 recordings with an empty thumbnail_url. Page
+	// through all results. thumbnail_url="" matches both the empty
+	// string and the field being absent.
+	var toBackfill []struct {
+		MeetingID string `json:"meeting_id"`
+		Room      string `json:"room"`
+		FileURL   string `json:"file_url"`
+	}
+	page := 1
+	for {
+		u := fmt.Sprintf("%s/collections/recordings/records?perPage=100&page=%d&filter=%s",
+			s.cfg.PBApiURL, page,
+			url.QueryEscape(`target="mp4" && file_url!="" && thumbnail_url=""`),
+		)
+		req, _ := http.NewRequest("GET", u, nil)
+		req.Header.Set("Authorization", token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			s.logger.Warn("pb recordings list", "err", err, "page", page)
+			http.Error(w, "failed to list recordings", http.StatusBadGateway)
+			return
+		}
+		var result struct {
+			Items []struct {
+				MeetingID string `json:"meeting_id"`
+				Room      string `json:"room"`
+				FileURL   string `json:"file_url"`
+			} `json:"items"`
+			TotalPages int `json:"totalPages"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			s.logger.Warn("pb recordings decode", "err", err, "page", page)
+			http.Error(w, "failed to parse recordings", http.StatusBadGateway)
+			return
+		}
+		toBackfill = append(toBackfill, result.Items...)
+		if page >= result.TotalPages || len(result.Items) == 0 {
+			break
+		}
+		page++
+	}
+
+	published := 0
+	for _, item := range toBackfill {
+		filename := extractFilename(item.FileURL)
+		if filename == "" || item.MeetingID == "" {
+			continue
+		}
+		msg := struct {
+			MeetingID string `json:"meeting_id"`
+			Room      string `json:"room"`
+			Filename  string `json:"filename"`
+		}{MeetingID: item.MeetingID, Room: item.Room, Filename: filename}
+		data, _ := json.Marshal(msg)
+		if err := s.nc.Publish("recording.thumbnail.extract", data); err != nil {
+			s.logger.Warn("nats publish recording.thumbnail.extract", "err", err, "meeting", item.MeetingID)
+			continue
+		}
+		published++
+	}
+	s.logger.Info("thumbnail backfill published", "by", sess.Email, "candidates", len(toBackfill), "published", published)
 	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
 }
 

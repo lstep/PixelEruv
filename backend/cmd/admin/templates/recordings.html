@@ -78,6 +78,9 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .gauge-details .gd-row.free-low .gd-val { color: var(--danger); font-weight: 600; }
 .del-all-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
 .del-all-btn:hover { background: var(--danger); color: #fff; }
+.backfill-form { display: inline; margin-left: 0.5rem; }
+.backfill-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
+.backfill-btn:hover { background: var(--accent); color: #fff; }
 .audio-pending { color: var(--muted); font-style: italic; font-size: 0.85rem; }
 .audio-failed { color: var(--danger); font-weight: 600; cursor: help; text-decoration: underline dotted; }
 
@@ -178,6 +181,9 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 {{if .Rows}}
 <div class="delete-all-bar">
   <button class="del-all-btn" onclick="confirmDeleteAll()">Delete all recordings</button>
+  <form class="backfill-form" method="POST" action="/admin/recordings/backfill-thumbnails" onsubmit="return confirm('Backfill thumbnails for all MP4 recordings missing one? This runs ffmpeg for each and may take a while.');">
+    <button type="submit" class="backfill-btn">Backfill thumbnails</button>
+  </form>
 </div>
 {{end}}
 

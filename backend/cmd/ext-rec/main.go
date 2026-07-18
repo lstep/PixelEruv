@@ -541,6 +541,29 @@ func main() {
 		logger.Info("thumbnail extracted", "meeting", meetingID, "file", jpgFilename, "midpoint", midpoint)
 	}
 
+	// --- recording.thumbnail.extract handler ---
+	// Triggered by the admin UI "Backfill thumbnails" button. Re-runs
+	// extractThumbnailAndUpdatePB for a single recording. Used to
+	// backfill recordings made before thumbnail extraction existed, or
+	// to regenerate a failed/missing thumbnail.
+	nc.Subscribe("recording.thumbnail.extract", func(m *nats.Msg) {
+		var req struct {
+			MeetingID string `json:"meeting_id"`
+			Room      string `json:"room"`
+			Filename  string `json:"filename"` // MP4 filename, e.g. "zone-room-123.mp4"
+		}
+		if err := json.Unmarshal(m.Data, &req); err != nil {
+			logger.Warn("recording.thumbnail.extract unmarshal", "err", err)
+			return
+		}
+		if req.MeetingID == "" || req.Filename == "" {
+			logger.Warn("recording.thumbnail.extract missing fields", "req", req)
+			return
+		}
+		logger.Info("thumbnail extract requested", "meeting", req.MeetingID, "file", req.Filename)
+		go extractThumbnailAndUpdatePB(req.MeetingID, req.Room, req.Filename)
+	})
+
 	// --- recording.start handler ---
 	nc.Subscribe("recording.start", func(m *nats.Msg) {
 		var req recordingStartMsg
