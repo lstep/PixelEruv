@@ -525,11 +525,6 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				s.logger.Warn("delete recording file", "err", err, "path", path)
 				// Non-fatal: the PB record is already deleted.
-			} else {
-				// Also try to delete the egress JSON sidecar if it exists.
-				egressJSON := s.cfg.RecordingsDir + "/" + strings.TrimSuffix(filename, ".mp4") + ".json"
-				// Egress names the sidecar by egress ID, not filename. Best-effort.
-				_ = os.Remove(egressJSON)
 			}
 		}
 	}
