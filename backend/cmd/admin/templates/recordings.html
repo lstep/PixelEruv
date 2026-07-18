@@ -45,11 +45,22 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .del-form { display: inline; }
 .del-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
 .del-btn:hover { background: var(--danger); color: #fff; }
+.play-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; text-decoration: none; margin-right: 0.3rem; }
+.play-btn:hover { background: var(--accent); color: #fff; }
 .empty { text-align: center; color: var(--muted); padding: 2rem; }
 .total { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
 .logout { margin-top: 2rem; }
 .logout a { color: var(--muted); text-decoration: none; }
 .version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
+
+/* Modal video player */
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 100; align-items: center; justify-content: center; }
+.modal.open { display: flex; }
+.modal-content { background: var(--surface); border-radius: 8px; padding: 1rem; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; gap: 0.5rem; }
+.modal-content video { max-width: 85vw; max-height: 75vh; border-radius: 4px; background: #000; }
+.modal-close { align-self: flex-end; background: transparent; color: var(--muted); border: none; font-size: 1.5rem; cursor: pointer; line-height: 1; }
+.modal-close:hover { color: var(--text); }
+.modal-title { color: var(--text); font-size: 0.9rem; }
 </style>
 </head>
 <body>
@@ -110,7 +121,10 @@ tr:hover td { background: rgba(78,154,241,0.05); }
       <td>{{.Duration}}</td>
       <td class="mono truncate" title="{{.Participants}}">{{.Participants}}</td>
       <td>
-        {{if .HasFile}}<a class="dl" href="{{.FileURL}}" download>Download</a>{{else}}&mdash;{{end}}
+        {{if .HasFile}}
+          <button class="play-btn" onclick="playRecording('{{.FileURL}}', '{{.Room}} - {{.StartTime}}')">Play</button>
+          <a class="dl" href="{{.FileURL}}" download>Download</a>
+        {{else}}&mdash;{{end}}
       </td>
       <td>
         <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 file.');">
@@ -129,5 +143,29 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 
 <div class="logout"><a href="/admin/logout">Logout</a></div>
 <p class="version">v{{.Version}}</p>
+
+<div class="modal" id="videoModal" onclick="if(event.target===this)closeRecording()">
+  <div class="modal-content">
+    <button class="modal-close" onclick="closeRecording()" aria-label="Close">&times;</button>
+    <p class="modal-title" id="videoTitle"></p>
+    <video id="videoPlayer" controls></video>
+  </div>
+</div>
+<script>
+function playRecording(url, title) {
+  var v = document.getElementById('videoPlayer');
+  v.src = url;
+  document.getElementById('videoTitle').textContent = title;
+  document.getElementById('videoModal').classList.add('open');
+  v.play();
+}
+function closeRecording() {
+  var v = document.getElementById('videoPlayer');
+  v.pause();
+  v.src = '';
+  document.getElementById('videoModal').classList.remove('open');
+}
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeRecording(); });
+</script>
 </body>
 </html>
