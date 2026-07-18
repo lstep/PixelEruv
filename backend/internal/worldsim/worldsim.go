@@ -791,6 +791,14 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe worldsim.zones.get: %w", err)
 	}
 
+	// Entity info request-reply handler: extensions query per-entity fields
+	// (is_admin, status, display_name, map_id) to authorize actions (e.g.
+	// ext-rec checks is_admin before starting a recording) without reading
+	// PocketBase directly.
+	if err := s.subscribeEntityInfo(); err != nil {
+		return fmt.Errorf("subscribe worldsim.entity_info: %w", err)
+	}
+
 	// Stats request-reply handler: the audit service queries this for the
 	// /world status page (per-map overview, players, extensions, zones).
 	if err := s.subscribeStats(); err != nil {
