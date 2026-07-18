@@ -52,6 +52,9 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .disk { font-size: 0.85rem; margin-bottom: 0.5rem; }
 .disk-low { color: var(--danger); font-weight: 600; }
 .disk-ok { color: var(--muted); }
+.delete-all-bar { margin-bottom: 1rem; }
+.del-all-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
+.del-all-btn:hover { background: var(--danger); color: #fff; }
 .logout { margin-top: 2rem; }
 .logout a { color: var(--muted); text-decoration: none; }
 .version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
@@ -98,6 +101,11 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 <p class="disk {{if lt .Disk.FreePercent 5.0}}disk-low{{else}}disk-ok{{end}}">
   Disk: {{.Disk.UsedHuman}} used of {{.Disk.TotalHuman}}, {{.Disk.FreeHuman}} free ({{printf "%.1f" .Disk.FreePercent}}%)
 </p>
+{{if .Rows}}
+<div class="delete-all-bar">
+  <button class="del-all-btn" onclick="confirmDeleteAll()">Delete all recordings</button>
+</div>
+{{end}}
 
 {{if .Rows}}
 <table>
@@ -172,6 +180,26 @@ function closeRecording() {
   document.getElementById('videoModal').classList.remove('open');
 }
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeRecording(); });
+
+function confirmDeleteAll() {
+  var ok = confirm('This will permanently delete ALL recordings (every PB record and every MP4 file on disk). This action is NOT reversible.\n\nType DELETE ALL in the next prompt to confirm.');
+  if (!ok) return;
+  var typed = prompt('Type DELETE ALL to confirm:');
+  if (typed !== 'DELETE ALL') {
+    alert('Confirmation did not match. Aborted.');
+    return;
+  }
+  var f = document.createElement('form');
+  f.method = 'POST';
+  f.action = '/admin/recordings/delete-all';
+  var i = document.createElement('input');
+  i.type = 'hidden';
+  i.name = 'confirm';
+  i.value = 'DELETE ALL';
+  f.appendChild(i);
+  document.body.appendChild(f);
+  f.submit();
+}
 </script>
 </body>
 </html>

@@ -57,6 +57,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/admin/auth-check", s.handleAuthCheck)
 	mux.HandleFunc("/admin/recordings", s.handleRecordings)
 	mux.HandleFunc("/admin/recordings/delete", s.handleRecordingsDelete)
+	mux.HandleFunc("/admin/recordings/delete-all", s.handleRecordingsDeleteAll)
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
@@ -586,6 +587,108 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.logger.Info("recording deleted", "id", id, "by", sess.Email, "file_url", fileURL)
+	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
+}
+
+// handleRecordingsDeleteAll wipes all recordings: every PB record and every
+// file in the recordings directory. The PB records are deleted via the
+// superadmin token; the files are removed by clearing the recordings dir.
+func (s *Server) handleRecordingsDeleteAll(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	confirm := r.FormValue("confirm")
+	if confirm != "DELETE ALL" {
+		http.Error(w, "confirmation missing or incorrect", http.StatusBadRequest)
+		return
+	}
+
+	token, err := s.pbAdminToken()
+	if err != nil {
+		s.logger.Warn("pb admin token", "err", err)
+		http.Error(w, "failed to authenticate to PocketBase", http.StatusBadGateway)
+		return
+	}
+
+	// Fetch all recording records (paginate in case of >100).
+	var allIDs []string
+	page := 1
+	for {
+		u := fmt.Sprintf("%s/collections/recordings/records?perPage=100&page=%d", s.cfg.PBApiURL, page)
+		req, _ := http.NewRequest("GET", u, nil)
+		req.Header.Set("Authorization", token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			s.logger.Warn("pb recordings list", "err", err, "page", page)
+			http.Error(w, "failed to list recordings", http.StatusBadGateway)
+			return
+		}
+		var result struct {
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+			TotalPages int `json:"totalPages"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil {
+			s.logger.Warn("pb recordings decode", "err", err)
+			http.Error(w, "failed to parse recordings", http.StatusBadGateway)
+			return
+		}
+		for _, it := range result.Items {
+			allIDs = append(allIDs, it.ID)
+		}
+		if page >= result.TotalPages || len(result.Items) == 0 {
+			break
+		}
+		page++
+	}
+
+	// Delete each PB record.
+	deleted := 0
+	for _, id := range allIDs {
+		u := fmt.Sprintf("%s/collections/recordings/records/%s", s.cfg.PBApiURL, id)
+		req, _ := http.NewRequest("DELETE", u, nil)
+		req.Header.Set("Authorization", token)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			s.logger.Warn("pb recording delete", "err", err, "id", id)
+			continue
+		}
+		resp.Body.Close()
+		if resp.StatusCode == 200 || resp.StatusCode == 204 {
+			deleted++
+		}
+	}
+
+	// Wipe the recordings directory contents (files only, keep the dir).
+	filesRemoved := 0
+	if s.cfg.RecordingsDir != "" {
+		entries, err := os.ReadDir(s.cfg.RecordingsDir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				if err := os.Remove(s.cfg.RecordingsDir + "/" + e.Name()); err != nil {
+					s.logger.Warn("delete recording file", "err", err, "file", e.Name())
+				} else {
+					filesRemoved++
+				}
+			}
+		} else {
+			s.logger.Warn("read recordings dir", "err", err)
+		}
+	}
+
+	s.logger.Info("all recordings deleted", "by", sess.Email, "records", deleted, "files", filesRemoved)
 	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
 }
 
