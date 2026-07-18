@@ -102,7 +102,7 @@ tr:hover td { background: rgba(78,154,241,0.05); }
   <a href="/admin/recordings">Clear</a>
 </form>
 
-<p class="total">{{.Total}} recording(s)</p>
+<p class="total">{{.Total}} recording(s) &mdash; {{.TotalSize}} on disk</p>
 <p class="disk {{if lt .Disk.FreePercent 5.0}}disk-low{{else}}disk-ok{{end}}">
   Disk: {{.Disk.UsedHuman}} used of {{.Disk.TotalHuman}}, {{.Disk.FreeHuman}} free ({{printf "%.1f" .Disk.FreePercent}}%)
 </p>
@@ -143,12 +143,12 @@ tr:hover td { background: rgba(78,154,241,0.05); }
       <td>
         {{if .HasFile}}
           <button class="play-btn" onclick="playRecording('{{.FileURL}}', '{{.Room}} - {{.StartTime}}')">Play</button>
-          <a class="dl" href="{{.FileURL}}" download>MP4</a>
+          <a class="dl" href="{{.FileURL}}" download title="{{if .FileSize}}{{.FileSize}}{{else}}file not on disk{{end}}">MP4</a>
         {{else}}&mdash;{{end}}
       </td>
       <td>
         {{if .HasAudio}}
-          <a class="dl" href="{{.AudioURL}}" download>MP3</a>
+          <a class="dl" href="{{.AudioURL}}" download title="{{if .AudioSize}}{{.AudioSize}}{{else}}file not on disk{{end}}">MP3</a>
         {{else if eq .AudioStatus "pending"}}
           <span class="audio-pending">extracting...</span>
         {{else if eq .AudioStatus "failed"}}

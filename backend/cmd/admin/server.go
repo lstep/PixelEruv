@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -364,8 +365,10 @@ type recordingRow struct {
 	Participants string
 	FileURL      string
 	HasFile      bool
+	FileSize     string // human-readable MP4 size; "" if file missing
 	AudioURL     string
 	HasAudio     bool
+	AudioSize    string // human-readable MP3 size; "" if file missing
 	AudioStatus  string // ""|pending|ok|failed
 	AudioError   string
 }
@@ -452,6 +455,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows := make([]recordingRow, 0, len(result.Items))
+	var totalBytes uint64
 	for _, item := range result.Items {
 		row := recordingRow{
 			ID:           item.ID,
@@ -472,6 +476,21 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			AudioError:   item.AudioError,
 		}
 		row.Duration = computeDuration(item.StartTime, item.EndTime)
+		// Stat MP4 and MP3 files on disk for per-row tooltips and the
+		// total-size statistic. Missing files (active recordings, failed
+		// extractions) contribute zero and produce an empty size string.
+		if fn := extractFilename(item.FileURL); fn != "" {
+			if info, err := os.Stat(filepath.Join(s.cfg.RecordingsDir, fn)); err == nil {
+				row.FileSize = humanBytes(uint64(info.Size()))
+				totalBytes += uint64(info.Size())
+			}
+		}
+		if fn := extractFilename(item.AudioURL); fn != "" {
+			if info, err := os.Stat(filepath.Join(s.cfg.RecordingsDir, fn)); err == nil {
+				row.AudioSize = humanBytes(uint64(info.Size()))
+				totalBytes += uint64(info.Size())
+			}
+		}
 		rows = append(rows, row)
 	}
 
@@ -481,6 +500,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 		"Version":   version.Version,
 		"Rows":      rows,
 		"Total":     result.TotalItems,
+		"TotalSize": humanBytes(totalBytes),
 		"Room":      room,
 		"Status":    status,
 		"Target":    target,
