@@ -105,7 +105,7 @@ func TestParseTiledMapJSON_InteractionProperties(t *testing.T) {
 						"properties": [
 							{"name": "entity_type", "type": "string", "value": "light"},
 							{"name": "owner_extension", "type": "string", "value": "props"},
-							{"name": "gid_on", "type": "int", "value": 401},
+							{"name": "gid_on", "type": "int", "value": 491},
 							{"name": "actions", "type": "string", "value": "toggle,activate,deactivate"},
 							{"name": "interactions", "type": "string", "value": "{\"toggle\":[{\"action\":\"toggle\",\"target_ids\":[\"light-1\"]}],\"activate\":[{\"action\":\"set_state\",\"payload\":\"on\",\"target_ids\":[\"light-1\"]}],\"deactivate\":[{\"action\":\"set_state\",\"payload\":\"off\",\"target_ids\":[\"light-1\"]}]}"}
 						]
@@ -159,8 +159,8 @@ func TestParseTiledMapJSON_InteractionProperties(t *testing.T) {
 	if light.ID != "light-1" {
 		t.Errorf("light ID = %q, want light-1", light.ID)
 	}
-	if light.GidOn != 401 {
-		t.Errorf("light GidOn = %d, want 401", light.GidOn)
+	if light.GidOn != 491 {
+		t.Errorf("light GidOn = %d, want 491", light.GidOn)
 	}
 	if light.OnInteractAction != "" {
 		t.Errorf("light OnInteractAction = %q, want empty (popup mode)", light.OnInteractAction)

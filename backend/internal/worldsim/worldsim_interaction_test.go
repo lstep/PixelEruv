@@ -387,9 +387,9 @@ func TestApplyActionReply_AppearanceUpdates(t *testing.T) {
 	}
 	s.entities["light-1"] = &Entity{
 		ID:       "light-1",
-		Gid:      400,
-		GidOff:   400,
-		GidOn:    401,
+		Gid:      508,
+		GidOff:   508,
+		GidOn:    491,
 		State:    "off",
 	}
 
@@ -401,7 +401,7 @@ func TestApplyActionReply_AppearanceUpdates(t *testing.T) {
 	resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 		EntityID string `json:"entity_id"`
 		Gid      uint32 `json:"gid"`
-	}{EntityID: "light-1", Gid: 401})
+	}{EntityID: "light-1", Gid: 491})
 
 	s.applyActionReply(resp)
 
@@ -409,8 +409,8 @@ func TestApplyActionReply_AppearanceUpdates(t *testing.T) {
 	if e.State != "on" || !e.dirtyState {
 		t.Errorf("state = %q dirty=%v, want on/true", e.State, e.dirtyState)
 	}
-	if e.Gid != 401 || !e.dirtyAppearance {
-		t.Errorf("Gid = %d dirty=%v, want 401/true", e.Gid, e.dirtyAppearance)
+	if e.Gid != 491 || !e.dirtyAppearance {
+		t.Errorf("Gid = %d dirty=%v, want 491/true", e.Gid, e.dirtyAppearance)
 	}
 }
 
@@ -424,9 +424,9 @@ func TestApplyActionReply_GidOffBug(t *testing.T) {
 	}
 	s.entities["light-1"] = &Entity{
 		ID:       "light-1",
-		Gid:      401, // currently "on"
-		GidOff:   400,
-		GidOn:    401,
+		Gid:      491, // currently "on"
+		GidOff:   508,
+		GidOn:    491,
 		State:    "on",
 	}
 
@@ -439,13 +439,13 @@ func TestApplyActionReply_GidOffBug(t *testing.T) {
 	resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 		EntityID string `json:"entity_id"`
 		Gid      uint32 `json:"gid"`
-	}{EntityID: "light-1", Gid: 400}) // GidOff
+	}{EntityID: "light-1", Gid: 508}) // GidOff
 
 	s.applyActionReply(resp)
 
 	e := s.entities["light-1"]
-	if e.Gid != 400 {
-		t.Errorf("Gid = %d, want 400 (GidOff). If this is 401, the deactivate didn't reset to the off sprite.", e.Gid)
+	if e.Gid != 508 {
+		t.Errorf("Gid = %d, want 508 (GidOff). If this is 491, the deactivate didn't reset to the off sprite.", e.Gid)
 	}
 	if e.State != "off" {
 		t.Errorf("State = %q, want off", e.State)
@@ -518,9 +518,9 @@ func TestSwitchToLights_Scenario(t *testing.T) {
 		EntityType:     "light",
 		OwnerExtension: "props",
 		State:          "off",
-		Gid:            400,
-		GidOff:         400,
-		GidOn:          401,
+		Gid:            508,
+		GidOff:         508,
+		GidOn:          491,
 	}
 
 	// Light-2 at (12, 12) — also far away.
@@ -530,9 +530,9 @@ func TestSwitchToLights_Scenario(t *testing.T) {
 		EntityType:     "light",
 		OwnerExtension: "props",
 		State:          "off",
-		Gid:            400,
-		GidOff:         400,
-		GidOn:          401,
+		Gid:            508,
+		GidOff:         508,
+		GidOn:          491,
 	}
 
 	// Subscribe to the client's replication subject to capture the
@@ -640,9 +640,9 @@ func TestSwitchToLights_ToggleBack(t *testing.T) {
 		EntityType:     "light",
 		OwnerExtension: "props",
 		State:          "on",
-		Gid:            401, // currently on
-		GidOff:         400,
-		GidOn:          401,
+		Gid:            491, // currently on
+		GidOff:         508,
+		GidOn:          491,
 		OnInteractAction: "toggle",
 		Interactions: map[string][]Effect{
 			"toggle": {{Action: "toggle", TargetIDs: []string{"light-1"}}},
@@ -658,7 +658,7 @@ func TestSwitchToLights_ToggleBack(t *testing.T) {
 	for time.Now().Before(deadline) {
 		sim.mu.Lock()
 		e := sim.entities["light-1"]
-		done := e.State == "off" && e.Gid == 400
+		done := e.State == "off" && e.Gid == 508
 		sim.mu.Unlock()
 		if done {
 			break
@@ -672,8 +672,8 @@ func TestSwitchToLights_ToggleBack(t *testing.T) {
 	if e.State != "off" {
 		t.Errorf("State = %q, want off (toggled from on)", e.State)
 	}
-	if e.Gid != 400 {
-		t.Errorf("Gid = %d, want 400 (GidOff). Got GidOn=401 — the GidOff fix is not working.", e.Gid)
+	if e.Gid != 508 {
+		t.Errorf("Gid = %d, want 508 (GidOff). Got GidOn=491 — the GidOff fix is not working.", e.Gid)
 	}
 }
 
@@ -706,9 +706,9 @@ func TestPopupMode_AvailableActions(t *testing.T) {
 		EntityType:     "light",
 		OwnerExtension: "props",
 		State:          "off",
-		Gid:            400,
-		GidOff:         400,
-		GidOn:          401,
+		Gid:            508,
+		GidOff:         508,
+		GidOn:          491,
 		Actions:        "toggle,activate,deactivate",
 		Interactions: map[string][]Effect{
 			"toggle":      {{Action: "toggle", TargetIDs: []string{"light-1"}}},
@@ -769,8 +769,8 @@ func TestPopupMode_AvailableActions(t *testing.T) {
 	if e.State != "off" {
 		t.Errorf("State = %q, want off (popup mode should not execute effects)", e.State)
 	}
-	if e.Gid != 400 {
-		t.Errorf("Gid = %d, want 400 (no appearance change in popup mode)", e.Gid)
+	if e.Gid != 508 {
+		t.Errorf("Gid = %d, want 508 (no appearance change in popup mode)", e.Gid)
 	}
 }
 
@@ -799,9 +799,9 @@ func TestActionExecute_PopupChoice(t *testing.T) {
 		EntityType:     "light",
 		OwnerExtension: "props",
 		State:          "off",
-		Gid:            400,
-		GidOff:         400,
-		GidOn:          401,
+		Gid:            508,
+		GidOff:         508,
+		GidOn:          491,
 		Actions:        "toggle,activate,deactivate",
 		Interactions: map[string][]Effect{
 			"toggle":      {{Action: "toggle", TargetIDs: []string{"light-1"}}},
@@ -825,7 +825,7 @@ func TestActionExecute_PopupChoice(t *testing.T) {
 	for time.Now().Before(deadline) {
 		sim.mu.Lock()
 		e := sim.entities["light-1"]
-		done := e.State == "on" && e.Gid == 401
+		done := e.State == "on" && e.Gid == 491
 		sim.mu.Unlock()
 		if done {
 			break
@@ -839,7 +839,7 @@ func TestActionExecute_PopupChoice(t *testing.T) {
 	if e.State != "on" {
 		t.Errorf("State = %q, want on (activate should set state to on)", e.State)
 	}
-	if e.Gid != 401 {
-		t.Errorf("Gid = %d, want 401 (GidOn for activate)", e.Gid)
+	if e.Gid != 491 {
+		t.Errorf("Gid = %d, want 491 (GidOn for activate)", e.Gid)
 	}
 }
