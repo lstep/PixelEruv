@@ -793,4 +793,4 @@ No backward compat: the old `state === "on"` glow path is removed. Existing maps
 
 ## Roadmap (future features)
 
-See `docs/ROADMAP.md`.
+See `ROADMAP.md`.
