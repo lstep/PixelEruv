@@ -197,6 +197,7 @@ type Simulator struct {
 	mapStore      *MapStore
 	userStore     *UserStore
 	banStore      *BanStore
+	recordingStore *RecordingStore
 	spriteStore   *SpriteStore
 	extMgr        *ExtensionManager
 	tickHz        int
@@ -264,6 +265,7 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	mapStore := NewMapStore(app)
 	userStore := NewUserStore(app)
 	banStore := NewBanStore(app)
+	recordingStore := NewRecordingStore(app)
 	spriteStore := NewSpriteStore(app)
 
 	// Auto-seed the bundled "main" map into PocketBase on first run (when no
@@ -372,6 +374,7 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 		mapStore:         mapStore,
 		userStore:        userStore,
 		banStore:         banStore,
+		recordingStore:   recordingStore,
 		spriteStore:      spriteStore,
 		extMgr:           NewExtensionManager(logger),
 		tickHz:           tickHz,
@@ -797,6 +800,13 @@ func (s *Simulator) subscribe() error {
 	// PocketBase directly.
 	if err := s.subscribeEntityInfo(); err != nil {
 		return fmt.Errorf("subscribe worldsim.entity_info: %w", err)
+	}
+
+	// Recording store request-reply handlers: ext-rec creates/updates rows in
+	// the recordings PocketBase collection via these subjects (extensions don't
+	// have direct PocketBase access).
+	if err := s.subscribeRecordingStore(); err != nil {
+		return fmt.Errorf("subscribe worldsim.recording: %w", err)
 	}
 
 	// Stats request-reply handler: the audit service queries this for the
