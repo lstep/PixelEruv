@@ -277,10 +277,13 @@ export class TopMenu {
     }
 
     // Populate device lists when the dropdown opens (labels may have
-    // become available after the first permission grant).
+    // become available after the first permission grant). After rebuilding
+    // the options, restore the currently-selected device so the <select>
+    // doesn't silently reset to the first option.
     const refreshDevices = async () => {
       if (!this.avClient) return;
       const mics = await this.avClient.getDevices("audioinput");
+      const selectedMic = this.avClient.getSelectedDevice("audioinput");
       micSelect.innerHTML = "";
       for (const d of mics) {
         const opt = document.createElement("option");
@@ -288,7 +291,11 @@ export class TopMenu {
         opt.textContent = d.label;
         micSelect.appendChild(opt);
       }
+      if (selectedMic && [...micSelect.options].some((o) => o.value === selectedMic)) {
+        micSelect.value = selectedMic;
+      }
       const cams = await this.avClient.getDevices("videoinput");
+      const selectedCam = this.avClient.getSelectedDevice("videoinput");
       camSelect.innerHTML = "";
       for (const d of cams) {
         const opt = document.createElement("option");
@@ -296,14 +303,21 @@ export class TopMenu {
         opt.textContent = d.label;
         camSelect.appendChild(opt);
       }
+      if (selectedCam && [...camSelect.options].some((o) => o.value === selectedCam)) {
+        camSelect.value = selectedCam;
+      }
       if (speakerSelect) {
         const speakers = await this.avClient.getDevices("audiooutput");
+        const selectedSpeaker = this.avClient.getSelectedDevice("audiooutput");
         speakerSelect.innerHTML = "";
         for (const d of speakers) {
           const opt = document.createElement("option");
           opt.value = d.deviceId;
           opt.textContent = d.label;
           speakerSelect.appendChild(opt);
+        }
+        if (selectedSpeaker && [...speakerSelect.options].some((o) => o.value === selectedSpeaker)) {
+          speakerSelect.value = selectedSpeaker;
         }
       }
     };

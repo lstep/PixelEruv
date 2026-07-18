@@ -412,6 +412,15 @@ export class AvClient {
     }
   }
 
+  // getSelectedDevice returns the deviceId currently chosen for the given
+  // kind, or null if none has been explicitly selected. Used by the UI to
+  // restore a <select>'s value after rebuilding its options.
+  getSelectedDevice(kind: "audioinput" | "videoinput" | "audiooutput"): string | null {
+    if (kind === "audioinput") return this.selectedMicId;
+    if (kind === "videoinput") return this.selectedCamId;
+    return this.selectedSpeakerId;
+  }
+
   // supportsAudioOutputSelection checks whether the browser supports choosing
   // an audio output device (setSinkId). Safari and most mobile browsers don't.
   // Mirrors LiveKit's supportsAudioOutputSelection() without eagerly importing
