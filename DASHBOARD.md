@@ -793,6 +793,4 @@ No backward compat: the old `state === "on"` glow path is removed. Existing maps
 
 ## Roadmap (future features)
 
-### AI meeting transcription
-
-Plug an AI service to read a recording's MP4 and produce a transcript, displayed alongside the video on the recordings management page (`/admin/recordings`). Likely involves a background worker that picks up completed recordings, calls a speech-to-text API (e.g. Whisper), stores the transcript in a new field on the `recordings` PB collection, and renders it next to the `<video>` element in the modal player.
+See `docs/ROADMAP.md`.
