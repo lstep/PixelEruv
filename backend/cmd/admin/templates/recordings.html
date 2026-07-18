@@ -80,6 +80,18 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .del-all-btn:hover { background: var(--danger); color: #fff; }
 .audio-pending { color: var(--muted); font-style: italic; font-size: 0.85rem; }
 .audio-failed { color: var(--danger); font-weight: 600; cursor: help; text-decoration: underline dotted; }
+
+/* Thumbnail cell: small preview that enlarges on hover. The full-size
+   image is rendered using the same src (no separate file); CSS scales
+   it up on hover via a positioned overlay. */
+.thumb-cell { width: 80px; }
+.thumb { width: 64px; height: 36px; object-fit: cover; border-radius: 3px; border: 1px solid var(--surface2); cursor: zoom-in; display: block; }
+.thumb:hover { position: relative; }
+/* Hover preview: a fixed-position overlay centered in the viewport so
+   the full frame is visible regardless of row scroll position. Pure
+   CSS — no JS. The .thumb-cell:hover .thumb-preview rule shows it. */
+.thumb-preview { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 80vw; max-height: 80vh; width: auto; height: auto; border-radius: 6px; border: 1px solid var(--surface2); box-shadow: 0 8px 24px rgba(0,0,0,0.6); z-index: 200; pointer-events: none; background: #000; }
+.thumb-cell:hover .thumb-preview { display: block; }
 .logout { margin-top: 2rem; }
 .logout a { color: var(--muted); text-decoration: none; }
 .version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
@@ -173,6 +185,7 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 <table>
   <thead>
     <tr>
+      <th>Thumb</th>
       <th>Meeting ID</th>
       <th>Room</th>
       <th>Target</th>
@@ -189,6 +202,12 @@ tr:hover td { background: rgba(78,154,241,0.05); }
   <tbody>
   {{range .Rows}}
     <tr>
+      <td class="thumb-cell">
+        {{if .HasThumbnail}}
+          <img class="thumb" src="{{.ThumbnailURL}}" alt="thumbnail" loading="lazy">
+          <img class="thumb-preview" src="{{.ThumbnailURL}}" alt="full-size frame">
+        {{else}}&mdash;{{end}}
+      </td>
       <td class="mono truncate" title="{{.MeetingID}}">{{.MeetingID}}</td>
       <td>{{.Room}}</td>
       <td>{{.Target}}</td>
@@ -220,10 +239,11 @@ tr:hover td { background: rgba(78,154,241,0.05); }
             <button type="submit" class="stop-btn">Stop</button>
           </form>
         {{end}}
-        <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 and MP3 files.');">
+        <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4, MP3, and JPG files.');">
           <input type="hidden" name="id" value="{{.ID}}">
           <input type="hidden" name="file_url" value="{{.FileURL}}">
           <input type="hidden" name="audio_url" value="{{.AudioURL}}">
+          <input type="hidden" name="thumbnail_url" value="{{.ThumbnailURL}}">
           <button type="submit" class="del-btn">Delete</button>
         </form>
       </td>

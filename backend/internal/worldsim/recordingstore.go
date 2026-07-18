@@ -84,13 +84,14 @@ func (s *RecordingStore) Create(msg recordingCreateMsg) (string, error) {
 
 // recordingUpdateMsg is the request payload for worldsim.recording.update.
 type recordingUpdateMsg struct {
-	MeetingID   string `json:"meeting_id"` // identifies the row to update
-	EndTime     int64  `json:"end_time,omitempty"`
-	Status      string `json:"status,omitempty"`
-	FileURL     string `json:"file_url,omitempty"`
-	AudioURL    string `json:"audio_url,omitempty"`
-	AudioStatus string `json:"audio_status,omitempty"` // pending|ok|failed
-	AudioError  string `json:"audio_error,omitempty"`
+	MeetingID     string `json:"meeting_id"` // identifies the row to update
+	EndTime       int64  `json:"end_time,omitempty"`
+	Status        string `json:"status,omitempty"`
+	FileURL       string `json:"file_url,omitempty"`
+	AudioURL      string `json:"audio_url,omitempty"`
+	AudioStatus   string `json:"audio_status,omitempty"` // pending|ok|failed
+	AudioError    string `json:"audio_error,omitempty"`
+	ThumbnailURL  string `json:"thumbnail_url,omitempty"`
 }
 
 // recordingUpdateReply is the reply for worldsim.recording.update.
@@ -126,6 +127,9 @@ func (s *RecordingStore) Update(msg recordingUpdateMsg) error {
 	}
 	if msg.AudioURL != "" {
 		record.Set("audio_url", msg.AudioURL)
+	}
+	if msg.ThumbnailURL != "" {
+		record.Set("thumbnail_url", msg.ThumbnailURL)
 	}
 	if msg.AudioStatus != "" {
 		record.Set("audio_status", msg.AudioStatus)

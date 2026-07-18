@@ -28,6 +28,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -105,13 +106,14 @@ type recordingCreateReply struct {
 
 // recordingUpdateMsg is the request payload for worldsim.recording.update.
 type recordingUpdateMsg struct {
-	MeetingID   string `json:"meeting_id"`
-	EndTime     int64  `json:"end_time,omitempty"`
-	Status      string `json:"status,omitempty"`
-	FileURL     string `json:"file_url,omitempty"`
-	AudioURL    string `json:"audio_url,omitempty"`
-	AudioStatus string `json:"audio_status,omitempty"`
-	AudioError  string `json:"audio_error,omitempty"`
+	MeetingID    string `json:"meeting_id"`
+	EndTime      int64  `json:"end_time,omitempty"`
+	Status       string `json:"status,omitempty"`
+	FileURL      string `json:"file_url,omitempty"`
+	AudioURL     string `json:"audio_url,omitempty"`
+	AudioStatus  string `json:"audio_status,omitempty"`
+	AudioError   string `json:"audio_error,omitempty"`
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
 }
 
 type recordingUpdateReply struct {
@@ -443,6 +445,102 @@ func main() {
 		logger.Info("audio extracted", "meeting", meetingID, "file", mp3Filename)
 	}
 
+	// extractThumbnailAndUpdatePB polls for the MP4 to stabilize, uses
+	// ffprobe to get the duration, then ffmpeg to extract a single JPG
+	// frame at the midpoint. Updates the PB row with thumbnail_url.
+	// Failures are logged but don't set a status field — the thumbnail
+	// is a cosmetic enhancement, not a primary artifact like the MP3.
+	// Reuses audioSem so the total concurrent ffmpeg/ffprobe count is
+	// capped at 2.
+	extractThumbnailAndUpdatePB := func(meetingID, room, mp4Filename string) {
+		audioSem <- struct{}{}
+		defer func() { <-audioSem }()
+
+		mp4Path := filepath.Join(recordingsDir, mp4Filename)
+		// Poll up to 60s for the MP4 to appear and stop growing. The
+		// audio extraction goroutine may be polling in parallel; both
+		// will see the same stabilized file.
+		var lastSize int64
+		stableCount := 0
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			info, err := os.Stat(mp4Path)
+			if err == nil {
+				if info.Size() == lastSize && info.Size() > 0 {
+					stableCount++
+					if stableCount >= 2 {
+						break
+					}
+				} else {
+					stableCount = 0
+				}
+				lastSize = info.Size()
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if _, err := os.Stat(mp4Path); err != nil {
+			logger.Warn("thumbnail: mp4 not found after 60s", "meeting", meetingID, "err", err)
+			return
+		}
+
+		// ffprobe to get duration in seconds. -show_entries format=duration
+		// prints "duration=123.45\n".
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer probeCancel()
+		probe := exec.CommandContext(probeCtx, "ffprobe",
+			"-v", "error",
+			"-show_entries", "format=duration",
+			"-of", "default=noprint_wrappers=1:nokey=1",
+			mp4Path,
+		)
+		probeOut, err := probe.Output()
+		if err != nil {
+			logger.Warn("thumbnail: ffprobe failed", "meeting", meetingID, "err", err)
+			return
+		}
+		durationSec, err := strconv.ParseFloat(strings.TrimSpace(string(probeOut)), 64)
+		if err != nil || durationSec <= 0 {
+			logger.Warn("thumbnail: bad duration", "meeting", meetingID, "raw", strings.TrimSpace(string(probeOut)))
+			return
+		}
+		midpoint := durationSec / 2
+
+		// ffmpeg -ss <t> -i input.mp4 -frames:v 1 -q:v 2 output.jpg
+		// -ss before -i is fast (seeks via demuxer). -q:v 2 is high
+		// quality JPEG. 30s timeout: a single frame extract is near-
+		// instantaneous once the seek lands; 30s covers slow disk.
+		jpgFilename := strings.TrimSuffix(mp4Filename, ".mp4") + ".jpg"
+		jpgPath := filepath.Join(recordingsDir, jpgFilename)
+		ffmpegCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ffmpegCtx, "ffmpeg",
+			"-y",
+			"-ss", fmt.Sprintf("%.2f", midpoint),
+			"-i", mp4Path,
+			"-frames:v", "1",
+			"-q:v", "2",
+			jpgPath,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			reason := "ffmpeg failed"
+			if ffmpegCtx.Err() == context.DeadlineExceeded {
+				reason = "ffmpeg timed out after 30s"
+			}
+			logger.Warn("thumbnail: ffmpeg failed", "meeting", meetingID, "reason", reason, "out", string(out))
+			return
+		}
+
+		thumbURL := fmt.Sprintf("https://%s/recordings/%s", publicHost, jpgFilename)
+		if err := updateRecordingRow(recordingUpdateMsg{
+			MeetingID:    meetingID,
+			ThumbnailURL: thumbURL,
+		}); err != nil {
+			logger.Warn("thumbnail: pb update failed", "meeting", meetingID, "err", err)
+			return
+		}
+		logger.Info("thumbnail extracted", "meeting", meetingID, "file", jpgFilename, "midpoint", midpoint)
+	}
+
 	// --- recording.start handler ---
 	nc.Subscribe("recording.start", func(m *nats.Msg) {
 		var req recordingStartMsg
@@ -642,6 +740,7 @@ func main() {
 				logger.Warn("audio extraction: set pending status", "err", err, "meeting", rec.MeetingID)
 			}
 			go extractAudioAndUpdatePB(rec.MeetingID, rec.Room, rec.Filename)
+			go extractThumbnailAndUpdatePB(rec.MeetingID, rec.Room, rec.Filename)
 		}
 	}
 

@@ -353,25 +353,27 @@ func (s *Server) pbAdminToken() (string, error) {
 
 // recordingRow is one row in the recordings table.
 type recordingRow struct {
-	ID           string
-	MeetingID    string
-	Room         string
-	ZoneID       string
-	Target       string
-	Status       string
-	StartedBy    string
-	StartTime    string
-	EndTime      string
-	Duration     string
-	Participants string
-	FileURL      string
-	HasFile      bool
-	FileSize     string // human-readable MP4 size; "" if file missing
-	AudioURL     string
-	HasAudio     bool
-	AudioSize    string // human-readable MP3 size; "" if file missing
-	AudioStatus  string // ""|pending|ok|failed
-	AudioError   string
+	ID            string
+	MeetingID     string
+	Room          string
+	ZoneID        string
+	Target        string
+	Status        string
+	StartedBy     string
+	StartTime     string
+	EndTime       string
+	Duration      string
+	Participants  string
+	FileURL       string
+	HasFile       bool
+	FileSize      string // human-readable MP4 size; "" if file missing
+	AudioURL      string
+	HasAudio      bool
+	AudioSize     string // human-readable MP3 size; "" if file missing
+	AudioStatus   string // ""|pending|ok|failed
+	AudioError    string
+	ThumbnailURL  string
+	HasThumbnail  bool
 }
 
 // handleRecordings renders the recordings management page with optional
@@ -446,6 +448,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			AudioURL     string   `json:"audio_url"`
 			AudioStatus  string   `json:"audio_status"`
 			AudioError   string   `json:"audio_error"`
+			ThumbnailURL string   `json:"thumbnail_url"`
 		} `json:"items"`
 		TotalItems int `json:"totalItems"`
 	}
@@ -475,6 +478,8 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			HasAudio:     item.AudioURL != "",
 			AudioStatus:  item.AudioStatus,
 			AudioError:   item.AudioError,
+			ThumbnailURL: item.ThumbnailURL,
+			HasThumbnail: item.ThumbnailURL != "",
 		}
 		row.Duration = computeDuration(item.StartTime, item.EndTime)
 		// Stat MP4 and MP3 files on disk for per-row tooltips and the
@@ -605,6 +610,7 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 	id := r.FormValue("id")
 	fileURL := r.FormValue("file_url")
 	audioURL := r.FormValue("audio_url")
+	thumbnailURL := r.FormValue("thumbnail_url")
 	if id == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
@@ -636,7 +642,7 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 
 	// Delete files from disk if URLs point to local /recordings/ paths.
 	if s.cfg.RecordingsDir != "" {
-		for _, u := range []string{fileURL, audioURL} {
+		for _, u := range []string{fileURL, audioURL, thumbnailURL} {
 			if u == "" {
 				continue
 			}
@@ -650,7 +656,7 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	s.logger.Info("recording deleted", "id", id, "by", sess.Email, "file_url", fileURL, "audio_url", audioURL)
+	s.logger.Info("recording deleted", "id", id, "by", sess.Email, "file_url", fileURL, "audio_url", audioURL, "thumbnail_url", thumbnailURL)
 	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
 }
 
