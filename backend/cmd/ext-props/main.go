@@ -4,9 +4,9 @@
 // registers for "key:E" and "action:execute" inputs, reads the
 // entity's interactions data from the dispatch payload, and processes
 // the effects it knows how to handle (toggle, set_state, activate,
-// deactivate, turn_on, turn_off). Effects it doesn't know (toggle_wall,
-// send_notification, etc.) are silently skipped — those are handled by
-// other extensions.
+// deactivate, turn_on, turn_off, set_light, toggle_light). Effects it
+// doesn't know (toggle_wall, send_notification, etc.) are silently
+// skipped — those are handled by other extensions.
 //
 // The extension is a generic interpreter: the entity data declares
 // which effects to fire, the extension code decides what each action
@@ -85,6 +85,9 @@ type adjacentEntityInfo struct {
 	OnInteractAction string              `json:"on_interact_action,omitempty"`
 	Actions          string              `json:"actions,omitempty"`
 	Interactions     map[string][]Effect `json:"interactions,omitempty"`
+	LightIntensity   uint32              `json:"light_intensity,omitempty"`
+	LightColor       uint32              `json:"light_color,omitempty"`
+	LightRadius      float32             `json:"light_radius,omitempty"`
 }
 
 type actionDispatchMsg struct {
@@ -113,6 +116,12 @@ type actionReplyMsg struct {
 		EntityID string `json:"entity_id"`
 		Gid      uint32 `json:"gid"`
 	} `json:"appearance_updates,omitempty"`
+	LightUpdates []struct {
+		EntityID  string  `json:"entity_id"`
+		Intensity uint32  `json:"intensity"`
+		Color     uint32  `json:"color,omitempty"`
+		Radius    float32 `json:"radius,omitempty"`
+	} `json:"light_updates,omitempty"`
 	Animations []struct {
 		EntityID    string `json:"entity_id"`
 		AnimationID uint32 `json:"animation_id"`
@@ -170,7 +179,8 @@ func main() {
 	// extension.props.action — dispatched for "key:E" and "action:execute".
 	// The handler reads the entity's interactions data and processes the
 	// effects it knows (toggle, set_state, activate, deactivate, turn_on,
-	// turn_off). Unknown action verbs are silently skipped.
+	// turn_off, set_light, toggle_light). Unknown action verbs are silently
+	// skipped.
 	if _, err := nc.Subscribe("extension."+extID+".action", func(m *nats.Msg) {
 		var dispatch actionDispatchMsg
 		if err := json.Unmarshal(m.Data, &dispatch); err != nil {
@@ -440,6 +450,62 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 					Gid      uint32 `json:"gid"`
 				}{EntityID: tid, Gid: target.Gid})
 			}
+		}
+
+	case "set_light":
+		// Payload is the target intensity as a string number ("0"-"100").
+		// color/radius are preserved from the entity's current values
+		// (worldsim treats 0 as "unchanged" when intensity is non-zero).
+		for _, tid := range fx.TargetIDs {
+			if tid == "" {
+				continue
+			}
+			var intensity uint32
+			_, _ = fmt.Sscanf(fx.Payload, "%d", &intensity)
+			if intensity > 100 {
+				intensity = 100
+			}
+			resp.Handled = true
+			resp.LightUpdates = append(resp.LightUpdates, struct {
+				EntityID  string  `json:"entity_id"`
+				Intensity uint32  `json:"intensity"`
+				Color     uint32  `json:"color,omitempty"`
+				Radius    float32 `json:"radius,omitempty"`
+			}{EntityID: tid, Intensity: intensity})
+		}
+
+	case "toggle_light":
+		// Flips between 0 and a stored "on" intensity. If the target's
+		// current intensity is > 0, turn off (0); otherwise turn on to
+		// a default of 80 (or the value in Payload if provided).
+		for _, tid := range fx.TargetIDs {
+			if tid == "" {
+				continue
+			}
+			target := findEntityInDispatch(dispatch, tid)
+			currentIntensity := uint32(0)
+			if target != nil {
+				currentIntensity = target.LightIntensity
+			}
+			var newIntensity uint32
+			if currentIntensity > 0 {
+				newIntensity = 0
+			} else {
+				newIntensity = 80
+				if fx.Payload != "" {
+					_, _ = fmt.Sscanf(fx.Payload, "%d", &newIntensity)
+					if newIntensity > 100 {
+						newIntensity = 100
+					}
+				}
+			}
+			resp.Handled = true
+			resp.LightUpdates = append(resp.LightUpdates, struct {
+				EntityID  string  `json:"entity_id"`
+				Intensity uint32  `json:"intensity"`
+				Color     uint32  `json:"color,omitempty"`
+				Radius    float32 `json:"radius,omitempty"`
+			}{EntityID: tid, Intensity: newIntensity})
 		}
 
 	// "toggle_wall", "send_notification", etc. -> not handled by ext-props

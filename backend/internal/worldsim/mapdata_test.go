@@ -183,3 +183,118 @@ func TestParseTiledMapJSON_InteractionProperties(t *testing.T) {
 		t.Errorf("activate payload = %q, want on", activateEffects[0].Payload)
 	}
 }
+
+// TestParseTiledMapJSON_LightAttributes verifies that the light_intensity,
+// light_color, and light_radius Tiled properties are parsed into PropEntity
+// fields. light_color accepts "#RRGGBB" and "RRGGBB" forms; malformed values
+// parse to 0 (caller treats as default).
+func TestParseTiledMapJSON_LightAttributes(t *testing.T) {
+	body := []byte(`{
+		"width": 10,
+		"height": 10,
+		"tilewidth": 32,
+		"tileheight": 32,
+		"layers": [
+			{
+				"name": "Entities",
+				"type": "objectgroup",
+				"objects": [
+					{
+						"name": "light-a",
+						"x": 64,
+						"y": 64,
+						"width": 32,
+						"height": 32,
+						"properties": [
+							{"name": "light_intensity", "type": "int", "value": 80},
+							{"name": "light_color", "type": "string", "value": "#ffe6b4"},
+							{"name": "light_radius", "type": "float", "value": 4.5}
+						]
+					},
+					{
+						"name": "light-b",
+						"x": 128,
+						"y": 128,
+						"width": 32,
+						"height": 32,
+						"properties": [
+							{"name": "light_intensity", "type": "int", "value": 50},
+							{"name": "light_color", "type": "string", "value": "ff0000"}
+						]
+					},
+					{
+						"name": "light-c",
+						"x": 192,
+						"y": 192,
+						"width": 32,
+						"height": 32,
+						"properties": [
+							{"name": "light_color", "type": "string", "value": "not-a-color"}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	md, err := parseTiledMapJSON(body)
+	if err != nil {
+		t.Fatalf("parseTiledMapJSON: %v", err)
+	}
+	if len(md.Entities) != 3 {
+		t.Fatalf("expected 3 entities, got %d", len(md.Entities))
+	}
+
+	a := md.Entities[0]
+	if a.LightIntensity != 80 {
+		t.Errorf("light-a intensity = %d, want 80", a.LightIntensity)
+	}
+	if a.LightColor != 0xffe6b4 {
+		t.Errorf("light-a color = %#x, want 0xffe6b4", a.LightColor)
+	}
+	if a.LightRadius != 4.5 {
+		t.Errorf("light-a radius = %f, want 4.5", a.LightRadius)
+	}
+
+	b := md.Entities[1]
+	if b.LightIntensity != 50 {
+		t.Errorf("light-b intensity = %d, want 50", b.LightIntensity)
+	}
+	if b.LightColor != 0xff0000 {
+		t.Errorf("light-b color = %#x, want 0xff0000", b.LightColor)
+	}
+	if b.LightRadius != 0 {
+		t.Errorf("light-b radius = %f, want 0 (unset)", b.LightRadius)
+	}
+
+	c := md.Entities[2]
+	if c.LightIntensity != 0 {
+		t.Errorf("light-c intensity = %d, want 0 (unset)", c.LightIntensity)
+	}
+	if c.LightColor != 0 {
+		t.Errorf("light-c color = %#x, want 0 (malformed)", c.LightColor)
+	}
+}
+
+// TestParseHexColor tests the parseHexColor helper directly.
+func TestParseHexColor(t *testing.T) {
+	cases := []struct {
+		in   string
+		want uint32
+	}{
+		{"#ffe6b4", 0xffe6b4},
+		{"ffe6b4", 0xffe6b4},
+		{"#FF0000", 0xff0000},
+		{"000000", 0x000000},
+		{"#fff", 0},        // too short
+		{"not-a-color", 0}, // non-hex
+		{"", 0},            // empty
+		{"#gggggg", 0},     // non-hex chars
+	}
+	for _, c := range cases {
+		got := parseHexColor(c.in)
+		if got != c.want {
+			t.Errorf("parseHexColor(%q) = %#x, want %#x", c.in, got, c.want)
+		}
+	}
+}

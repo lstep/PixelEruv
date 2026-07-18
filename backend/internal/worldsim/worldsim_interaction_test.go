@@ -452,6 +452,69 @@ func TestApplyActionReply_GidOffBug(t *testing.T) {
 	}
 }
 
+// TestApplyActionReply_LightUpdates verifies that LightUpdates from an
+// extension reply set the entity's LightIntensity/Color/Radius and mark
+// dirtyLightEmitter. Also checks the "color/radius 0 = preserve" logic:
+// when the reply sets intensity > 0 but color=0 and radius=0, the existing
+// color/radius are preserved.
+func TestApplyActionReply_LightUpdates(t *testing.T) {
+	s := &Simulator{
+		entities: make(map[string]*Entity),
+		clients:  make(map[string]*Entity),
+	}
+	s.entities["light-1"] = &Entity{
+		ID:             "light-1",
+		LightIntensity: 0,
+		LightColor:     0xffe6b4,
+		LightRadius:    3,
+	}
+
+	// Turn on: intensity 80, color 0 (preserve), radius 0 (preserve).
+	resp := &actionReplyMsg{Handled: true}
+	resp.LightUpdates = append(resp.LightUpdates, struct {
+		EntityID  string  `json:"entity_id"`
+		Intensity uint32  `json:"intensity"`
+		Color     uint32  `json:"color,omitempty"`
+		Radius    float32 `json:"radius,omitempty"`
+	}{EntityID: "light-1", Intensity: 80})
+
+	s.applyActionReply(resp)
+
+	e := s.entities["light-1"]
+	if e.LightIntensity != 80 {
+		t.Errorf("intensity = %d, want 80", e.LightIntensity)
+	}
+	if e.LightColor != 0xffe6b4 {
+		t.Errorf("color = %#x, want 0xffe6b4 (preserved)", e.LightColor)
+	}
+	if e.LightRadius != 3 {
+		t.Errorf("radius = %f, want 3 (preserved)", e.LightRadius)
+	}
+	if !e.dirtyLightEmitter {
+		t.Errorf("dirtyLightEmitter = false, want true")
+	}
+
+	// Turn off: intensity 0.
+	e.dirtyLightEmitter = false
+	resp2 := &actionReplyMsg{Handled: true}
+	resp2.LightUpdates = append(resp2.LightUpdates, struct {
+		EntityID  string  `json:"entity_id"`
+		Intensity uint32  `json:"intensity"`
+		Color     uint32  `json:"color,omitempty"`
+		Radius    float32 `json:"radius,omitempty"`
+	}{EntityID: "light-1", Intensity: 0})
+
+	s.applyActionReply(resp2)
+
+	e = s.entities["light-1"]
+	if e.LightIntensity != 0 {
+		t.Errorf("intensity = %d, want 0", e.LightIntensity)
+	}
+	if !e.dirtyLightEmitter {
+		t.Errorf("dirtyLightEmitter = false, want true after turn-off")
+	}
+}
+
 // TestSwitchToLights_Scenario recreates the design doc's section 6.2
 // scenario: a wall switch (switch-1) toggles two remote lights
 // (light-1, light-2). Pressing E on the switch should:
