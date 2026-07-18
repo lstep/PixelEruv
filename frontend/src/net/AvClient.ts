@@ -28,6 +28,8 @@ export type AvAudioBlockedHandler = (blocked: boolean) => void;
 const MIC_MUTED_KEY = "av.micMuted";
 const CAM_ENABLED_KEY = "av.cameraEnabled";
 const NOISE_CANCELLATION_KEY = "av.noiseCancellation";
+const MIC_ID_KEY = "av.micId";
+const CAM_ID_KEY = "av.camId";
 const SPEAKER_ID_KEY = "av.speakerId";
 
 export interface AvDeviceInfo {
@@ -78,9 +80,12 @@ export class AvClient {
   private leaveTimer: ReturnType<typeof setTimeout> | null = null;
   // Selected input device IDs, persisted across room connections so the
   // user's device choice survives disconnect/reconnect cycles.
-  private selectedMicId: string | null = null;
-  private selectedCamId: string | null = null;
-  // Selected audio output device ID, persisted across room connections.
+  // Selected mic/cam/speaker device IDs, persisted across page reloads
+  // and room connections. deviceId may be stale after a reload (browser
+  // can reassign IDs), but switchDevice restores from these and the
+  // TopMenu only restores the select value if the ID is still present.
+  private selectedMicId = localStorage.getItem(MIC_ID_KEY);
+  private selectedCamId = localStorage.getItem(CAM_ID_KEY);
   private selectedSpeakerId = localStorage.getItem(SPEAKER_ID_KEY);
   // Screen share state — transient (not persisted). Screen sharing only
   // starts on user click when a room is connected (getDisplayMedia requires
@@ -388,17 +393,19 @@ export class AvClient {
 
   // switchDevice changes the active mic, camera, or speaker. If a room is
   // connected, uses room.switchActiveDevice to swap on the fly. Otherwise
-  // stores the deviceId for use when the next room connects.
+  // stores the deviceId for use when the next room connects. Persists all
+  // three selections to localStorage so they survive page reloads.
   async switchDevice(kind: "audioinput" | "videoinput" | "audiooutput", deviceId: string): Promise<void> {
+    const key = kind === "audioinput" ? MIC_ID_KEY
+      : kind === "videoinput" ? CAM_ID_KEY
+      : SPEAKER_ID_KEY;
     if (kind === "audioinput") this.selectedMicId = deviceId;
     else if (kind === "videoinput") this.selectedCamId = deviceId;
-    else if (kind === "audiooutput") {
-      this.selectedSpeakerId = deviceId;
-      try {
-        localStorage.setItem(SPEAKER_ID_KEY, deviceId);
-      } catch (e) {
-        console.error("AvClient: localStorage.setItem failed:", e);
-      }
+    else this.selectedSpeakerId = deviceId;
+    try {
+      localStorage.setItem(key, deviceId);
+    } catch (e) {
+      console.error("AvClient: localStorage.setItem failed:", e);
     }
     if (this.room) {
       try {
