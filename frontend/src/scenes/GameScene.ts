@@ -985,6 +985,11 @@ export class GameScene extends Phaser.Scene {
     });
     const topMenu = this.game.registry.get("topMenu") as TopMenu | undefined;
     topMenu?.attachAvControls(this.avClient);
+    topMenu?.attachRecordingControl(
+      this.ws,
+      () => this.ws?.isAdmin() ?? false,
+      () => this.avClient?.currentRoomName() ?? null,
+    );
     const chatPanel = this.game.registry.get("chatPanel") as ChatPanel | undefined;
     // "Server not available" overlay — a full-screen gray dim plus a red
     // centered message. Visible from the start (we boot in "connecting"),
@@ -1135,6 +1140,15 @@ export class GameScene extends Phaser.Scene {
           this.refreshDropdownIfOpen(e.entityId);
         }
       },
+      onRecordingState: (msg) => {
+        const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+        tm?.setRecordingState(msg.status as "active" | "stopped" | "error", msg.error);
+      },
+      onRecordingActive: (msg) => {
+        const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+        tm?.setRecordingActive(msg.active);
+        this.updateRecordingIndicator(msg.active, msg.target);
+      },
       onBanned: (reason, banUntil) => {
         const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
         if (msg) {
@@ -1209,6 +1223,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // Update record button visibility (admin + in A/V room).
+    const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
+    tm?.updateRecVisibility();
+
     // Send input on change and buffer it for reconciliation.
     if (this.inputDirty && this.ws) {
       const seq = this.ws.sendInput(this.inputState);
@@ -2676,5 +2694,51 @@ export class GameScene extends Phaser.Scene {
     if (name) return name;
     if (entityId === this.myEntityId) return "You";
     return entityId;
+  }
+
+  // --- Recording indicator + consent toast ---
+  // DOM elements (not Phaser world-space) so they're unaffected by camera
+  // zoom. The indicator is a small "REC ●" pill fixed near the top of the
+  // screen; the toast is a one-time auto-fading message shown when a
+  // recording starts.
+  private recIndicator: HTMLDivElement | null = null;
+  private recToast: HTMLDivElement | null = null;
+
+  private updateRecordingIndicator(active: boolean, target: string): void {
+    if (active) {
+      if (!this.recIndicator) {
+        const pill = document.createElement("div");
+        pill.style.cssText =
+          "position:fixed;top:60px;left:12px;z-index:20;padding:4px 12px;font-size:14px;font-family:sans-serif;font-weight:700;background:#c0392b;color:#fff;border-radius:20px;display:flex;align-items:center;gap:6px;";
+        pill.innerHTML = '<span style="animation:blink 1s infinite">●</span> REC';
+        const style = document.createElement("style");
+        style.textContent = "@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}";
+        document.head.appendChild(style);
+        document.body.appendChild(pill);
+        this.recIndicator = pill;
+      }
+      this.recIndicator.style.display = "flex";
+      // One-time toast.
+      if (!this.recToast) {
+        const toast = document.createElement("div");
+        toast.style.cssText =
+          "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:30;padding:16px 24px;font-size:16px;font-family:sans-serif;background:#2d2d3a;color:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.4);transition:opacity 0.5s;opacity:1;";
+        toast.textContent = `This meeting is being recorded to ${target}`;
+        document.body.appendChild(toast);
+        this.recToast = toast;
+        setTimeout(() => {
+          toast.style.opacity = "0";
+          setTimeout(() => {
+            toast.remove();
+            this.recToast = null;
+          }, 500);
+        }, 4000);
+      }
+    } else {
+      if (this.recIndicator) {
+        this.recIndicator.remove();
+        this.recIndicator = null;
+      }
+    }
   }
 }

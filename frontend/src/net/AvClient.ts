@@ -333,6 +333,13 @@ export class AvClient {
     return this.cameraEnabled;
   }
 
+  // currentRoomName returns the LiveKit room name the client is currently
+  // connected to, or null if not in a room. Used by the TopMenu record button
+  // to know which room to record.
+  currentRoomName(): string | null {
+    return this.currentRoom;
+  }
+
   isNoiseCancellationEnabled(): boolean {
     return this.noiseCancellation;
   }

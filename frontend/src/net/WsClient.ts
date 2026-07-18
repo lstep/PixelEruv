@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, RecordingRequestFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -67,6 +67,12 @@ export interface ConnectHandlers {
   // Fired when an ErrorFrame is received (e.g. fatal map validation error).
   // The client should display the message to the user (black overlay).
   onError?: (code: number, message: string) => void;
+  // Fired when a RecordingStateFrame is received (ext-rec → host that
+  // requested start/stop). status is "active", "stopped", or "error".
+  onRecordingState?: (msg: { room: string; status: string; target: string; egressId: string; error: string }) => void;
+  // Fired when a RecordingActiveFrame is received (ext-rec → each
+  // participant in a recorded room). The client shows/hides a REC indicator.
+  onRecordingActive?: (msg: { room: string; active: boolean; target: string }) => void;
 }
 
 export interface SpawnEntityView {
@@ -345,6 +351,26 @@ export class WsClient {
           });
           break;
         }
+        case "recordingState": {
+          const rs = serverFrame.payload.value;
+          this.handlers.onRecordingState?.({
+            room: rs.room,
+            status: rs.status,
+            target: rs.target,
+            egressId: rs.egressId,
+            error: rs.error,
+          });
+          break;
+        }
+        case "recordingActive": {
+          const ra = serverFrame.payload.value;
+          this.handlers.onRecordingActive?.({
+            room: ra.room,
+            active: ra.active,
+            target: ra.target,
+          });
+          break;
+        }
       }
     };
 
@@ -549,6 +575,26 @@ export class WsClient {
         create(SetStatusFrameSchema, { status, traceparent: traceparentFor() }),
       );
       const frame = create(ClientFrameSchema, { payload: { case: "setStatus", value: ss } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
+  }
+
+  // sendRecording sends a RecordingRequestFrame to start or stop recording
+  // the given LiveKit room. target is "mp4" or "youtube" (ignored on stop).
+  // The pusher forwards to ext-rec on the recording.<action> NATS subject.
+  // Fire-and-forget; the result arrives via onRecordingState.
+  sendRecording(action: "start" | "stop", room: string, target: "mp4" | "youtube" = "mp4"): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_recording", {
+      attributes: { "client.id": this.clientId ?? "", "action": action, "room": room, "target": target },
+    });
+    try {
+      const req = context.with(trace.setSpan(context.active(), span), () =>
+        create(RecordingRequestFrameSchema, { action, room, target, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "recording", value: req } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();
