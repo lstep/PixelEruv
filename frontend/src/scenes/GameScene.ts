@@ -452,6 +452,9 @@ export class GameScene extends Phaser.Scene {
   // Used for client-side prediction of zone collision, matching the server's
   // swept segment-vs-rect test.
   private wallZones: WallZone[] = [];
+  // [DEBUG] Toggleable zone/wall overlay (press D). Shows collisionGrid
+  // cells (red) and wallZones (cyan outline + blue fill) at high depth.
+  private debugZoneOverlay: Phaser.GameObjects.Graphics | null = null;
   private mapW = 20;
   private mapH = 20;
   // Tilesets from the Tiled JSON, stored so handleReplication can resolve
@@ -893,6 +896,9 @@ export class GameScene extends Phaser.Scene {
     let eHeld = false;
     kb.on("keydown-E", () => { if (!eHeld) { eHeld = true; this.ws?.sendAction("key:E"); } });
     kb.on("keyup-E", () => { eHeld = false; });
+
+    // [DEBUG] D toggles the zone/wall overlay (collisionGrid + wallZones).
+    kb.on("keydown-D", () => { this.toggleDebugZoneOverlay(); });
 
     // ESC closes the interaction popup (matches the "click outside" close
     // below). The popup's action buttons close it themselves on click, so
@@ -2290,6 +2296,52 @@ export class GameScene extends Phaser.Scene {
   // defaulting to LIGHT_DEFAULT_COLOR (warm white) when 0.
   private effectiveLightColor(avatar: Avatar): number {
     return avatar.lightColor > 0 ? avatar.lightColor : GameScene.LIGHT_DEFAULT_COLOR;
+  }
+
+  // [DEBUG] toggleDebugZoneOverlay shows/hides a high-depth overlay of the
+  // collisionGrid (red cells) and wallZones (cyan outline + blue fill). Bound
+  // to the D key. Redrawn on each toggle so it reflects the current map state.
+  private toggleDebugZoneOverlay(): void {
+    if (this.debugZoneOverlay) {
+      this.debugZoneOverlay.destroy();
+      this.debugZoneOverlay = null;
+      return;
+    }
+    const dbg = this.add.graphics();
+    dbg.setDepth(100000);
+    dbg.fillStyle(0xff0000, 0.35);
+    for (let ty = 0; ty < this.collisionGrid.length; ty++) {
+      for (let tx = 0; tx < (this.collisionGrid[ty]?.length ?? 0); tx++) {
+        if (this.isBlocked(tx, ty)) {
+          dbg.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        }
+      }
+    }
+    dbg.lineStyle(2, 0x00ffff, 1);
+    dbg.fillStyle(0x0000ff, 0.35);
+    for (const z of this.wallZones) {
+      if (z.shape === "rect") {
+        dbg.strokeRect(z.x * TILE_SIZE, z.y * TILE_SIZE, z.w * TILE_SIZE, z.h * TILE_SIZE);
+        dbg.fillRect(z.x * TILE_SIZE, z.y * TILE_SIZE, z.w * TILE_SIZE, z.h * TILE_SIZE);
+      } else if (z.shape === "circle") {
+        dbg.strokeCircle(z.cx * TILE_SIZE, z.cy * TILE_SIZE, z.r * TILE_SIZE);
+        dbg.fillCircle(z.cx * TILE_SIZE, z.cy * TILE_SIZE, z.r * TILE_SIZE);
+      } else if (z.shape === "polygon") {
+        dbg.beginPath();
+        z.verts.forEach(([vx, vy], i) => {
+          if (i === 0) dbg.moveTo(vx * TILE_SIZE, vy * TILE_SIZE);
+          else dbg.lineTo(vx * TILE_SIZE, vy * TILE_SIZE);
+        });
+        dbg.closePath();
+        dbg.fillPath();
+        dbg.strokePath();
+      }
+    }
+    this.debugZoneOverlay = dbg;
+    console.log("[DEBUG] zone overlay on — wallZones", JSON.stringify(this.wallZones), "activeLights", JSON.stringify([...this.activeLights].map(id => {
+      const a = this.avatars.get(id);
+      return a ? { id, x: a.sprite.x, y: a.sprite.y, radius: a.lightRadius, intensity: a.lightIntensity } : null;
+    })));
   }
 
   // redrawLightGlowMask redraws the per-light CanvasTexture: a white radial
