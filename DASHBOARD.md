@@ -1,5 +1,9 @@
 # Dashboard
 
+## Roadmap (not started)
+
+- **Periodic world snapshot on the Welcome page** — show a 60s-refreshed full-map image (map + props + live players) below the buttons on `/welcome/`. Rendering approach deferred; the two obvious paths (headless browser container, Go server-side render) are rejected for now as respectively heavyweight or divergent. See `documentation/plans/2026-07-18-world-snapshot-on-welcome-roadmap.md` for alternatives to explore (SVG minimap via stats channel, real-client canvas upload, static map + live overlay, off-host headless).
+
 ## A/V meeting recording (ext-rec + LiveKit Egress)
 
 **Branch:** `feat/recording`
