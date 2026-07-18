@@ -1148,6 +1148,12 @@ export class GameScene extends Phaser.Scene {
         const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
         tm?.setRecordingActive(msg.active);
         this.updateRecordingIndicator(msg.active, msg.target);
+        // When an admin force-stops the recording from the admin UI, show a
+        // transient center-screen toast so participants know why it ended.
+        // Manual and auto-empty stops don't get a toast.
+        if (!msg.active && msg.reason === "admin_stop") {
+          this.showRecordingAdminStopToast();
+        }
       },
       onBanned: (reason, banUntil) => {
         const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
@@ -2740,5 +2746,27 @@ export class GameScene extends Phaser.Scene {
         this.recIndicator = null;
       }
     }
+  }
+
+  // showRecordingAdminStopToast displays a transient center-screen toast
+  // telling participants the recording was force-stopped by an admin.
+  // Styled to match the server-updated reload toast in main.ts.
+  private showRecordingAdminStopToast(): void {
+    const toast = document.createElement("div");
+    toast.textContent = "The recording was stopped by an admin.";
+    toast.style.cssText =
+      "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);" +
+      "padding:10px 16px;font-size:14px;font-family:sans-serif;font-weight:600;" +
+      "background:#2d2d3a;color:#fff;border:1px solid rgba(255,255,255,0.15);" +
+      "border-radius:20px;cursor:pointer;z-index:10001;" +
+      "box-shadow:0 4px 12px rgba(0,0,0,0.4);";
+    const dismiss = (): void => {
+      toast.remove();
+      toast.onclick = null;
+      clearTimeout(timer);
+    };
+    toast.onclick = dismiss;
+    document.body.appendChild(toast);
+    const timer = setTimeout(dismiss, 8_000);
   }
 }

@@ -286,4 +286,5 @@ message RecordingActiveFrame {
   string room = 1;
   bool active = 2;
   string target = 3;    // "mp4" | "youtube"
+  string reason = 4;    // "" | "manual" | "admin_stop" | "auto_empty" (only set when active=false)
 }

@@ -135,6 +135,7 @@ type recordingActiveMsg struct {
 	Room   string `json:"room"`
 	Active bool   `json:"active"`
 	Target string `json:"target"`
+	Reason string `json:"reason,omitempty"` // "manual" | "admin_stop" | "auto_empty" (only when active=false)
 }
 
 // activeRec tracks a running Egress so recording.stop can find it.
@@ -324,8 +325,9 @@ func main() {
 
 	// fanOutRecordingActive publishes recording_active to all participants in
 	// the room. Each participant's client_id is resolved via entity_info.
-	fanOutRecordingActive := func(room, target string, active bool, participants []string) {
-		msg := recordingActiveMsg{Room: room, Active: active, Target: target}
+	// reason is set only when active=false (the stop cause); ignored on start.
+	fanOutRecordingActive := func(room, target, reason string, active bool, participants []string) {
+		msg := recordingActiveMsg{Room: room, Active: active, Target: target, Reason: reason}
 		for _, entityID := range participants {
 			info, err := fetchEntityInfo(entityID)
 			if err != nil || info.ClientID == "" {
@@ -570,7 +572,7 @@ func main() {
 		publishRecordingState(req.ClientID, recordingStateMsg{
 			Room: req.Room, Status: "active", Target: req.Target, EgressID: egressInfo.EgressId,
 		})
-		fanOutRecordingActive(req.Room, req.Target, true, participants)
+		fanOutRecordingActive(req.Room, req.Target, "", true, participants)
 		logger.Info("recording started",
 			"entity", req.EntityID, "room", req.Room, "target", req.Target,
 			"egress", egressInfo.EgressId, "meeting", meetingID, "participants", len(participants))
@@ -621,7 +623,7 @@ func main() {
 				Room: room, Status: "stopped", Target: rec.Target, EgressID: rec.EgressID,
 			})
 		}
-		fanOutRecordingActive(room, rec.Target, false, rec.Participants)
+		fanOutRecordingActive(room, rec.Target, reason, false, rec.Participants)
 		logger.Info("recording stopped",
 			"reason", reason, "entity", actor.EntityID, "room", room, "egress", rec.EgressID, "meeting", rec.MeetingID)
 

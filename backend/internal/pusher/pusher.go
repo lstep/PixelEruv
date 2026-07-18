@@ -542,6 +542,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			Room   string `json:"room"`
 			Active bool   `json:"active"`
 			Target string `json:"target"`
+			Reason string `json:"reason"`
 		}
 		if err := json.Unmarshal(m.Data, &msg); err != nil {
 			s.logger.Warn("recording_active unmarshal", "client", clientID, "err", err)
@@ -553,6 +554,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 					Room:   msg.Room,
 					Active: msg.Active,
 					Target: msg.Target,
+					Reason: msg.Reason,
 				},
 			},
 		}

@@ -72,7 +72,7 @@ export interface ConnectHandlers {
   onRecordingState?: (msg: { room: string; status: string; target: string; egressId: string; error: string }) => void;
   // Fired when a RecordingActiveFrame is received (ext-rec → each
   // participant in a recorded room). The client shows/hides a REC indicator.
-  onRecordingActive?: (msg: { room: string; active: boolean; target: string }) => void;
+  onRecordingActive?: (msg: { room: string; active: boolean; target: string; reason: string }) => void;
 }
 
 export interface SpawnEntityView {
@@ -368,6 +368,7 @@ export class WsClient {
             room: ra.room,
             active: ra.active,
             target: ra.target,
+            reason: ra.reason ?? "",
           });
           break;
         }
