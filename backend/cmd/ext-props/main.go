@@ -456,6 +456,9 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 		// Payload is the target intensity as a string number ("0"-"100").
 		// color/radius are preserved from the entity's current values
 		// (worldsim treats 0 as "unchanged" when intensity is non-zero).
+		// Also swaps the target's sprite gid: intensity > 0 -> GidOn,
+		// intensity == 0 -> GidOff (or Gid if GidOff is 0), so a single
+		// set_light effect handles both the light and the sprite frame.
 		for _, tid := range fx.TargetIDs {
 			if tid == "" {
 				continue
@@ -472,12 +475,29 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				Color     uint32  `json:"color,omitempty"`
 				Radius    float32 `json:"radius,omitempty"`
 			}{EntityID: tid, Intensity: intensity})
+			target := findEntityInDispatch(dispatch, tid)
+			if target != nil && target.GidOn != 0 {
+				gid := target.GidOff
+				if gid == 0 {
+					gid = target.Gid
+				}
+				if intensity > 0 {
+					gid = target.GidOn
+				}
+				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
+					EntityID string `json:"entity_id"`
+					Gid      uint32 `json:"gid"`
+				}{EntityID: tid, Gid: gid})
+			}
 		}
 
 	case "toggle_light":
 		// Flips between 0 and a stored "on" intensity. If the target's
 		// current intensity is > 0, turn off (0); otherwise turn on to
-		// a default of 80 (or the value in Payload if provided).
+		// a default of 80 (or the value in Payload if provided). Also
+		// swaps the target's sprite gid to match (GidOn when lit,
+		// GidOff/Gid when unlit), so a single toggle_light effect
+		// handles both the light and the sprite frame.
 		for _, tid := range fx.TargetIDs {
 			if tid == "" {
 				continue
@@ -506,6 +526,19 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				Color     uint32  `json:"color,omitempty"`
 				Radius    float32 `json:"radius,omitempty"`
 			}{EntityID: tid, Intensity: newIntensity})
+			if target != nil && target.GidOn != 0 {
+				gid := target.GidOff
+				if gid == 0 {
+					gid = target.Gid
+				}
+				if newIntensity > 0 {
+					gid = target.GidOn
+				}
+				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
+					EntityID string `json:"entity_id"`
+					Gid      uint32 `json:"gid"`
+				}{EntityID: tid, Gid: gid})
+			}
 		}
 
 	// "toggle_wall", "send_notification", etc. -> not handled by ext-props

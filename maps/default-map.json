@@ -216,7 +216,7 @@
                         {
                          "name":"interactions",
                          "type":"string",
-                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-switch-1\"]}, {\"action\": \"toggle\", \"target_ids\": [\"light-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"]}, {\"action\": \"toggle\", \"target_ids\": [\"light-2\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
+                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-switch-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
                         },
                         {
                          "name":"on_interact_action",
@@ -265,7 +265,7 @@
                         {
                          "name":"interactions",
                          "type":"string",
-                         "value":"{\"toggle\":[{\"action\":\"toggle\",\"target_ids\":[\"light-1\"]},{\"action\":\"toggle_light\",\"target_ids\":[\"light-1\"]}],\"activate\":[{\"action\":\"set_state\",\"payload\":\"on\",\"target_ids\":[\"light-1\"]},{\"action\":\"set_light\",\"payload\":\"80\",\"target_ids\":[\"light-1\"]}],\"deactivate\":[{\"action\":\"set_state\",\"payload\":\"off\",\"target_ids\":[\"light-1\"]},{\"action\":\"set_light\",\"payload\":\"0\",\"target_ids\":[\"light-1\"]}]}"
+                         "value":"{\"toggle\":[{\"action\":\"toggle_light\",\"target_ids\":[\"light-1\"]}],\"activate\":[{\"action\":\"set_light\",\"payload\":\"80\",\"target_ids\":[\"light-1\"]}],\"deactivate\":[{\"action\":\"set_light\",\"payload\":\"0\",\"target_ids\":[\"light-1\"]}]}"
                         },
                         {
                          "name":"light_color",
@@ -324,7 +324,7 @@
                         {
                          "name":"interactions",
                          "type":"string",
-                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-2\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}], \"activate\": [{\"action\": \"set_state\", \"payload\": \"on\", \"target_ids\": [\"light-2\"]}, {\"action\": \"set_light\", \"payload\": \"80\", \"target_ids\": [\"light-2\"]}], \"deactivate\": [{\"action\": \"set_state\", \"payload\": \"off\", \"target_ids\": [\"light-2\"]}, {\"action\": \"set_light\", \"payload\": \"0\", \"target_ids\": [\"light-2\"]}]}"
+                         "value":"{\"toggle\": [{\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}], \"activate\": [{\"action\": \"set_light\", \"payload\": \"80\", \"target_ids\": [\"light-2\"]}], \"deactivate\": [{\"action\": \"set_light\", \"payload\": \"0\", \"target_ids\": [\"light-2\"]}]}"
                         },
                         {
                          "name":"light_color",
