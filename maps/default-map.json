@@ -216,7 +216,7 @@
                         {
                          "name":"interactions",
                          "type":"string",
-                         "value":"{\"toggle\": [{\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
+                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-switch-1\"], \"gid_on\": 379, \"gid_off\": 379}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"], \"gid_on\": 508, \"gid_off\": 491}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
                         }, 
                         {
                          "name":"on_interact_action",
