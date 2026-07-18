@@ -170,10 +170,10 @@ services:
   # Redis — message bus for LiveKit psrpc. Required for the LiveKit server
   # to forward Egress RPC calls (StartRoomCompositeEgress, StopEgress, etc.)
   # to the Egress service. Both livekit and livekit-egress depend on this.
+  # No host port mapping: containers reach it via the docker network at
+  # redis:6379. Avoids conflicts with a host-level redis on 127.0.0.1:6379.
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     restart: unless-stopped
 
   ext-av:

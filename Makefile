@@ -92,6 +92,7 @@ dist-stage:
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
 	cp docker/dist/example.nginx.conf   $(DIST_DIR)/example.nginx.conf
 	cp docker/livekit.yaml              $(DIST_DIR)/docker/livekit.yaml
+	cp docker/egress.yaml               $(DIST_DIR)/docker/egress.yaml
 	cp docker/frontend-entrypoint.sh    $(DIST_DIR)/docker/frontend-entrypoint.sh
 	@# --- stage static welcome page (copy entire directory) ---
 	@mkdir -p $(DIST_DIR)/docker/welcome

@@ -151,10 +151,10 @@ services:
     restart: unless-stopped
 
   # Redis — message bus for LiveKit psrpc (Egress RPC forwarding).
+  # No host port mapping: containers reach it via the docker network at
+  # redis:6379. The host often runs its own redis on 127.0.0.1:6379.
   redis:
     image: redis:7-alpine
-    ports:
-      - "6379:6379"
     restart: unless-stopped
 
   ext-av:
