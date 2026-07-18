@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -128,6 +129,12 @@ func fakePropsExtension(t *testing.T, nc *nats.Conn) {
 	})
 	if err != nil {
 		t.Fatalf("subscribe fake props: %v", err)
+	}
+	// Flush so the subscription is registered on the server before the
+	// test fires applyAction. Without this, RequestWithContext can race
+	// with subscription propagation and time out (300ms) intermittently.
+	if err := nc.Flush(); err != nil {
+		t.Fatalf("flush fake props sub: %v", err)
 	}
 }
 
@@ -599,7 +606,9 @@ func TestSwitchToLights_Scenario(t *testing.T) {
 	}
 
 	// Subscribe to the client's replication subject to capture the
-	// ActionResultFrame.
+	// ActionResultFrame. The mutex protects actionResult from the
+	// NATS callback goroutine writing it while the test goroutine reads.
+	var mu sync.Mutex
 	var actionResult *pb.ActionResultFrame
 	sub, err := subNc.Subscribe("client.client-1.replication", func(m *nats.Msg) {
 		var sf pb.ServerFrame
@@ -607,7 +616,9 @@ func TestSwitchToLights_Scenario(t *testing.T) {
 			return
 		}
 		if ar := sf.GetActionResult(); ar != nil {
+			mu.Lock()
 			actionResult = ar
+			mu.Unlock()
 		}
 	})
 	if err != nil {
@@ -625,19 +636,28 @@ func TestSwitchToLights_Scenario(t *testing.T) {
 
 	// Wait for the action result.
 	deadline := time.Now().Add(3 * time.Second)
-	for actionResult == nil && time.Now().Before(deadline) {
+	for {
+		mu.Lock()
+		done := actionResult != nil
+		mu.Unlock()
+		if done || !time.Now().Before(deadline) {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if actionResult == nil {
+	mu.Lock()
+	ar := actionResult
+	mu.Unlock()
+	if ar == nil {
 		t.Fatal("timed out waiting for ActionResultFrame")
 	}
 
 	// Verify: immediate mode, no popup actions.
-	if !actionResult.Ok {
-		t.Errorf("ActionResult ok = false, reason = %q", actionResult.Reason)
+	if !ar.Ok {
+		t.Errorf("ActionResult ok = false, reason = %q", ar.Reason)
 	}
-	if len(actionResult.AvailableActions) != 0 {
-		t.Errorf("AvailableActions len = %d, want 0 (immediate mode)", len(actionResult.AvailableActions))
+	if len(ar.AvailableActions) != 0 {
+		t.Errorf("AvailableActions len = %d, want 0 (immediate mode)", len(ar.AvailableActions))
 	}
 
 	// Verify: all three entities toggled from "off" to "on".
@@ -780,12 +800,15 @@ func TestPopupMode_AvailableActions(t *testing.T) {
 		},
 	}
 
+	var mu sync.Mutex
 	var actionResult *pb.ActionResultFrame
 	sub, _ := subNc.Subscribe("client.client-1.replication", func(m *nats.Msg) {
 		var sf pb.ServerFrame
 		proto.Unmarshal(m.Data, &sf)
 		if ar := sf.GetActionResult(); ar != nil {
+			mu.Lock()
 			actionResult = ar
+			mu.Unlock()
 		}
 	})
 	defer sub.Unsubscribe()
@@ -795,26 +818,35 @@ func TestPopupMode_AvailableActions(t *testing.T) {
 	sim.applyAction(ctx, "client-1", &pb.ActionFrame{Seq: 1, Input: "key:E"})
 
 	deadline := time.Now().Add(3 * time.Second)
-	for actionResult == nil && time.Now().Before(deadline) {
+	for {
+		mu.Lock()
+		done := actionResult != nil
+		mu.Unlock()
+		if done || !time.Now().Before(deadline) {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if actionResult == nil {
+	mu.Lock()
+	ar := actionResult
+	mu.Unlock()
+	if ar == nil {
 		t.Fatal("timed out waiting for ActionResultFrame")
 	}
 
-	if !actionResult.Ok {
-		t.Errorf("ok = false, reason = %q", actionResult.Reason)
+	if !ar.Ok {
+		t.Errorf("ok = false, reason = %q", ar.Reason)
 	}
 
 	// Should have 2 actions: "toggle" (always visible) and "activate"
 	// (visible when state != "on"). "deactivate" should be filtered out
 	// because state is "off".
-	if len(actionResult.AvailableActions) != 2 {
-		t.Fatalf("AvailableActions len = %d, want 2: %+v", len(actionResult.AvailableActions), actionResult.AvailableActions)
+	if len(ar.AvailableActions) != 2 {
+		t.Fatalf("AvailableActions len = %d, want 2: %+v", len(ar.AvailableActions), ar.AvailableActions)
 	}
 
 	labels := make(map[string]string) // actionId -> label
-	for _, a := range actionResult.AvailableActions {
+	for _, a := range ar.AvailableActions {
 		labels[a.ActionId] = a.Label
 	}
 	if _, ok := labels["toggle"]; !ok {
