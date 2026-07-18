@@ -2318,6 +2318,11 @@ export class GameScene extends Phaser.Scene {
     // Mask step: cut out walls and wall zones using destination-out so
     // those pixels become transparent (no glow added there).
     ctx.globalCompositeOperation = "destination-out";
+    // destination-out subtracts destination alpha by source alpha. The
+    // gradient fillStyle from above has near-zero alpha at the canvas edges,
+    // so without resetting it the cuts would barely remove anything and light
+    // would bleed past walls. Use an opaque fill so cuts fully clear alpha.
+    ctx.fillStyle = "rgba(0, 0, 0, 1)";
     // The canvas is centered on the light's sprite position in world space.
     // World-to-canvas offset: canvas pixel (px, py) = world (wx, wy) - (lightX - r, lightY - r).
     const lightX = avatar.sprite.x;
