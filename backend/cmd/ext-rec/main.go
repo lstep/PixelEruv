@@ -105,11 +105,13 @@ type recordingCreateReply struct {
 
 // recordingUpdateMsg is the request payload for worldsim.recording.update.
 type recordingUpdateMsg struct {
-	MeetingID string `json:"meeting_id"`
-	EndTime   int64  `json:"end_time,omitempty"`
-	Status    string `json:"status,omitempty"`
-	FileURL   string `json:"file_url,omitempty"`
-	AudioURL  string `json:"audio_url,omitempty"`
+	MeetingID   string `json:"meeting_id"`
+	EndTime     int64  `json:"end_time,omitempty"`
+	Status      string `json:"status,omitempty"`
+	FileURL     string `json:"file_url,omitempty"`
+	AudioURL    string `json:"audio_url,omitempty"`
+	AudioStatus string `json:"audio_status,omitempty"`
+	AudioError  string `json:"audio_error,omitempty"`
 }
 
 type recordingUpdateReply struct {
@@ -339,10 +341,34 @@ func main() {
 	// extractAudioAndUpdatePB polls for the MP4 file to appear on disk
 	// (Egress writes it asynchronously after StopEgress), then runs ffmpeg
 	// to extract the audio track as MP3, and updates the PB row with the
-	// audio_url. Best-effort: logs warnings on failure, no retry.
-	extractAudioAndUpdatePB := func(meetingID, mp4Filename string) {
+	// audio_url + audio_status. On failure, sets audio_status="failed"
+	// with audio_error and emits a recording.audio_extraction_failed audit
+	// event (SeverityError) so it shows up on the audit dashboard.
+	extractAudioAndUpdatePB := func(meetingID, room, mp4Filename string) {
 		audioSem <- struct{}{}
 		defer func() { <-audioSem }()
+
+		fail := func(reason, errMsg string) {
+			logger.Warn("audio extraction failed", "meeting", meetingID, "reason", reason, "err", errMsg)
+			if err := updateRecordingRow(recordingUpdateMsg{
+				MeetingID:   meetingID,
+				AudioStatus: "failed",
+				AudioError:  reason,
+			}); err != nil {
+				logger.Warn("audio extraction: update PB row (failed)", "err", err, "meeting", meetingID)
+			}
+			audit.Emit(nc, "recording.audio_extraction_failed", audit.SeverityError,
+				audit.Actor{Extension: extID},
+				audit.Details{
+					"meeting_id": meetingID,
+					"room":       room,
+					"file":       mp4Filename,
+					"reason":     reason,
+					"error":      errMsg,
+				},
+				"")
+		}
+
 		mp4Path := filepath.Join(recordingsDir, mp4Filename)
 		// Poll up to 60s for the MP4 to appear and stop growing.
 		var lastSize int64
@@ -364,7 +390,7 @@ func main() {
 			time.Sleep(2 * time.Second)
 		}
 		if _, err := os.Stat(mp4Path); err != nil {
-			logger.Warn("audio extraction: mp4 not found", "path", mp4Path, "meeting", meetingID)
+			fail("mp4 not found after 60s", err.Error())
 			return
 		}
 
@@ -382,16 +408,20 @@ func main() {
 			mp3Path,
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			logger.Warn("audio extraction: ffmpeg failed", "err", err, "meeting", meetingID, "output", string(out))
+			fail("ffmpeg failed", string(out))
 			return
 		}
 
 		audioURL := fmt.Sprintf("https://%s/recordings/%s", publicHost, mp3Filename)
 		if err := updateRecordingRow(recordingUpdateMsg{
-			MeetingID: meetingID,
-			AudioURL:  audioURL,
+			MeetingID:   meetingID,
+			AudioURL:    audioURL,
+			AudioStatus: "ok",
+			AudioError:  "",
 		}); err != nil {
-			logger.Warn("audio extraction: update PB row", "err", err, "meeting", meetingID)
+			// ffmpeg succeeded but PB update failed — the MP3 exists on
+			// disk; surface the PB error so an admin can re-trigger.
+			fail("pb update after ffmpeg success", err.Error())
 			return
 		}
 		logger.Info("audio extracted", "meeting", meetingID, "file", mp3Filename)
@@ -608,8 +638,16 @@ func main() {
 		// Extract audio (MP3) from the MP4 in the background. The Egress
 		// writes the file asynchronously after StopEgress returns, so we
 		// poll for it. On success, update the PB row with audio_url.
+		// audio_status is set to "pending" immediately so the UI can show
+		// "extracting..." while the goroutine runs.
 		if rec.Target == "mp4" && rec.Filename != "" {
-			go extractAudioAndUpdatePB(rec.MeetingID, rec.Filename)
+			if err := updateRecordingRow(recordingUpdateMsg{
+				MeetingID:   rec.MeetingID,
+				AudioStatus: "pending",
+			}); err != nil {
+				logger.Warn("audio extraction: set pending status", "err", err, "meeting", rec.MeetingID)
+			}
+			go extractAudioAndUpdatePB(rec.MeetingID, rec.Room, rec.Filename)
 		}
 	})
 

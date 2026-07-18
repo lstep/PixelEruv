@@ -55,6 +55,8 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .delete-all-bar { margin-bottom: 1rem; }
 .del-all-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
 .del-all-btn:hover { background: var(--danger); color: #fff; }
+.audio-pending { color: var(--muted); font-style: italic; font-size: 0.85rem; }
+.audio-failed { color: var(--danger); font-weight: 600; cursor: help; text-decoration: underline dotted; }
 .logout { margin-top: 2rem; }
 .logout a { color: var(--muted); text-decoration: none; }
 .version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
@@ -142,7 +144,13 @@ tr:hover td { background: rgba(78,154,241,0.05); }
         {{else}}&mdash;{{end}}
       </td>
       <td>
-        {{if .HasAudio}}<a class="dl" href="{{.AudioURL}}" download>MP3</a>{{else}}&mdash;{{end}}
+        {{if .HasAudio}}
+          <a class="dl" href="{{.AudioURL}}" download>MP3</a>
+        {{else if eq .AudioStatus "pending"}}
+          <span class="audio-pending">extracting...</span>
+        {{else if eq .AudioStatus "failed"}}
+          <span class="audio-failed" title="{{.AudioError}}">failed</span>
+        {{else}}&mdash;{{end}}
       </td>
       <td>
         <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 and MP3 files.');">

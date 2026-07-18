@@ -346,6 +346,8 @@ type recordingRow struct {
 	HasFile      bool
 	AudioURL     string
 	HasAudio     bool
+	AudioStatus  string // ""|pending|ok|failed
+	AudioError   string
 }
 
 // handleRecordings renders the recordings management page with optional
@@ -418,6 +420,8 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			Participants []string `json:"participants"`
 			FileURL      string   `json:"file_url"`
 			AudioURL     string   `json:"audio_url"`
+			AudioStatus  string   `json:"audio_status"`
+			AudioError   string   `json:"audio_error"`
 		} `json:"items"`
 		TotalItems int `json:"totalItems"`
 	}
@@ -444,6 +448,8 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			HasFile:      item.FileURL != "",
 			AudioURL:     item.AudioURL,
 			HasAudio:     item.AudioURL != "",
+			AudioStatus:  item.AudioStatus,
+			AudioError:   item.AudioError,
 		}
 		row.Duration = computeDuration(item.StartTime, item.EndTime)
 		rows = append(rows, row)
