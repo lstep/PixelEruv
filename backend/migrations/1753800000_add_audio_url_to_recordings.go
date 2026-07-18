@@ -27,8 +27,8 @@ func init() {
 		if err != nil {
 			return err
 		}
-		if f := collection.Fields.GetByName("audio_url"); f != nil {
-			collection.Fields.Remove(f.GetName())
+		if collection.Fields.GetByName("audio_url") != nil {
+			collection.Fields.RemoveByName("audio_url")
 		}
 		return app.Save(collection)
 	})
