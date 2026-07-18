@@ -847,7 +847,7 @@ Used for lights and complex entities with multiple options.
    - `entity_type` = `light` (String)
    - `owner_extension` = `props` (String)
    - `trigger_radius` = `1.5` (Float)
-   - `gid_on` = `401` (Int) — GID of the lamp's "on" sprite
+   - `gid_on` = `491` (Int) — GID of the lamp's "on" sprite
    - `actions` = `toggle,activate,deactivate` (String) — popup mode:
      show these actions in the popup
    - `interactions` = (String, JSON):
@@ -882,7 +882,7 @@ Used for lights and complex entities with multiple options.
 | `entity_type` | `light` | no | Hint for the owning extension |
 | `owner_extension` | `props` | no | Explicit ownership claim |
 | `trigger_radius` | `1.5` | no (default 1.5) | Interaction distance in tiles |
-| `gid_on` | `401` | no | Alternate GID for "on" state |
+| `gid_on` | `491` | no | Alternate GID for "on" state |
 | `actions` | `toggle,activate,deactivate` | yes (popup mode) | Comma-separated action_ids |
 | `interactions` | (JSON) | yes | Effects list per action_id |
 

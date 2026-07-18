@@ -383,7 +383,7 @@ string value field.
 | `entity_type` | string | `light` |
 | `owner_extension` | string | `props` |
 | `trigger_radius` | float | `1.5` |
-| `gid_on` | int | `401` (GID of the lamp-on tile) |
+| `gid_on` | int | `491` (GID of the lamp-on tile) |
 | `actions` | string | `toggle,activate,deactivate` |
 | `interactions` | string (JSON) | (see below) |
 
@@ -599,7 +599,7 @@ configured), wall stays blocking (or activates if not already).
     |               |       type:"light",         |              |
     |               |       owner:"props",        |              |
     |               |       state:"off",          |              |
-    |               |       gid:400, gid_on:401,  |              |
+    |               |       gid:508, gid_on:491,  |              |
     |               |       actions:"toggle,activate,deactivate",|
     |               |       interactions:{...}}], |              |
     |               |     target_entities:[]}     |              |
@@ -645,24 +645,24 @@ configured), wall stays blocking (or activates if not already).
     |               |              |       target_ids:["light-1"]}]           |
     |               |              |  handles "set_state" with payload "on"   |
     |               |              |  -> Updates: [{light-1, "on"}]           |
-    |               |              |  -> AppearanceUpdates: [{light-1, 401}]  |
+    |               |              |  -> AppearanceUpdates: [{light-1, 491}]  |
     |               |              |  -> Animations: [{light-1, anim_click}]  |
     |               |              |<--reply------|              |
     |               |              |              |              |
     |               |    applyActionReply()      |              |
     |               |    -> light-1.State="on", dirtyState      |
-    |               |    -> light-1.Gid=401, dirtyAppearance    |
+    |               |    -> light-1.Gid=491, dirtyAppearance    |
     |               |    -> pendingAnimations=[anim_click]      |
     |               |              |              |              |
     |               |    Next replication tick:   |              |
     |<--replication--|<--batch-----|              |              |
     |  {updates:[{light-1,comp2,"on"},            |              |
-    |            {light-1,comp3,gid=401}],        |              |
+    |            {light-1,comp3,gid=491}],        |              |
     |   animations:[{light-1,anim_click}]}        |              |
     |               |              |              |              |
     |  GameScene: handleReplication()              |              |
     |  -> compId 2: state="on" -> show glow overlay|             |
-    |  -> compId 3: swap sprite to gid 401 frame   |             |
+    |  -> compId 3: swap sprite to gid 491 frame   |             |
     |  -> animation: play "clic" sound             |             |
 ```
 
@@ -685,8 +685,8 @@ configured), wall stays blocking (or activates if not already).
     |               |  target_entities lookup:    |
     |               |  switch-1 targets = [light-1, light-2]     |
     |               |  -> target_entities = [     |
-    |               |       {light-1, state:"off", gid:400, gid_on:401},|
-    |               |       {light-2, state:"off", gid:400, gid_on:401}]|
+    |               |       {light-1, state:"off", gid:508, gid_on:491},|
+    |               |       {light-2, state:"off", gid:508, gid_on:491}]|
     |               |              |              |
     |               |  dispatch--->|              |
     |               |              |  ext-props:  |
@@ -701,16 +701,16 @@ configured), wall stays blocking (or activates if not already).
     |               |              |    -> find light-1 in target_entities
     |               |              |    -> toggle: off->on           |
     |               |              |    -> Updates: [{light-1,"on"}] |
-    |               |              |    -> AppearanceUpdates: [{light-1, 401}]
+    |               |              |    -> AppearanceUpdates: [{light-1, 491}]
     |               |              |  effect 3: {toggle, [light-2]}  |
     |               |              |    -> Updates: [{light-2,"on"}] |
-    |               |              |    -> AppearanceUpdates: [{light-2, 401}]
+    |               |              |    -> AppearanceUpdates: [{light-2, 491}]
     |               |              |<--reply------|              |
     |               |              |              |              |
     |               |  applyActionReply():        |
     |               |    switch-1: state="on", gid=381, dirtyAppearance
-    |               |    light-1: state="on", gid=401, dirtyAppearance
-    |               |    light-2: state="on", gid=401, dirtyAppearance
+    |               |    light-1: state="on", gid=491, dirtyAppearance
+    |               |    light-2: state="on", gid=491, dirtyAppearance
     |               |    pendingAnimations: [switch-1 -> click]
     |               |              |              |
     |               |  sendActionResult(ok:true, available_actions:[])
@@ -719,8 +719,8 @@ configured), wall stays blocking (or activates if not already).
     |               |  Next replication tick:     |
     |<--replication--|  updates: [                 |
     |               |    {switch-1, comp2, "on"}, {switch-1, comp3, 381},
-    |               |    {light-1,  comp2, "on"}, {light-1,  comp3, 401},
-    |               |    {light-2,  comp2, "on"}, {light-2,  comp3, 401}]
+    |               |    {light-1,  comp2, "on"}, {light-1,  comp3, 491},
+    |               |    {light-2,  comp2, "on"}, {light-2,  comp3, 491}]
     |               |  animations: [{switch-1, click}]
     |               |              |              |
     |  GameScene:   |              |              |

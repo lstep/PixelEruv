@@ -11,7 +11,7 @@ The map has two entities on the "Entities" layer:
 | Entity | gid | Mode | What it does now |
 |---|---|---|---|
 | `light-switch-1` | 380 | Immediate (`on_interact_action=toggle`) | Toggles only itself |
-| `light-1` | 400 | Popup (`actions=toggle,activate,deactivate`) | Popup with 3 actions, toggles only itself |
+| `light-1` | 508 | Popup (`actions=toggle,activate,deactivate`) | Popup with 3 actions, toggles only itself |
 
 ## What you need to change
 
@@ -42,7 +42,7 @@ switch itself (sprite swap) + light-1 + light-2.
 Add a new tile-object on the "Entities" layer:
 
 - **Name:** `light-2`
-- **gid:** `400` (same off sprite as light-1)
+- **gid:** `508` (same off sprite as light-1)
 - **Position:** anywhere on the map, e.g. x=256, y=320 (a few tiles
   right of light-1)
 - **Custom properties:**
@@ -52,7 +52,7 @@ Add a new tile-object on the "Entities" layer:
 | `entity_type` | String | `light` | |
 | `owner_extension` | String | `props` | |
 | `trigger_radius` | Float | `1.5` | Not needed for the switch scenario but good to have |
-| `gid_on` | Int | `401` | On sprite (same as light-1) |
+| `gid_on` | Int | `491` | On sprite (same as light-1) |
 | `actions` | String | `toggle,activate,deactivate` | Optional: lets you also interact with it directly via popup |
 | `interactions` | String (JSON) | see below | |
 
@@ -70,7 +70,7 @@ Add a new tile-object on the "Entities" layer:
    ```
    {"toggle":[{"action":"toggle","target_ids":["light-switch-1"]},{"action":"toggle","target_ids":["light-1"]},{"action":"toggle","target_ids":["light-2"]}]}
    ```
-4. **Add light-2:** drag a tile (gid 400 — the lamp off sprite) from
+4. **Add light-2:** drag a tile (gid 508 — the lamp off sprite) from
    the tileset onto the Entities layer. Place it a few tiles from
    light-1.
 5. **Name it:** right-click the new object → Object Properties → set
@@ -90,8 +90,8 @@ Add a new tile-object on the "Entities" layer:
 3. You should see:
    - The switch sprite swap (gid 380 → 381).
    - A click sound (`clic.wav`).
-   - `light-1` sprite swap (gid 400 → 401) — the lamp turns on.
-   - `light-2` sprite swap (gid 400 → 401) — the second lamp turns on.
+   - `light-1` sprite swap (gid 508 → 491) — the lamp turns on.
+   - `light-2` sprite swap (gid 508 → 491) — the second lamp turns on.
    - Sparks particles near both lights (client-side, within 2 tiles).
 4. Press **E** again. All three swap back to their off sprites.
 
@@ -106,8 +106,8 @@ Player presses E near light-switch-1
   → dispatches to ext-props with all three entities in the payload
   → ext-props processes the "toggle" effect for each target_id:
       light-switch-1: state off→on, gid 380→381
-      light-1:        state off→on, gid 400→401
-      light-2:        state off→on, gid 400→401
+      light-1:        state off→on, gid 508→491
+      light-2:        state off→on, gid 508→491
   → worldsim applies updates, replicates to clients
   → frontend swaps sprites, plays click sound, shows sparks
 ```

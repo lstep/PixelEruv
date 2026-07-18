@@ -241,7 +241,7 @@
                  "y":317.426
                 }, 
                 {
-                 "gid":400,
+                 "gid":508,
                  "height":32,
                  "id":11,
                  "name":"light-1",
@@ -260,7 +260,7 @@
                         {
                          "name":"gid_on",
                          "type":"int",
-                         "value":401
+                         "value":491
                         }, 
                         {
                          "name":"interactions",
@@ -285,7 +285,7 @@
                  "y":353.866287339972
                 }, 
                 {
-                 "gid":400,
+                 "gid":508,
                  "height":32,
                  "id":12,
                  "name":"light-2",
@@ -304,7 +304,7 @@
                         {
                          "name":"gid_on",
                          "type":"int",
-                         "value":401
+                         "value":491
                         }, 
                         {
                          "name":"interactions",
