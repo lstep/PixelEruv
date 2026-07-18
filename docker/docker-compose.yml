@@ -157,12 +157,23 @@ services:
     #   LIVEKIT_NODE_IP=192.168.1.10 docker compose up
     # For remote access, ensure UDP 50000-50020 are open on the host firewall.
     command: ["--config", "/etc/livekit.yaml", "--node-ip", "${LIVEKIT_NODE_IP:-127.0.0.1}"]
+    depends_on:
+      - redis
     ports:
       - "7880:7880"   # WebSocket signaling
       - "7881:7881"   # TCP (fallback)
       - "50000-50020:50000-50020/udp" # WebRTC ICE range
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
+    restart: unless-stopped
+
+  # Redis — message bus for LiveKit psrpc. Required for the LiveKit server
+  # to forward Egress RPC calls (StartRoomCompositeEgress, StopEgress, etc.)
+  # to the Egress service. Both livekit and livekit-egress depend on this.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
     restart: unless-stopped
 
   ext-av:
@@ -188,19 +199,19 @@ services:
     restart: unless-stopped
 
   # LiveKit Egress service — records room composites to file (MP4) or streams
-  # to RTMP (YouTube). ext-rec calls its API via the LiveKit server-sdk-go.
-  # Needs CPU for transcoding and disk for MP4 output. The recordings volume
-  # is shared with ext-rec so both can access the output files.
+  # to RTMP (YouTube). ext-rec calls its API via the LiveKit server-sdk-go;
+  # the SDK posts to the LiveKit server (port 7880), which forwards to Egress
+  # via psrpc over Redis. Needs CPU for transcoding and disk for MP4 output.
+  # The recordings volume is shared with ext-rec so both can access files.
   livekit-egress:
     image: livekit/egress:v1.9.0
     depends_on:
       - livekit
+      - redis
     environment:
-      LIVEKIT_URL: "ws://livekit:7880"
-      LIVEKIT_API_KEY: "devkey"
-      LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
-      EGRESS_LOG_LEVEL: "info"
+      EGRESS_CONFIG_FILE: "/etc/egress.yaml"
     volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
       - recordings:/recordings
     restart: unless-stopped
 

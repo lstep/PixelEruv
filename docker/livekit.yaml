@@ -13,6 +13,14 @@ port: 7880
 keys:
   devkey: devsecretdevsecretdevsecretdevsecret123
 
+# Redis message bus — required for the LiveKit server to forward Egress
+# (and Ingress/SIP) RPC calls via psrpc. The Egress service connects to the
+# same Redis instance. Without this, Egress SDK calls (StartRoomCompositeEgress
+# etc.) time out with "context deadline exceeded" because the server can't
+# reach the Egress service.
+redis:
+  address: redis:6379
+
 # Bind to all interfaces so the browser can reach it from the host.
 bind_addresses:
   - "0.0.0.0"
