@@ -566,10 +566,20 @@ export class GameScene extends Phaser.Scene {
     //   1. Walls tile-layer grid (point check at destination tile)
     //   2. Wall zones from the Zones object layer (swept segment-vs-shape,
     //      expanded by PLAYER_COLLISION_RADIUS)
-    const fy = (y: number) => Math.floor(y + FEET_Y_OFFSET + 0.5);
-    if (this.isBlocked(Math.floor(newX + 0.5), fy(y)) ||
+    //
+    // The sprite is 1 tile wide centered on Position.X, so the leading edge
+    // is the right edge (+0.5) when moving +X, the left edge (-0.5) when
+    // moving -X, and the center when X is static. The feet are a single
+    // point, so floor(feet) is direction-independent. The old Math.floor(x
+    // +0.5) bias always checked the +edge, which only matched the leading
+    // edge for +X/+Y movement; -X/-Y movement checked the trailing edge and
+    // tunneled ~1 tile into walls. Must match worldsim.go isMoveBlocked.
+    const fy = (y: number) => Math.floor(y + FEET_Y_OFFSET);
+    const ledX = (oldX: number, nx: number) =>
+      nx > oldX ? Math.floor(nx + 0.5) : nx < oldX ? Math.floor(nx - 0.5) : Math.floor(nx);
+    if (this.isBlocked(ledX(x, newX), fy(y)) ||
         this.isZoneBlocked(x, y, newX, y)) newX = x;
-    if (this.isBlocked(Math.floor(newX + 0.5), fy(newY)) ||
+    if (this.isBlocked(ledX(newX, newX), fy(newY)) ||
         this.isZoneBlocked(newX, y, newX, newY)) newY = y;
     // Diagonal guard: if both axes moved, check the full diagonal segment.
     // The X-then-Y decomposition can skip a wall that the diagonal crosses
