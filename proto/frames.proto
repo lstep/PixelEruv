@@ -173,6 +173,16 @@ message AuthResultFrame {
   uint64 ban_until = 11;      // worldsim→pusher→browser: unix timestamp expiry (0 = permanent)
   string map_options = 12;    // JSON-encoded options for the player's current map
   string player_options = 13; // JSON-encoded player options
+  repeated MapWarning map_warnings = 14; // non-fatal validation warnings for the player's map
+  string map_error = 15;      // fatal map validation error (map not loaded); client shows black overlay
+}
+
+// MapWarning is a single non-fatal validation issue for a map. entity_id is
+// empty for map-level warnings (e.g. "collision grid is nil"); the frontend
+// draws a red outline on entities with warnings and logs the message.
+message MapWarning {
+  string entity_id = 1; // entity the warning is about, or "" for map-level
+  string message = 2;   // human-readable warning text
 }
 
 message ErrorFrame {
@@ -215,6 +225,7 @@ message MapTransitionFrame {
   float spawn_x = 2;        // spawn X on new map
   float spawn_y = 3;        // spawn Y on new map
   string map_options = 4;  // JSON-encoded options for the new map
+  repeated MapWarning map_warnings = 5; // non-fatal validation warnings for the new map
 }
 
 // MapOptionsUpdateFrame is sent to connected clients when a map's options are

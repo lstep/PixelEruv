@@ -192,6 +192,8 @@ type Simulator struct {
 	maps          map[string]*MapData       // mapName → MapData
 	zones         map[string]*ZoneRegistry  // mapName → ZoneRegistry
 	mapFilenames  map[string]string         // mapName → last known tiled_json filename
+	mapErrors     map[string]string           // mapName → fatal validation message (map not loaded)
+	mapWarnings   map[string][]*pb.MapWarning // mapName → non-fatal validation warnings (map loaded)
 	mapStore      *MapStore
 	userStore     *UserStore
 	banStore      *BanStore
@@ -305,16 +307,43 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	maps := make(map[string]*MapData)
 	zones := make(map[string]*ZoneRegistry)
 	mapFilenames := make(map[string]string)
+	mapErrors := make(map[string]string)
+	mapWarnings := make(map[string][]*pb.MapWarning)
 	for _, mr := range mapRecords {
 		md, err := mapStore.LoadMapData(mr.Name)
 		if err != nil {
 			logger.Warn("failed to load map", "err", err, "map", mr.Name)
+			mapErrors[mr.Name] = fmt.Sprintf("failed to load map: %v", err)
+			continue
+		}
+		// Validate before storing. Fatal issues block the map from loading;
+		// warnings are stored and sent to clients on connect/transition.
+		issues := CheckMapIntegrity(md)
+		var fatalMsgs []string
+		var warningMsgs []*pb.MapWarning
+		for _, r := range issues {
+			if r.Level == LevelError {
+				fatalMsgs = append(fatalMsgs, r.String())
+			} else if r.Level == LevelWarning {
+				warningMsgs = append(warningMsgs, &pb.MapWarning{
+					EntityId: r.EntityID,
+					Message:  r.Message,
+				})
+			}
+		}
+		LogIntegrityResults(logger, issues, mr.Name)
+		if len(fatalMsgs) > 0 {
+			mapErrors[mr.Name] = fmt.Sprintf("map validation failed: %s", strings.Join(fatalMsgs, "; "))
+			logger.Error("map rejected due to validation errors", "map", mr.Name, "errors", len(fatalMsgs))
 			continue
 		}
 		maps[mr.Name] = md
 		zones[mr.Name] = NewZoneRegistry(md.Zones, md.Width, md.Height)
 		mapFilenames[mr.Name] = mr.TiledJSONFilename
-		logger.Info("loaded map", "map", mr.Name, "width", md.Width, "height", md.Height)
+		if len(warningMsgs) > 0 {
+			mapWarnings[mr.Name] = warningMsgs
+		}
+		logger.Info("loaded map", "map", mr.Name, "width", md.Width, "height", md.Height, "warnings", len(warningMsgs))
 	}
 
 	// Fallback: if no maps were loaded (e.g. seeding failed and PB is empty),
@@ -338,6 +367,8 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 		maps:             maps,
 		zones:            zones,
 		mapFilenames:     mapFilenames,
+		mapErrors:        mapErrors,
+		mapWarnings:      mapWarnings,
 		mapStore:         mapStore,
 		userStore:        userStore,
 		banStore:         banStore,
@@ -550,6 +581,8 @@ func (s *Simulator) subscribe() error {
 				BanUntil:      uint64(result.banUntil),
 				MapOptions:    result.mapOptions,
 				PlayerOptions: result.playerOptions,
+				MapWarnings:   result.mapWarnings,
+				MapError:      result.mapError,
 			})
 			if err := s.nc.Publish(m.Reply, resp); err != nil {
 				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
@@ -1003,6 +1036,8 @@ type provisionResult struct {
 	banUntil      int64
 	mapOptions    string
 	playerOptions string
+	mapWarnings   []*pb.MapWarning
+	mapError      string
 }
 
 // provisionClient creates a player avatar entity for the given client.
@@ -1025,6 +1060,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			isAdmin:       existing.IsAdmin,
 			mapOptions:    mapOpts,
 			playerOptions: existing.PlayerOptions,
+			mapWarnings:   s.mapWarnings[existing.Position.MapId],
+			mapError:      s.mapErrors[existing.Position.MapId],
 		}
 	}
 
@@ -1179,6 +1216,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		isAdmin:       isAdmin,
 		mapOptions:    mapOpts,
 		playerOptions: playerOptions,
+		mapWarnings:   s.mapWarnings[mapName],
+		mapError:      s.mapErrors[mapName],
 	}
 }
 
@@ -1359,6 +1398,7 @@ func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, t
 	if md := s.maps[targetMap]; md != nil {
 		mapOpts = string(md.Options)
 	}
+	mapWarns := s.mapWarnings[targetMap]
 	s.mu.Unlock()
 
 	// Send MapTransitionFrame to the client so the frontend loads the new map.
@@ -1366,10 +1406,11 @@ func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, t
 		frame := &pb.ServerFrame{
 			Payload: &pb.ServerFrame_MapTransition{
 				MapTransition: &pb.MapTransitionFrame{
-					MapId:       targetMap,
-					SpawnX:      spawnX,
-					SpawnY:      spawnY,
-					MapOptions:  mapOpts,
+					MapId:        targetMap,
+					SpawnX:       spawnX,
+					SpawnY:       spawnY,
+					MapOptions:   mapOpts,
+					MapWarnings:  mapWarns,
 				},
 			},
 		}
@@ -2526,6 +2567,35 @@ func (s *Simulator) checkMapReload(mapName string) {
 	newMapData, err := s.mapStore.LoadMapData(mapName)
 	if err != nil {
 		s.logger.Error("map reload failed", "err", err, "map", mapName)
+		s.mu.Lock()
+		s.mapErrors[mapName] = fmt.Sprintf("map reload failed: %v", err)
+		s.mapWarnings[mapName] = nil
+		s.mu.Unlock()
+		return
+	}
+
+	// Validate the reloaded map before storing.
+	issues := CheckMapIntegrity(newMapData)
+	var fatalMsgs []string
+	var warningMsgs []*pb.MapWarning
+	for _, r := range issues {
+		if r.Level == LevelError {
+			fatalMsgs = append(fatalMsgs, r.String())
+		} else if r.Level == LevelWarning {
+			warningMsgs = append(warningMsgs, &pb.MapWarning{
+				EntityId: r.EntityID,
+				Message:  r.Message,
+			})
+		}
+	}
+	LogIntegrityResults(s.logger, issues, mapName)
+
+	if len(fatalMsgs) > 0 {
+		s.logger.Error("map reload rejected due to validation errors", "map", mapName, "errors", len(fatalMsgs))
+		s.mu.Lock()
+		s.mapErrors[mapName] = fmt.Sprintf("map validation failed: %s", strings.Join(fatalMsgs, "; "))
+		s.mapWarnings[mapName] = nil
+		s.mu.Unlock()
 		return
 	}
 
@@ -2533,6 +2603,8 @@ func (s *Simulator) checkMapReload(mapName string) {
 	s.maps[mapName] = newMapData
 	s.zones[mapName] = NewZoneRegistry(newMapData.Zones, newMapData.Width, newMapData.Height)
 	s.mapFilenames[mapName] = info.TiledJSONFilename
+	s.mapErrors[mapName] = ""
+	s.mapWarnings[mapName] = warningMsgs
 	s.reloadBaseEntities(mapName, newMapData.Entities)
 	// Re-add mobile proximity zones for connected players on this map — the
 	// registry was rebuilt from scratch above, wiping them.
@@ -2542,10 +2614,6 @@ func (s *Simulator) checkMapReload(mapName string) {
 		}
 	}
 	s.mu.Unlock()
-
-	// Run integrity check on the new map.
-	results := CheckMapIntegrity(newMapData)
-	LogIntegrityResults(s.logger, results, mapName)
 
 	// Notify extensions that the map has been updated.
 	s.nc.Publish("map.updated", []byte(mapName))

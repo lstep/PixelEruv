@@ -48,6 +48,7 @@ build: proto
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/admin ./cmd/admin
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pb-collections ./cmd/pb-collections
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/validate-map ./cmd/validate-map
 
 # Sync root assets into frontend/public/ so Vite serves them in dev and bundles
 # them into dist/web/. The root maps/ and spritesheets/ directories are the

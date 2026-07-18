@@ -155,9 +155,9 @@ func TestParseTiledMapJSON_SpawnZones(t *testing.T) {
 			}
 		]
 	}`)
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
-		t.Fatalf("parseTiledMapJSON: %v", err)
+		t.Fatalf("ParseTiledMapJSON: %v", err)
 	}
 	if len(md.SpawnZones) != 1 {
 		t.Fatalf("expected 1 spawn zone, got %d (zones total: %d)", len(md.SpawnZones), len(md.Zones))

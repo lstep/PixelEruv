@@ -118,7 +118,7 @@ type MapRecordInfo struct {
 // parseTiledMapJSON parses a Tiled JSON export into MapData: collision grid,
 // zones, and base entities. Extracted from loadMapOnce so it can be tested
 // without a PocketBase server.
-func parseTiledMapJSON(body []byte) (*MapData, error) {
+func ParseTiledMapJSON(body []byte) (*MapData, error) {
 	var tiled tiledMapJSON
 	if err := json.Unmarshal(body, &tiled); err != nil {
 		return nil, fmt.Errorf("parse tiled json: %w", err)

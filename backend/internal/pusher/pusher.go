@@ -423,6 +423,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	mapID := ""
 	mapOptions := ""
 	playerOptions := ""
+	var mapWarnings []*pb.MapWarning
+	mapError := ""
 	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip, deviceID); err != nil {
 		s.logger.Warn("client.connected request-reply, using default entity ID", "client", clientID, "err", err)
 	} else {
@@ -458,6 +460,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			mapID = ar.MapId
 			mapOptions = ar.MapOptions
 			playerOptions = ar.PlayerOptions
+			mapWarnings = ar.MapWarnings
+			mapError = ar.MapError
 		}
 	}
 
@@ -493,6 +497,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				IsAdmin:       isAdmin,
 				MapOptions:    mapOptions,
 				PlayerOptions: playerOptions,
+				MapWarnings:   mapWarnings,
+				MapError:      mapError,
 			},
 		},
 	}
