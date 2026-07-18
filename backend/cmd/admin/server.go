@@ -493,10 +493,6 @@ type diskInfo struct {
 }
 
 func diskUsage(dir string) diskInfo {
-	var st unix.Stat_t
-	if err := unix.Stat(dir, &st); err != nil {
-		return diskInfo{}
-	}
 	var fs unix.Statfs_t
 	if err := unix.Statfs(dir, &fs); err != nil {
 		return diskInfo{}
