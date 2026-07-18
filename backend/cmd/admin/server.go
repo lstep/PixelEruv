@@ -894,6 +894,12 @@ func (s *Server) handleRecordingsBackfillThumbnails(w http.ResponseWriter, r *ht
 			http.Error(w, "failed to list recordings", http.StatusBadGateway)
 			return
 		}
+		if resp.StatusCode != 200 {
+			s.logger.Warn("pb recordings list status", "status", resp.StatusCode, "page", page)
+			resp.Body.Close()
+			http.Error(w, "failed to list recordings", http.StatusBadGateway)
+			return
+		}
 		var result struct {
 			Items []struct {
 				MeetingID string `json:"meeting_id"`
