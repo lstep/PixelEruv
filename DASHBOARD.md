@@ -1,5 +1,33 @@
 # Dashboard
 
+## A/V meeting recording (ext-rec + LiveKit Egress)
+
+**Branch:** `feat/recording`
+**Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, and `tsc --noEmit` all pass. Not yet tested end-to-end with a running Docker stack (needs `make up` + manual browser test as admin).
+
+Admin-hosted recording of A/V meetings in LiveKit zone rooms via a new `ext-rec` extension + the LiveKit Egress service. Two mutually exclusive targets per recording: local MP4 (v1) or YouTube RTMP live stream. One recording per room at a time. Host = admin for v1. Proximity rooms unrecorded in v1.
+
+### What was built
+
+- **Proto:** `RecordingRequestFrame` (client→server), `RecordingStateFrame` + `RecordingActiveFrame` (server→client) in `proto/frames.proto`.
+- **Worldsim:** `worldsim.entity_info` request-reply handler (returns `is_admin`, `status`, `display_name`, `map_id`, `client_id` for a given entity). `RecordingStore` + `worldsim.recording.create` / `worldsim.recording.update` NATS handlers (extensions don't have direct PocketBase access). `recordings` PB collection migration (`1753700000`).
+- **ext-rec** (`backend/cmd/ext-rec`): New extension. Subscribes to `recording.start` / `recording.stop`. Authorizes via `worldsim.entity_info` (admin only). Starts/stops a LiveKit Room Composite Egress via `lksdk` (`livekit/server-sdk-go/v2`). MP4 target writes to `RECORDINGS_DIR`; YouTube target streams RTMP to `YOUTUBE_RTMP_URL/YOUTUBE_STREAM_KEY`. Inserts/updates PB rows via worldsim NATS. Fans out `recording_active` to all participants. Audit emits on start/stop/denied.
+- **Pusher:** Forwards `ClientFrame_Recording` to `recording.<action>` NATS subject (adds `client_id` + `entity_id` from session). Forwards `client.<id>.recording_state` + `client.<id>.recording_active` back to the browser as `ServerFrame_RecordingState` / `ServerFrame_RecordingActive`.
+- **Frontend:** TopMenu record button (admin-only, visible when in an A/V room). Click → menu with "Record to MP4" / "Stream to YouTube". Active state → "● Stop REC" (red). GameScene shows a blinking "REC ●" DOM pill + one-time toast when a recording is active. `WsClient.sendRecording()` + `onRecordingState` / `onRecordingActive` handlers.
+- **Docker:** `livekit-egress` service (v1.9.0) + `ext-rec` service + `recordings` volume in both `docker/docker-compose.yml` and `docker/dist/docker-compose.yml`. `backend.Dockerfile` `ext-rec` target added.
+
+### Design doc
+
+`docs/plans/2026-07-18-recording-design.md`
+
+### Known v1 limitations (documented in design doc)
+
+- No auto-stop on empty room (host must stop manually).
+- ext-rec restart loses `activeRecs` state (orphan Egress cleanup is v2).
+- YouTube target is one global channel (env vars).
+- Consent = indicator + toast + audit capture; no opt-in dialog.
+- No frontend listing of past recordings (PB `recordings` collection exists; UI is later work).
+
 ## Periodic position save + zoom persistence
 
 **Branch:** `feat/periodic-position-and-zoom-persist`
