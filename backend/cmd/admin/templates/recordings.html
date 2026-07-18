@@ -49,6 +49,9 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .play-btn:hover { background: var(--accent); color: #fff; }
 .empty { text-align: center; color: var(--muted); padding: 2rem; }
 .total { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
+.disk { font-size: 0.85rem; margin-bottom: 0.5rem; }
+.disk-low { color: var(--danger); font-weight: 600; }
+.disk-ok { color: var(--muted); }
 .logout { margin-top: 2rem; }
 .logout a { color: var(--muted); text-decoration: none; }
 .version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
@@ -92,6 +95,9 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 </form>
 
 <p class="total">{{.Total}} recording(s)</p>
+<p class="disk {{if lt .Disk.FreePercent 5.0}}disk-low{{else}}disk-ok{{end}}">
+  Disk: {{.Disk.UsedHuman}} used of {{.Disk.TotalHuman}}, {{.Disk.FreeHuman}} free ({{printf "%.1f" .Disk.FreePercent}}%)
+</p>
 
 {{if .Rows}}
 <table>

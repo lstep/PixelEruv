@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lstep/pixeleruv/backend/internal/version"
+	"golang.org/x/sys/unix"
 )
 
 // Config holds the admin service configuration.
@@ -452,6 +453,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 		"Status":    status,
 		"Target":    target,
 		"StartedBy": startedBy,
+		"Disk":      diskUsage(s.cfg.RecordingsDir),
 	})
 }
 
@@ -475,6 +477,59 @@ func computeDuration(start, end string) string {
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	}
 	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// diskUsage reports free/total bytes and free percentage for the filesystem
+// holding dir. Returns zero values on error (e.g. dir doesn't exist).
+type diskInfo struct {
+	TotalBytes  uint64
+	FreeBytes   uint64
+	UsedBytes   uint64
+	FreePercent float64
+	TotalHuman  string
+	FreeHuman   string
+	UsedHuman   string
+}
+
+func diskUsage(dir string) diskInfo {
+	var st unix.Stat_t
+	if err := unix.Stat(dir, &st); err != nil {
+		return diskInfo{}
+	}
+	var fs unix.Statfs_t
+	if err := unix.Statfs(dir, &fs); err != nil {
+		return diskInfo{}
+	}
+	total := uint64(fs.Blocks) * uint64(fs.Bsize)
+	free := uint64(fs.Bavail) * uint64(fs.Bsize)
+	used := total - free
+	pct := 0.0
+	if total > 0 {
+		pct = float64(free) / float64(total) * 100
+	}
+	return diskInfo{
+		TotalBytes:  total,
+		FreeBytes:   free,
+		UsedBytes:   used,
+		FreePercent: pct,
+		TotalHuman:  humanBytes(total),
+		FreeHuman:   humanBytes(free),
+		UsedHuman:   humanBytes(used),
+	}
+}
+
+// humanBytes formats a byte count as a human-readable string (e.g. "1.2 GB").
+func humanBytes(b uint64) string {
+	switch {
+	case b >= 1<<30:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1<<30))
+	case b >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1<<20))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.1f KB", float64(b)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 // handleRecordingsDelete deletes a recording: PB record + file on disk.
