@@ -145,7 +145,7 @@ tr:hover td { background: rgba(78,154,241,0.05); }
         {{if .HasAudio}}<a class="dl" href="{{.AudioURL}}" download>MP3</a>{{else}}&mdash;{{end}}
       </td>
       <td>
-        <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 file.');">
+        <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 and MP3 files.');">
           <input type="hidden" name="id" value="{{.ID}}">
           <input type="hidden" name="file_url" value="{{.FileURL}}">
           <input type="hidden" name="audio_url" value="{{.AudioURL}}">

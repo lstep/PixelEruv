@@ -331,11 +331,18 @@ func main() {
 		}
 	}
 
+	// audioSem caps concurrent ffmpeg extractions so a burst of stop
+	// events doesn't saturate CPU. Capacity 2 for now; make it an env
+	// var later if tunability is needed.
+	audioSem := make(chan struct{}, 2)
+
 	// extractAudioAndUpdatePB polls for the MP4 file to appear on disk
 	// (Egress writes it asynchronously after StopEgress), then runs ffmpeg
 	// to extract the audio track as MP3, and updates the PB row with the
 	// audio_url. Best-effort: logs warnings on failure, no retry.
 	extractAudioAndUpdatePB := func(meetingID, mp4Filename string) {
+		audioSem <- struct{}{}
+		defer func() { <-audioSem }()
 		mp4Path := filepath.Join(recordingsDir, mp4Filename)
 		// Poll up to 60s for the MP4 to appear and stop growing.
 		var lastSize int64
