@@ -291,6 +291,7 @@ services:
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
       PB_ADMIN_PASSWORD: "password123"
       RECORDINGS_DIR: "/recordings"
+      NATS_URL: "nats://nats:4222"
     volumes:
       # Read-write access to recordings for file deletion from the management UI.
       - ./recordings:/recordings

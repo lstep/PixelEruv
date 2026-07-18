@@ -45,6 +45,9 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .del-form { display: inline; }
 .del-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
 .del-btn:hover { background: var(--danger); color: #fff; }
+.stop-form { display: inline; margin-right: 0.3rem; }
+.stop-btn { background: transparent; color: var(--warn); border: 1px solid var(--warn); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+.stop-btn:hover { background: var(--warn); color: #fff; }
 .play-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; text-decoration: none; margin-right: 0.3rem; }
 .play-btn:hover { background: var(--accent); color: #fff; }
 .empty { text-align: center; color: var(--muted); padding: 2rem; }
@@ -153,6 +156,13 @@ tr:hover td { background: rgba(78,154,241,0.05); }
         {{else}}&mdash;{{end}}
       </td>
       <td>
+        {{if eq .Status "active"}}
+          <form class="stop-form" method="POST" action="/admin/recordings/stop" onsubmit="return confirm('Stop this recording now? LiveKit will finalize the MP4 and audio extraction will run. This is the clean stop path.');">
+            <input type="hidden" name="room" value="{{.Room}}">
+            <input type="hidden" name="meeting_id" value="{{.MeetingID}}">
+            <button type="submit" class="stop-btn">Stop</button>
+          </form>
+        {{end}}
         <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 and MP3 files.');">
           <input type="hidden" name="id" value="{{.ID}}">
           <input type="hidden" name="file_url" value="{{.FileURL}}">

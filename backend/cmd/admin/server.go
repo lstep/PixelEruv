@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/lstep/pixeleruv/backend/internal/version"
+	nats "github.com/nats-io/nats.go"
 	"golang.org/x/sys/unix"
 )
 
@@ -28,6 +29,7 @@ type Config struct {
 	PBAdminEmail    string
 	PBAdminPassword string
 	RecordingsDir   string
+	NATSURL         string
 }
 
 // Server is the admin portal HTTP service.
@@ -35,6 +37,7 @@ type Server struct {
 	cfg    Config
 	logger *slog.Logger
 	tmpl   *template.Template
+	nc     *nats.Conn
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
@@ -45,7 +48,23 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	if _, err := tmpl.New("recordings").Parse(recordingsHTML); err != nil {
 		return nil, fmt.Errorf("parse recordings template: %w", err)
 	}
-	return &Server{cfg: cfg, logger: logger, tmpl: tmpl}, nil
+	// NATS is optional: the stop button is disabled if not connected,
+	// but other admin features (list, delete, delete-all) still work.
+	var nc *nats.Conn
+	if cfg.NATSURL != "" {
+		nc, err = nats.Connect(cfg.NATSURL,
+			nats.Name("pixeleruv-admin"),
+			nats.ReconnectWait(2*time.Second),
+			nats.MaxReconnects(-1),
+		)
+		if err != nil {
+			logger.Warn("nats connect (stop button will be disabled)", "err", err, "url", cfg.NATSURL)
+			nc = nil
+		} else {
+			logger.Info("nats connected", "url", cfg.NATSURL)
+		}
+	}
+	return &Server{cfg: cfg, logger: logger, tmpl: tmpl, nc: nc}, nil
 }
 
 func (s *Server) Run(ctx context.Context, addr string) error {
@@ -58,6 +77,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/admin/recordings", s.handleRecordings)
 	mux.HandleFunc("/admin/recordings/delete", s.handleRecordingsDelete)
 	mux.HandleFunc("/admin/recordings/delete-all", s.handleRecordingsDeleteAll)
+	mux.HandleFunc("/admin/recordings/stop", s.handleRecordingsStop)
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
@@ -702,6 +722,89 @@ func (s *Server) handleRecordingsDeleteAll(w http.ResponseWriter, r *http.Reques
 	}
 
 	s.logger.Info("all recordings deleted", "by", sess.Email, "records", deleted, "files", filesRemoved)
+	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
+}
+
+// handleRecordingsStop stops a currently-active recording by publishing
+// a recording.admin.stop message to ext-rec via NATS. ext-rec performs
+// the clean stop flow (StopEgress, PB update, audio extraction).
+func (s *Server) handleRecordingsStop(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	room := r.FormValue("room")
+	meetingID := r.FormValue("meeting_id")
+	if room == "" || meetingID == "" {
+		http.Error(w, "missing room or meeting_id", http.StatusBadRequest)
+		return
+	}
+	if s.nc == nil {
+		s.logger.Warn("stop requested but NATS not connected", "room", room)
+		http.Error(w, "NATS unavailable; admin service has no bus connection", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Fetch the PB record to confirm it is actually active before sending.
+	token, err := s.pbAdminToken()
+	if err != nil {
+		s.logger.Warn("pb admin token", "err", err)
+		http.Error(w, "failed to authenticate to PocketBase", http.StatusBadGateway)
+		return
+	}
+	pbURL := fmt.Sprintf("%s/collections/recordings/records?filter=%s",
+		s.cfg.PBApiURL,
+		url.QueryEscape(fmt.Sprintf("meeting_id=%q", meetingID)),
+	)
+	req, _ := http.NewRequest("GET", pbURL, nil)
+	req.Header.Set("Authorization", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Warn("pb recordings query", "err", err)
+		http.Error(w, "failed to query recording", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Items []struct {
+			Status string `json:"status"`
+			Room   string `json:"room"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		s.logger.Warn("pb recordings decode", "err", err)
+		http.Error(w, "failed to parse recording", http.StatusBadGateway)
+		return
+	}
+	if len(result.Items) == 0 {
+		http.Error(w, "recording not found", http.StatusNotFound)
+		return
+	}
+	if result.Items[0].Status != "active" {
+		http.Error(w, "recording is not active (status="+result.Items[0].Status+")", http.StatusConflict)
+		return
+	}
+
+	// Publish to ext-rec. Fire-and-forget: ext-rec handles the full stop
+	// flow and updates the PB row. The admin UI re-queries on next page
+	// load, so no reply is needed.
+	msg := struct {
+		Room       string `json:"room"`
+		MeetingID  string `json:"meeting_id"`
+		AdminEmail string `json:"admin_email"`
+	}{Room: room, MeetingID: meetingID, AdminEmail: sess.Email}
+	data, _ := json.Marshal(msg)
+	if err := s.nc.Publish("recording.admin.stop", data); err != nil {
+		s.logger.Warn("nats publish recording.admin.stop", "err", err)
+		http.Error(w, "failed to publish stop request", http.StatusBadGateway)
+		return
+	}
+	s.logger.Info("stop request published", "room", room, "meeting", meetingID, "by", sess.Email)
 	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
 }
 

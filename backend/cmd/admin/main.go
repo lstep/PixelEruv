@@ -29,6 +29,7 @@ func main() {
 		PBAdminEmail:    os.Getenv("PB_ADMIN_EMAIL"),
 		PBAdminPassword: os.Getenv("PB_ADMIN_PASSWORD"),
 		RecordingsDir:   envOr("RECORDINGS_DIR", "/recordings"),
+		NATSURL:         envOr("NATS_URL", ""),
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

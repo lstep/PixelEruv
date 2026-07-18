@@ -682,6 +682,41 @@ func main() {
 			audit.Actor{EntityID: req.EntityID, ClientID: req.ClientID, Extension: extID})
 	})
 
+	// --- recording.admin.stop handler ---
+	// Triggered by the admin UI "Stop" button. Bypasses the entity/admin
+	// check (the admin server already authenticated the user via session
+	// cookie) and uses the admin email as the audit actor identity.
+	nc.Subscribe("recording.admin.stop", func(m *nats.Msg) {
+		var req struct {
+			Room       string `json:"room"`
+			MeetingID  string `json:"meeting_id"`
+			AdminEmail string `json:"admin_email"`
+		}
+		if err := json.Unmarshal(m.Data, &req); err != nil {
+			logger.Warn("recording.admin.stop unmarshal", "err", err)
+			return
+		}
+		if req.Room == "" || req.MeetingID == "" {
+			logger.Warn("recording.admin.stop missing fields", "req", req)
+			return
+		}
+		mu.Lock()
+		rec, exists := activeRecs[req.Room]
+		mu.Unlock()
+		if !exists {
+			logger.Warn("recording.admin.stop: no active recording for room",
+				"room", req.Room, "meeting", req.MeetingID)
+			return
+		}
+		if rec.MeetingID != req.MeetingID {
+			logger.Warn("recording.admin.stop: meeting_id mismatch",
+				"room", req.Room, "want", req.MeetingID, "got", rec.MeetingID)
+			return
+		}
+		stopRecording(req.Room, rec, "admin_stop",
+			audit.Actor{EntityID: req.AdminEmail, Extension: extID})
+	})
+
 	// --- Extension registration protocol ---
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
