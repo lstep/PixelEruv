@@ -198,6 +198,16 @@ services:
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
     restart: unless-stopped
 
+  # Chown the recordings volume to uid 1001:0 (egress user) on startup.
+  # The egress container runs as non-root and can't write to a root-owned
+  # volume. One-shot — exits after chowning.
+  recordings-init:
+    image: alpine:3.20
+    command: ["chown", "-R", "1001:0", "/recordings"]
+    volumes:
+      - recordings:/recordings
+    restart: "no"
+
   # LiveKit Egress service — records room composites to file (MP4) or streams
   # to RTMP (YouTube). ext-rec calls its API via the LiveKit server-sdk-go;
   # the SDK posts to the LiveKit server (port 7880), which forwards to Egress
@@ -206,8 +216,12 @@ services:
   livekit-egress:
     image: livekit/egress:v1.9.0
     depends_on:
-      - livekit
-      - redis
+      recordings-init:
+        condition: service_completed_successfully
+      livekit:
+        condition: service_started
+      redis:
+        condition: service_started
     environment:
       EGRESS_CONFIG_FILE: "/etc/egress.yaml"
     volumes:
@@ -228,6 +242,7 @@ services:
       - worldsim
       - livekit
       - livekit-egress
+      - recordings-init
     environment:
       NATS_URL: "nats://nats:4222"
       EXTENSION_ID: "rec"
