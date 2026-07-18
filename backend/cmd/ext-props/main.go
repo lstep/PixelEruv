@@ -73,8 +73,8 @@ type Effect struct {
 	Payload   string   `json:"payload,omitempty"`
 	TargetIDs []string `json:"target_ids"`
 	// GidOn/GidOff are optional per-effect sprite overrides for verbs that
-	// swap the target's sprite (toggle, toggle_light, set_light). 0 means
-	// fall back to the target entity's own GidOn/GidOff.
+	// swap the target's sprite (toggle, set_state, toggle_light, set_light).
+	// 0 means fall back to the target entity's own GidOn/GidOff.
 	GidOn  uint32 `json:"gid_on,omitempty"`
 	GidOff uint32 `json:"gid_off,omitempty"`
 }
