@@ -56,6 +56,26 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .disk-low { color: var(--danger); font-weight: 600; }
 .disk-ok { color: var(--muted); }
 .delete-all-bar { margin-bottom: 1rem; }
+
+/* Stats panel: card grid with a circular disk-usage gauge. */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.stat-card { background: var(--surface); border: 1px solid var(--surface2); border-radius: 10px; padding: 1rem 1.25rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.stat-card .stat-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .stat-value { font-size: 1.6rem; font-weight: 700; color: var(--text); line-height: 1.1; }
+.stat-card .stat-sub { color: var(--muted); font-size: 0.8rem; }
+.stat-card.disk-card { flex-direction: row; align-items: center; gap: 1rem; }
+.gauge { position: relative; width: 84px; height: 84px; flex-shrink: 0; }
+.gauge svg { transform: rotate(-90deg); }
+.gauge .gauge-track { fill: none; stroke: var(--surface2); stroke-width: 8; }
+.gauge .gauge-fill { fill: none; stroke: var(--accent); stroke-width: 8; stroke-linecap: round; transition: stroke-dashoffset 0.4s ease, stroke 0.2s; }
+.gauge .gauge-fill.warn { stroke: var(--warn); }
+.gauge .gauge-fill.crit { stroke: var(--danger); }
+.gauge .gauge-pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 0.95rem; font-weight: 700; color: var(--text); }
+.gauge-details { display: flex; flex-direction: column; gap: 0.15rem; }
+.gauge-details .gd-row { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.8rem; }
+.gauge-details .gd-label { color: var(--muted); }
+.gauge-details .gd-val { color: var(--text); font-family: monospace; }
+.gauge-details .gd-row.free-low .gd-val { color: var(--danger); font-weight: 600; }
 .del-all-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.4rem 0.8rem; cursor: pointer; font-size: 0.85rem; }
 .del-all-btn:hover { background: var(--danger); color: #fff; }
 .audio-pending { color: var(--muted); font-style: italic; font-size: 0.85rem; }
@@ -102,10 +122,39 @@ tr:hover td { background: rgba(78,154,241,0.05); }
   <a href="/admin/recordings">Clear</a>
 </form>
 
-<p class="total">{{.Total}} recording(s) &mdash; {{.TotalSize}} on disk</p>
-<p class="disk {{if lt .Disk.FreePercent 5.0}}disk-low{{else}}disk-ok{{end}}">
-  Disk: {{.Disk.UsedHuman}} used of {{.Disk.TotalHuman}}, {{.Disk.FreeHuman}} free ({{printf "%.1f" .Disk.FreePercent}}%)
-</p>
+{{/* Stats panel: count, total size, disk gauge. GaugeDashOffset and
+   UsedPercent are precomputed in diskUsage() so the template avoids
+   arithmetic (Go text/template has no built-in math funcs). */}}
+{{$gaugeClass := "gauge-fill"}}{{if lt .Disk.FreePercent 10.0}}{{$gaugeClass = "gauge-fill warn"}}{{end}}{{if lt .Disk.FreePercent 5.0}}{{$gaugeClass = "gauge-fill crit"}}{{end}}
+{{$freeRowClass := ""}}{{if lt .Disk.FreePercent 5.0}}{{$freeRowClass = "free-low"}}{{end}}
+<div class="stats">
+  <div class="stat-card">
+    <span class="stat-label">Recordings</span>
+    <span class="stat-value">{{.Total}}</span>
+    <span class="stat-sub">total rows</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-label">On-disk size</span>
+    <span class="stat-value">{{.TotalSize}}</span>
+    <span class="stat-sub">MP4 + MP3 combined</span>
+  </div>
+  <div class="stat-card disk-card">
+    <div class="gauge">
+      <svg width="84" height="84" viewBox="0 0 84 84">
+        <circle class="gauge-track" cx="42" cy="42" r="36"></circle>
+        <circle class="{{$gaugeClass}}" cx="42" cy="42" r="36"
+          stroke-dasharray="226.2"
+          stroke-dashoffset="{{printf "%.1f" .Disk.GaugeDashOffset}}"></circle>
+      </svg>
+      <span class="gauge-pct">{{printf "%.0f" .Disk.UsedPercent}}%</span>
+    </div>
+    <div class="gauge-details">
+      <div class="gd-row"><span class="gd-label">Total</span><span class="gd-val">{{.Disk.TotalHuman}}</span></div>
+      <div class="gd-row"><span class="gd-label">Used</span><span class="gd-val">{{.Disk.UsedHuman}}</span></div>
+      <div class="gd-row {{$freeRowClass}}"><span class="gd-label">Free</span><span class="gd-val">{{.Disk.FreeHuman}} ({{printf "%.1f" .Disk.FreePercent}}%)</span></div>
+    </div>
+  </div>
+</div>
 {{if .Rows}}
 <div class="delete-all-bar">
   <button class="del-all-btn" onclick="confirmDeleteAll()">Delete all recordings</button>

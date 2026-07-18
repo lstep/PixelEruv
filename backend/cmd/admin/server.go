@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -538,9 +539,14 @@ type diskInfo struct {
 	FreeBytes   uint64
 	UsedBytes   uint64
 	FreePercent float64
+	UsedPercent float64
 	TotalHuman  string
 	FreeHuman   string
 	UsedHuman   string
+	// GaugeDashOffset is the SVG stroke-dashoffset for the used portion
+	// of a circle with circumference 226.2 (r=36). 0 = fully used,
+	// 226.2 = empty. Computed once so the template doesn't need arithmetic.
+	GaugeDashOffset float64
 }
 
 func diskUsage(dir string) diskInfo {
@@ -551,18 +557,23 @@ func diskUsage(dir string) diskInfo {
 	total := uint64(fs.Blocks) * uint64(fs.Bsize)
 	free := uint64(fs.Bavail) * uint64(fs.Bsize)
 	used := total - free
-	pct := 0.0
+	freePct := 0.0
+	usedPct := 0.0
 	if total > 0 {
-		pct = float64(free) / float64(total) * 100
+		freePct = float64(free) / float64(total) * 100
+		usedPct = float64(used) / float64(total) * 100
 	}
+	const circ = 2 * math.Pi * 36 // ~226.2
 	return diskInfo{
-		TotalBytes:  total,
-		FreeBytes:   free,
-		UsedBytes:   used,
-		FreePercent: pct,
-		TotalHuman:  humanBytes(total),
-		FreeHuman:   humanBytes(free),
-		UsedHuman:   humanBytes(used),
+		TotalBytes:      total,
+		FreeBytes:       free,
+		UsedBytes:       used,
+		FreePercent:     freePct,
+		UsedPercent:     usedPct,
+		TotalHuman:      humanBytes(total),
+		FreeHuman:       humanBytes(free),
+		UsedHuman:       humanBytes(used),
+		GaugeDashOffset: circ - (circ * usedPct / 100),
 	}
 }
 
