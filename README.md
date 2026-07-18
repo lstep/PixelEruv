@@ -200,7 +200,7 @@ Then open `https://192.168.1.10:4043` and accept the self-signed cert warning
 once. For a real domain + Let's Encrypt cert, put a host nginx proxy in front
 (see [`docs/quick-start.md`](docs/quick-start.md)).
 
-� LiveKit API secret
+🔑 LiveKit API secret
 
 LiveKit rejects secrets shorter than 32 characters. The dev config ships with
 a 40-char placeholder (`devsecretdevsecretdevsecretdevsecret123`) set in both
@@ -217,7 +217,7 @@ After rotating the secret, restart `livekit` and `ext-av`, and have any
 connected browser rejoin the room (old tokens are signed with the old secret
 and will fail with `token signature is invalid` until refreshed).
 
-�🔍 Debugging with motel
+🔍 Debugging with motel
 
 The backend (pusher, worldsim, all four extensions) and frontend are
 instrumented with OpenTelemetry traces and logs. Telemetry is **off by

@@ -192,6 +192,9 @@ func main() {
 
 	var mu sync.Mutex
 	activeRecs := make(map[string]*activeRec) // keyed by room name
+	// emptySince tracks when a room's participant count last dropped to
+	// zero while a recording is active. Used by the auto-stop ticker.
+	emptySince := make(map[string]time.Time)
 
 	// LiveKit API clients. The egress client starts/stops recordings; the
 	// room client lists participants (for the participant snapshot and the
@@ -573,6 +576,71 @@ func main() {
 			"egress", egressInfo.EgressId, "meeting", meetingID, "participants", len(participants))
 	})
 
+	// stopRecording performs the full stop flow: StopEgress, remove from
+	// activeRecs, update PB row to completed, emit audit event, fan out
+	// recording_active=false, and kick off audio extraction. Called from
+	// the manual recording.stop handler and the auto-stop-on-empty ticker.
+	// reason is "manual" or "auto_empty"; actor is the audit actor (manual
+	// has entity/client, auto has only extension).
+	stopRecording := func(room string, rec *activeRec, reason string, actor audit.Actor) {
+		_, err := egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: rec.EgressID})
+		if err != nil {
+			logger.Warn("stop egress", "err", err, "egress", rec.EgressID)
+			// Continue to clean up state even if StopEgress fails — the Egress
+			// may have already ended (room empty, server restart, etc.).
+		}
+
+		mu.Lock()
+		delete(activeRecs, room)
+		delete(emptySince, room)
+		mu.Unlock()
+
+		// Update PB row.
+		updateErr := updateRecordingRow(recordingUpdateMsg{
+			MeetingID: rec.MeetingID,
+			EndTime:   time.Now().UnixMilli(),
+			Status:    "completed",
+		})
+		if updateErr != nil {
+			logger.Warn("update recording row", "err", updateErr, "meeting", rec.MeetingID)
+		}
+
+		audit.Emit(nc, "recording.stop", audit.SeverityInfo,
+			actor,
+			audit.Details{
+				"room": room, "target": rec.Target, "egress_id": rec.EgressID,
+				"meeting_id": rec.MeetingID, "reason": reason,
+			},
+			"")
+
+		// Notify the host if we have a client_id (manual stop). Auto-stop
+		// has no client_id — the host has already disconnected — so we
+		// skip the per-client state push and just fan out active=false.
+		if actor.ClientID != "" {
+			publishRecordingState(actor.ClientID, recordingStateMsg{
+				Room: room, Status: "stopped", Target: rec.Target, EgressID: rec.EgressID,
+			})
+		}
+		fanOutRecordingActive(room, rec.Target, false, rec.Participants)
+		logger.Info("recording stopped",
+			"reason", reason, "entity", actor.EntityID, "room", room, "egress", rec.EgressID, "meeting", rec.MeetingID)
+
+		// Extract audio (MP3) from the MP4 in the background. The Egress
+		// writes the file asynchronously after StopEgress returns, so we
+		// poll for it. On success, update the PB row with audio_url.
+		// audio_status is set to "pending" immediately so the UI can show
+		// "extracting..." while the goroutine runs.
+		if rec.Target == "mp4" && rec.Filename != "" {
+			if err := updateRecordingRow(recordingUpdateMsg{
+				MeetingID:   rec.MeetingID,
+				AudioStatus: "pending",
+			}); err != nil {
+				logger.Warn("audio extraction: set pending status", "err", err, "meeting", rec.MeetingID)
+			}
+			go extractAudioAndUpdatePB(rec.MeetingID, rec.Room, rec.Filename)
+		}
+	}
+
 	// --- recording.stop handler ---
 	nc.Subscribe("recording.stop", func(m *nats.Msg) {
 		var req recordingStopMsg
@@ -610,56 +678,8 @@ func main() {
 			return
 		}
 
-		_, err = egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: rec.EgressID})
-		if err != nil {
-			logger.Warn("stop egress", "err", err, "egress", rec.EgressID)
-			// Continue to clean up state even if StopEgress fails — the Egress
-			// may have already ended (room empty, server restart, etc.).
-		}
-
-		mu.Lock()
-		delete(activeRecs, req.Room)
-		mu.Unlock()
-
-		// Update PB row.
-		updateErr := updateRecordingRow(recordingUpdateMsg{
-			MeetingID: rec.MeetingID,
-			EndTime:   time.Now().UnixMilli(),
-			Status:    "completed",
-		})
-		if updateErr != nil {
-			logger.Warn("update recording row", "err", updateErr, "meeting", rec.MeetingID)
-		}
-
-		audit.Emit(nc, "recording.stop", audit.SeverityInfo,
-			audit.Actor{EntityID: req.EntityID, ClientID: req.ClientID, Extension: extID},
-			audit.Details{
-				"room": req.Room, "target": rec.Target, "egress_id": rec.EgressID,
-				"meeting_id": rec.MeetingID,
-			},
-			"")
-
-		publishRecordingState(req.ClientID, recordingStateMsg{
-			Room: req.Room, Status: "stopped", Target: rec.Target, EgressID: rec.EgressID,
-		})
-		fanOutRecordingActive(req.Room, rec.Target, false, rec.Participants)
-		logger.Info("recording stopped",
-			"entity", req.EntityID, "room", req.Room, "egress", rec.EgressID, "meeting", rec.MeetingID)
-
-		// Extract audio (MP3) from the MP4 in the background. The Egress
-		// writes the file asynchronously after StopEgress returns, so we
-		// poll for it. On success, update the PB row with audio_url.
-		// audio_status is set to "pending" immediately so the UI can show
-		// "extracting..." while the goroutine runs.
-		if rec.Target == "mp4" && rec.Filename != "" {
-			if err := updateRecordingRow(recordingUpdateMsg{
-				MeetingID:   rec.MeetingID,
-				AudioStatus: "pending",
-			}); err != nil {
-				logger.Warn("audio extraction: set pending status", "err", err, "meeting", rec.MeetingID)
-			}
-			go extractAudioAndUpdatePB(rec.MeetingID, rec.Room, rec.Filename)
-		}
+		stopRecording(req.Room, rec, "manual",
+			audit.Actor{EntityID: req.EntityID, ClientID: req.ClientID, Extension: extID})
 	})
 
 	// --- Extension registration protocol ---
@@ -693,6 +713,72 @@ func main() {
 		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
 		publishReg()
 	}
+
+	// Auto-stop ticker: every 1s, check each active recording's room for
+	// participants. If a room has zero participants, mark the time; if it
+	// stays empty for 10 consecutive seconds, stop the recording with
+	// reason="auto_empty". Any participant rejoining resets the timer.
+	autoStopTicker := time.NewTicker(1 * time.Second)
+	defer autoStopTicker.Stop()
+	const emptyTimeout = 10 * time.Second
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-autoStopTicker.C:
+				// Snapshot active recordings under the lock.
+				mu.Lock()
+				type pending struct {
+					room string
+					rec  *activeRec
+				}
+				var toCheck []pending
+				for room, rec := range activeRecs {
+					toCheck = append(toCheck, pending{room, rec})
+				}
+				mu.Unlock()
+
+				for _, p := range toCheck {
+					participants, err := listRoomParticipants(p.room)
+					if err != nil {
+						// LiveKit unreachable or room gone — leave the timer
+						// alone; next tick will retry. Don't auto-stop on
+						// transient errors.
+						continue
+					}
+					mu.Lock()
+					if len(participants) > 0 {
+						delete(emptySince, p.room)
+						mu.Unlock()
+						continue
+					}
+					// Room is empty.
+					since, ok := emptySince[p.room]
+					if !ok {
+						emptySince[p.room] = time.Now()
+						mu.Unlock()
+						continue
+					}
+					elapsed := time.Since(since)
+					mu.Unlock()
+					if elapsed >= emptyTimeout {
+						// Re-fetch rec under lock to make sure it's still
+						// active and hasn't been stopped concurrently.
+						mu.Lock()
+						rec, exists := activeRecs[p.room]
+						mu.Unlock()
+						if !exists {
+							continue
+						}
+						logger.Info("auto-stop: room empty for >=10s", "room", p.room, "meeting", rec.MeetingID)
+						stopRecording(p.room, rec, "auto_empty",
+							audit.Actor{Extension: extID})
+					}
+				}
+			}
+		}
+	}()
 
 	// Heartbeat + re-register loop.
 	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
