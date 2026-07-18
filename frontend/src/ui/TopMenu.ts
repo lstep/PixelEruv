@@ -249,13 +249,38 @@ export class TopMenu {
       this.dropdown.appendChild(speakerSelect);
     }
 
-    // Populate device lists when the dropdown opens (labels may have
-    // become available after the first permission grant). After rebuilding
-    // the options, restore the currently-selected device so the <select>
-    // doesn't silently reset to the first option.
+    // Populate device lists when the dropdown opens. Without mic/camera
+    // permission, Safari only enumerates a single "default" device per
+    // kind with no labels, so the user can't see their real devices
+    // (e.g. "Logitech Webcam"). The menu-button click is a user gesture,
+    // so we can request permission here and re-enumerate with labels.
+    // After rebuilding options, restore the currently-selected device so
+    // the <select> doesn't silently reset to the first option.
     const refreshDevices = async () => {
       if (!this.avClient) return;
-      const mics = await this.avClient.getDevices("audioinput");
+      // First enumeration may have empty labels (no permission yet).
+      let mics = await this.avClient.getDevices("audioinput");
+      let cams = await this.avClient.getDevices("videoinput");
+      const needsPermission =
+        mics.some((d) => !d.label || d.label === "Microphone") ||
+        cams.some((d) => !d.label || d.label === "Camera");
+      if (needsPermission) {
+        // Request both audio + video permission. Either may be denied;
+        // we re-enumerate regardless and show whatever is available.
+        try {
+          await this.avClient.requestPermission("audio");
+        } catch (e) {
+          console.warn("TopMenu: audio permission denied:", e);
+        }
+        try {
+          await this.avClient.requestPermission("video");
+        } catch (e) {
+          console.warn("TopMenu: video permission denied:", e);
+        }
+        mics = await this.avClient.getDevices("audioinput");
+        cams = await this.avClient.getDevices("videoinput");
+      }
+
       const selectedMic = this.avClient.getSelectedDevice("audioinput");
       micSelect.innerHTML = "";
       for (const d of mics) {
@@ -267,7 +292,6 @@ export class TopMenu {
       if (selectedMic && [...micSelect.options].some((o) => o.value === selectedMic)) {
         micSelect.value = selectedMic;
       }
-      const cams = await this.avClient.getDevices("videoinput");
       const selectedCam = this.avClient.getSelectedDevice("videoinput");
       camSelect.innerHTML = "";
       for (const d of cams) {

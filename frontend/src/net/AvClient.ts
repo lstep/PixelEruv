@@ -316,7 +316,11 @@ export class AvClient {
   // This caches the grant so later LiveKit publishing reuses it without a
   // prompt. Resolves silently when mediaDevices is unavailable (insecure
   // context), falling back to LiveKit's connect-time prompt.
-  private async requestPermission(kind: "audio" | "video"): Promise<void> {
+  // Public so the TopMenu can request permission when the user opens the
+  // device dropdown outside an A/V room — without permission, Safari only
+  // enumerates a single "default" device per kind with no labels, so the
+  // user can't see their real devices (e.g. "Logitech Webcam").
+  async requestPermission(kind: "audio" | "video"): Promise<void> {
     if (!navigator.mediaDevices?.getUserMedia) return;
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: kind === "audio",
