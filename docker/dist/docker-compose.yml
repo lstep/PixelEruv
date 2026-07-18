@@ -168,6 +168,50 @@ services:
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
     restart: unless-stopped
 
+  # LiveKit Egress service — records room composites to file (MP4) or streams
+  # to RTMP (YouTube). ext-rec calls its API via the LiveKit server-sdk-go.
+  livekit-egress:
+    image: livekit/egress:v1.9.0
+    depends_on:
+      - livekit
+    environment:
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+      EGRESS_LOG_LEVEL: "info"
+    volumes:
+      - recordings:/recordings
+    restart: unless-stopped
+
+  # ext-rec — recording extension. Admin-hosted start/stop of Room Composite
+  # Egress for zone A/V rooms. Two targets: "mp4" (local file) or "youtube"
+  # (RTMP stream). One recording per room at a time. Host = admin for v1.
+  ext-rec:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: ext-rec
+    depends_on:
+      - nats
+      - worldsim
+      - livekit
+      - livekit-egress
+    environment:
+      NATS_URL: "nats://nats:4222"
+      EXTENSION_ID: "rec"
+      OTEL_ENABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://openobserve:5080/api/default"
+      LIVEKIT_URL: "ws://livekit:7880"
+      LIVEKIT_API_KEY: "devkey"
+      LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
+      RECORDINGS_DIR: "/recordings"
+      YOUTUBE_RTMP_URL: "${YOUTUBE_RTMP_URL:-}"
+      YOUTUBE_STREAM_KEY: "${YOUTUBE_STREAM_KEY:-}"
+    volumes:
+      - recordings:/recordings
+    restart: unless-stopped
+
   # OpenObserve (OTel backend) is not included by default — it requires
   # AES-NI CPU instructions. See the FAQ and audit-observability design doc.
   # For local dev tracing, use `make debug` (motel TUI).
@@ -216,3 +260,4 @@ services:
 volumes:
   pb_data:
   audit_data:
+  recordings:
