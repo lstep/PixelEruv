@@ -399,7 +399,14 @@ func main() {
 		mp3Path := filepath.Join(recordingsDir, mp3Filename)
 
 		// ffmpeg -i input.mp4 -vn -acodec libmp3lame -q:a 2 output.mp3
-		cmd := exec.Command("ffmpeg",
+		// 10min timeout: libmp3lame at q:a 2 is roughly real-time, so a
+		// 1h meeting extracts in ~1-2min. 10min covers long meetings
+		// with headroom; beyond that something is wrong (hung ffmpeg,
+		// disk full, etc.) and we'd rather fail and emit an audit event
+		// than hold a semaphore slot forever.
+		ffmpegCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		cmd := exec.CommandContext(ffmpegCtx, "ffmpeg",
 			"-y",
 			"-i", mp4Path,
 			"-vn",
@@ -408,7 +415,11 @@ func main() {
 			mp3Path,
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			fail("ffmpeg failed", string(out))
+			reason := "ffmpeg failed"
+			if ffmpegCtx.Err() == context.DeadlineExceeded {
+				reason = "ffmpeg timed out after 10m"
+			}
+			fail(reason, string(out))
 			return
 		}
 
