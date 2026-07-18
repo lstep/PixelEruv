@@ -144,10 +144,6 @@
 </data>
  </layer>
  <objectgroup id="6" name="Entities">
-  <properties>
-   <property name="layer_type" value="decoration"/>
-   <property name="sort_mode" value="dynamic"/>
-  </properties>
   <object id="10" name="light-switch-1" gid="380" x="191.88" y="317.426" width="32" height="32">
    <properties>
     <property name="entity_type" value="light_switch"/>
