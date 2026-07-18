@@ -581,9 +581,11 @@ func main() {
 	// stopRecording performs the full stop flow: StopEgress, remove from
 	// activeRecs, update PB row to completed, emit audit event, fan out
 	// recording_active=false, and kick off audio extraction. Called from
-	// the manual recording.stop handler and the auto-stop-on-empty ticker.
-	// reason is "manual" or "auto_empty"; actor is the audit actor (manual
-	// has entity/client, auto has only extension).
+	// the manual recording.stop handler, the auto-stop-on-empty ticker,
+	// and the recording.admin.stop handler.
+	// reason is "manual", "auto_empty", or "admin_stop"; actor is the
+	// audit actor (manual has entity/client, admin_stop has admin email
+	// as entity_id, auto_empty has only extension).
 	stopRecording := func(room string, rec *activeRec, reason string, actor audit.Actor) {
 		_, err := egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: rec.EgressID})
 		if err != nil {
