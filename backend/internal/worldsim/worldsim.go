@@ -2831,11 +2831,33 @@ func (s *Simulator) isMoveBlocked(zr *ZoneRegistry, md *MapData, oldX, oldY, new
 	// Fallback: Walls tile layer collision (tile-based by nature), at both
 	// endpoints' feet tiles. Movement is < 1 tile/tick so if either endpoint
 	// is in a blocked tile, the segment crossed it.
+	//
+	// Coordinate convention: the sprite is 1 tile wide centered on
+	// Position.X, and feet sit at Position.Y + avatarFeetYOffset (origin
+	// 0.5/0.75 on a 64px frame placed at (pos.X*32, pos.Y*32+16)). So
+	// Position.X = N is the LEFT edge of tile N and feet at M is the TOP
+	// edge of tile M — tile index = floor(Position coord). The sprite's
+	// leading edge depends on movement direction: right edge (Position.X
+	// +0.5) when moving +X, left edge (Position.X -0.5) when moving -X,
+	// center when X is static. The feet are a single point, so floor(feet)
+	// is direction-independent. Checking the +edge unconditionally (the old
+	// int(x+0.5) bias) only matched the leading edge for +X/+Y movement;
+	// -X/-Y movement checked the trailing edge and tunneled ~1 tile deep.
 	if md != nil {
-		if md.IsBlocked(int(oldX+0.5), int(ofy+0.5)) {
+		const half = float32(0.5)
+		var ledOldX, ledNewX float32
+		switch {
+		case newX > oldX:
+			ledOldX, ledNewX = oldX+half, newX+half
+		case newX < oldX:
+			ledOldX, ledNewX = oldX-half, newX-half
+		default:
+			ledOldX, ledNewX = oldX, newX
+		}
+		if md.IsBlocked(int(ledOldX), int(ofy)) {
 			return true
 		}
-		if md.IsBlocked(int(newX+0.5), int(nfy+0.5)) {
+		if md.IsBlocked(int(ledNewX), int(nfy)) {
 			return true
 		}
 	}

@@ -55,3 +55,74 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 		}
 	}
 }
+
+// TestIsMoveBlocked_WallsTileLayer_Symmetric verifies the Walls tile-layer
+// fallback (md.IsBlocked) blocks symmetrically from all four directions.
+//
+// Coordinate convention (matches frontend GameScene.ts): the avatar sprite is
+// 1 tile wide centered on Position.X, and the feet sit at Position.Y + 1.0
+// (origin 0.5/0.75 on a 64px frame placed at (pos.X*32, pos.Y*32+16)). So
+// Position.X = N is the LEFT edge of tile N, and feet at Position.Y+1 = M is
+// the TOP edge of tile M. Tile index = floor(Position coord).
+//
+// A wall at tile W covers Position.X in [W, W+1) (X) / feet-Y in [W, W+1) (Y).
+// The sprite's leading edge must stop at the wall boundary with no overlap:
+//   - moving +X: stop at Position.X = W - 0.5 (right edge at W)
+//   - moving -X: stop at Position.X = W + 1.5 (left edge at W+1)
+//   - moving +Y: stop at Position.Y = W - 1   (feet at W)
+//   - moving -Y: stop at Position.Y = W       (feet at W+1)
+//
+// The old code rounded with int(x+0.5) (always the +edge), which only checked
+// the leading edge when moving in the + direction. Moving in - direction
+// checked the trailing edge, letting the sprite tunnel ~1 tile into the wall.
+func TestIsMoveBlocked_WallsTileLayer_Symmetric(t *testing.T) {
+	// 12x12 map. Vertical wall at column 5 (all rows); horizontal wall at
+	// row 5 (all columns). They don't intersect the test corridors (we move
+	// along y=0 for the vertical wall, along x=0 for the horizontal wall).
+	const w = 5
+	mkWall := func(blocked [][2]int) [][]bool {
+		g := make([][]bool, 12)
+		for y := range g {
+			g[y] = make([]bool, 12)
+		}
+		for _, p := range blocked {
+			g[p[1]][p[0]] = true
+		}
+		return g
+	}
+	var vWall, hWall [][2]int
+	for i := 0; i < 12; i++ {
+		vWall = append(vWall, [2]int{w, i}) // column w, all rows
+		hWall = append(hWall, [2]int{i, w}) // row w, all columns
+	}
+	vertical := &MapData{Width: 12, Height: 12, Collision: mkWall(vWall)}
+	horizontal := &MapData{Width: 12, Height: 12, Collision: mkWall(hWall)}
+
+	// Minimal simulator: nil zone registry means only the Walls tile-layer
+	// fallback runs inside isMoveBlocked.
+	s := &Simulator{}
+
+	cases := []struct {
+		name      string
+		md        *MapData
+		oldX, oldY, newX, newY float32
+		wantBlock bool
+	}{
+		// Vertical wall at column 5 (covers Position.X [5,6)). Move along Y=0.
+		{"+X: stop at wall (right edge at 5)", vertical, 4.0, 0, 4.5, 0, true},
+		{"+X: just before wall (right edge at 4.9)", vertical, 4.0, 0, 4.4, 0, false},
+		{"-X: stop at wall (left edge at 6)", vertical, 7.0, 0, 6.5, 0, false},
+		{"-X: into wall (left edge at 5.9)", vertical, 7.0, 0, 6.4, 0, true},
+		// Horizontal wall at row 5 (covers feet-Y [5,6), i.e. Position.Y [4,5)).
+		{"+Y: stop at wall (feet at 5)", horizontal, 0, 3.0, 0, 4.0, true},
+		{"+Y: just before wall (feet at 4.9)", horizontal, 0, 3.0, 0, 3.9, false},
+		{"-Y: stop at wall (feet at 6)", horizontal, 0, 6.0, 0, 5.0, false},
+		{"-Y: into wall (feet at 5.9)", horizontal, 0, 6.0, 0, 4.9, true},
+	}
+	for _, c := range cases {
+		got := s.isMoveBlocked(nil, c.md, c.oldX, c.oldY, c.newX, c.newY)
+		if got != c.wantBlock {
+			t.Errorf("%s: isMoveBlocked = %v, want %v", c.name, got, c.wantBlock)
+		}
+	}
+}
