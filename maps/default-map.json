@@ -216,18 +216,18 @@
                         {
                          "name":"interactions",
                          "type":"string",
-                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-switch-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
-                        },
+                         "value":"{\"toggle\": [{\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"]}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
+                        }, 
                         {
                          "name":"on_interact_action",
                          "type":"string",
                          "value":"toggle"
-                        },
+                        }, 
                         {
                          "name":"owner_extension",
                          "type":"string",
                          "value":"props"
-                        },
+                        }, 
                         {
                          "name":"trigger_radius",
                          "type":"float",
@@ -239,7 +239,7 @@
                  "width":32,
                  "x":191.88,
                  "y":317.426
-                },
+                }, 
                 {
                  "gid":508,
                  "height":32,
@@ -251,42 +251,42 @@
                          "name":"actions",
                          "type":"string",
                          "value":"toggle,activate,deactivate"
-                        },
+                        }, 
                         {
                          "name":"entity_type",
                          "type":"string",
                          "value":"light"
-                        },
+                        }, 
                         {
                          "name":"gid_on",
                          "type":"int",
                          "value":491
-                        },
+                        }, 
                         {
                          "name":"interactions",
                          "type":"string",
                          "value":"{\"toggle\":[{\"action\":\"toggle_light\",\"target_ids\":[\"light-1\"]}],\"activate\":[{\"action\":\"set_light\",\"payload\":\"80\",\"target_ids\":[\"light-1\"]}],\"deactivate\":[{\"action\":\"set_light\",\"payload\":\"0\",\"target_ids\":[\"light-1\"]}]}"
-                        },
+                        }, 
                         {
                          "name":"light_color",
                          "type":"string",
                          "value":"#ffe6b4"
-                        },
+                        }, 
                         {
                          "name":"light_intensity",
                          "type":"int",
                          "value":0
-                        },
+                        }, 
                         {
                          "name":"light_radius",
                          "type":"float",
                          "value":3
-                        },
+                        }, 
                         {
                          "name":"owner_extension",
                          "type":"string",
                          "value":"props"
-                        },
+                        }, 
                         {
                          "name":"trigger_radius",
                          "type":"float",
@@ -298,7 +298,7 @@
                  "width":32,
                  "x":538.628733997155,
                  "y":353.866287339972
-                },
+                }, 
                 {
                  "gid":508,
                  "height":32,
@@ -310,42 +310,42 @@
                          "name":"actions",
                          "type":"string",
                          "value":"toggle,activate,deactivate"
-                        },
+                        }, 
                         {
                          "name":"entity_type",
                          "type":"string",
                          "value":"light"
-                        },
+                        }, 
                         {
                          "name":"gid_on",
                          "type":"int",
                          "value":491
-                        },
+                        }, 
                         {
                          "name":"interactions",
                          "type":"string",
                          "value":"{\"toggle\": [{\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}], \"activate\": [{\"action\": \"set_light\", \"payload\": \"80\", \"target_ids\": [\"light-2\"]}], \"deactivate\": [{\"action\": \"set_light\", \"payload\": \"0\", \"target_ids\": [\"light-2\"]}]}"
-                        },
+                        }, 
                         {
                          "name":"light_color",
                          "type":"string",
                          "value":"#ffe6b4"
-                        },
+                        }, 
                         {
                          "name":"light_intensity",
                          "type":"int",
                          "value":0
-                        },
+                        }, 
                         {
                          "name":"light_radius",
                          "type":"float",
                          "value":3
-                        },
+                        }, 
                         {
                          "name":"owner_extension",
                          "type":"string",
                          "value":"props"
-                        },
+                        }, 
                         {
                          "name":"trigger_radius",
                          "type":"float",

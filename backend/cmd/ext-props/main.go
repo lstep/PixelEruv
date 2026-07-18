@@ -72,6 +72,11 @@ type Effect struct {
 	Action    string   `json:"action"`
 	Payload   string   `json:"payload,omitempty"`
 	TargetIDs []string `json:"target_ids"`
+	// GidOn/GidOff are optional per-effect sprite overrides for verbs that
+	// swap the target's sprite (toggle, toggle_light, set_light). 0 means
+	// fall back to the target entity's own GidOn/GidOff.
+	GidOn  uint32 `json:"gid_on,omitempty"`
+	GidOff uint32 `json:"gid_off,omitempty"`
 }
 
 type adjacentEntityInfo struct {
@@ -364,14 +369,7 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				EntityID string `json:"entity_id"`
 				State    string `json:"state"`
 			}{EntityID: tid, State: newState})
-			if target != nil && target.GidOn != 0 {
-				gid := target.GidOff
-				if gid == 0 {
-					gid = target.Gid
-				}
-				if isOn {
-					gid = target.GidOn
-				}
+			if gid, ok := resolveGidSwap(fx, target, isOn); ok {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 					EntityID string `json:"entity_id"`
 					Gid      uint32 `json:"gid"`
@@ -459,6 +457,7 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 		// Also swaps the target's sprite gid: intensity > 0 -> GidOn,
 		// intensity == 0 -> GidOff (or Gid if GidOff is 0), so a single
 		// set_light effect handles both the light and the sprite frame.
+		// fx.GidOn/GidOff override the target's own values when non-zero.
 		for _, tid := range fx.TargetIDs {
 			if tid == "" {
 				continue
@@ -476,14 +475,7 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				Radius    float32 `json:"radius,omitempty"`
 			}{EntityID: tid, Intensity: intensity})
 			target := findEntityInDispatch(dispatch, tid)
-			if target != nil && target.GidOn != 0 {
-				gid := target.GidOff
-				if gid == 0 {
-					gid = target.Gid
-				}
-				if intensity > 0 {
-					gid = target.GidOn
-				}
+			if gid, ok := resolveGidSwap(fx, target, intensity > 0); ok {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 					EntityID string `json:"entity_id"`
 					Gid      uint32 `json:"gid"`
@@ -497,7 +489,8 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 		// a default of 80 (or the value in Payload if provided). Also
 		// swaps the target's sprite gid to match (GidOn when lit,
 		// GidOff/Gid when unlit), so a single toggle_light effect
-		// handles both the light and the sprite frame.
+		// handles both the light and the sprite frame. fx.GidOn/GidOff
+		// override the target's own values when non-zero.
 		for _, tid := range fx.TargetIDs {
 			if tid == "" {
 				continue
@@ -526,14 +519,7 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				Color     uint32  `json:"color,omitempty"`
 				Radius    float32 `json:"radius,omitempty"`
 			}{EntityID: tid, Intensity: newIntensity})
-			if target != nil && target.GidOn != 0 {
-				gid := target.GidOff
-				if gid == 0 {
-					gid = target.Gid
-				}
-				if newIntensity > 0 {
-					gid = target.GidOn
-				}
+			if gid, ok := resolveGidSwap(fx, target, newIntensity > 0); ok {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 					EntityID string `json:"entity_id"`
 					Gid      uint32 `json:"gid"`
@@ -543,6 +529,35 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 
 	// "toggle_wall", "send_notification", etc. -> not handled by ext-props
 	}
+}
+
+// resolveGidSwap picks the sprite gid for a target given the effect's
+// per-effect GidOn/GidOff overrides (non-zero wins) and the target's own
+// GidOn/GidOff/Gid as fallback. lit=true selects the "on" frame, lit=false
+// the "off" frame. Returns (gid, false) when no gid swap should be emitted
+// (neither the effect nor the target defines a GidOn).
+func resolveGidSwap(fx Effect, target *adjacentEntityInfo, lit bool) (uint32, bool) {
+	gidOn := fx.GidOn
+	gidOff := fx.GidOff
+	if target != nil {
+		if gidOn == 0 {
+			gidOn = target.GidOn
+		}
+		if gidOff == 0 {
+			gidOff = target.GidOff
+		}
+	}
+	if gidOn == 0 {
+		return 0, false
+	}
+	gid := gidOff
+	if gid == 0 && target != nil {
+		gid = target.Gid
+	}
+	if lit {
+		gid = gidOn
+	}
+	return gid, true
 }
 
 // findEntityInDispatch searches both adjacent and target entities in the
