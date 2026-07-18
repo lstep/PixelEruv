@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -93,6 +94,7 @@ type recordingCreateMsg struct {
 	StartTime    int64    `json:"start_time"`
 	Status       string   `json:"status"`
 	FileURL      string   `json:"file_url,omitempty"`
+	AudioURL     string   `json:"audio_url,omitempty"`
 }
 
 type recordingCreateReply struct {
@@ -107,6 +109,7 @@ type recordingUpdateMsg struct {
 	EndTime   int64  `json:"end_time,omitempty"`
 	Status    string `json:"status,omitempty"`
 	FileURL   string `json:"file_url,omitempty"`
+	AudioURL  string `json:"audio_url,omitempty"`
 }
 
 type recordingUpdateReply struct {
@@ -141,6 +144,7 @@ type activeRec struct {
 	StartedAt    time.Time
 	Participants []string // snapshot at start
 	MeetingID    string
+	Filename     string // MP4 filename (for audio extraction + file_url)
 }
 
 func main() {
@@ -327,6 +331,65 @@ func main() {
 		}
 	}
 
+	// extractAudioAndUpdatePB polls for the MP4 file to appear on disk
+	// (Egress writes it asynchronously after StopEgress), then runs ffmpeg
+	// to extract the audio track as MP3, and updates the PB row with the
+	// audio_url. Best-effort: logs warnings on failure, no retry.
+	extractAudioAndUpdatePB := func(meetingID, mp4Filename string) {
+		mp4Path := filepath.Join(recordingsDir, mp4Filename)
+		// Poll up to 60s for the MP4 to appear and stop growing.
+		var lastSize int64
+		stableCount := 0
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			info, err := os.Stat(mp4Path)
+			if err == nil {
+				if info.Size() == lastSize && info.Size() > 0 {
+					stableCount++
+					if stableCount >= 2 {
+						break
+					}
+				} else {
+					stableCount = 0
+				}
+				lastSize = info.Size()
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if _, err := os.Stat(mp4Path); err != nil {
+			logger.Warn("audio extraction: mp4 not found", "path", mp4Path, "meeting", meetingID)
+			return
+		}
+
+		// Derive MP3 filename from the MP4 filename.
+		mp3Filename := strings.TrimSuffix(mp4Filename, ".mp4") + ".mp3"
+		mp3Path := filepath.Join(recordingsDir, mp3Filename)
+
+		// ffmpeg -i input.mp4 -vn -acodec libmp3lame -q:a 2 output.mp3
+		cmd := exec.Command("ffmpeg",
+			"-y",
+			"-i", mp4Path,
+			"-vn",
+			"-acodec", "libmp3lame",
+			"-q:a", "2",
+			mp3Path,
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			logger.Warn("audio extraction: ffmpeg failed", "err", err, "meeting", meetingID, "output", string(out))
+			return
+		}
+
+		audioURL := fmt.Sprintf("https://%s/recordings/%s", publicHost, mp3Filename)
+		if err := updateRecordingRow(recordingUpdateMsg{
+			MeetingID: meetingID,
+			AudioURL:  audioURL,
+		}); err != nil {
+			logger.Warn("audio extraction: update PB row", "err", err, "meeting", meetingID)
+			return
+		}
+		logger.Info("audio extracted", "meeting", meetingID, "file", mp3Filename)
+	}
+
 	// --- recording.start handler ---
 	nc.Subscribe("recording.start", func(m *nats.Msg) {
 		var req recordingStartMsg
@@ -415,6 +478,7 @@ func main() {
 			StartedAt:    time.Now(),
 			Participants: participants,
 			MeetingID:    meetingID,
+			Filename:     filename,
 		}
 
 		mu.Lock()
@@ -533,6 +597,13 @@ func main() {
 		fanOutRecordingActive(req.Room, rec.Target, false, rec.Participants)
 		logger.Info("recording stopped",
 			"entity", req.EntityID, "room", req.Room, "egress", rec.EgressID, "meeting", rec.MeetingID)
+
+		// Extract audio (MP3) from the MP4 in the background. The Egress
+		// writes the file asynchronously after StopEgress returns, so we
+		// poll for it. On success, update the PB row with audio_url.
+		if rec.Target == "mp4" && rec.Filename != "" {
+			go extractAudioAndUpdatePB(rec.MeetingID, rec.Filename)
+		}
 	})
 
 	// --- Extension registration protocol ---

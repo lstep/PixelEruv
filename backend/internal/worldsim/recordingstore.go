@@ -35,6 +35,7 @@ type recordingCreateMsg struct {
 	StartTime    int64    `json:"start_time"` // unix millis
 	Status       string   `json:"status"`     // "active"
 	FileURL      string   `json:"file_url,omitempty"`
+	AudioURL     string   `json:"audio_url,omitempty"`
 }
 
 // recordingCreateReply is the reply for worldsim.recording.create.
@@ -65,6 +66,7 @@ func (s *RecordingStore) Create(msg recordingCreateMsg) (string, error) {
 	record.Set("start_time", types.NowDateTime())
 	record.Set("status", msg.Status)
 	record.Set("file_url", msg.FileURL)
+	record.Set("audio_url", msg.AudioURL)
 	// consent_state: record who was notified (same as participants at start).
 	if len(msg.Participants) > 0 {
 		consent := map[string]any{
@@ -86,6 +88,7 @@ type recordingUpdateMsg struct {
 	EndTime   int64  `json:"end_time,omitempty"`
 	Status    string `json:"status,omitempty"`
 	FileURL   string `json:"file_url,omitempty"`
+	AudioURL  string `json:"audio_url,omitempty"`
 }
 
 // recordingUpdateReply is the reply for worldsim.recording.update.
@@ -118,6 +121,9 @@ func (s *RecordingStore) Update(msg recordingUpdateMsg) error {
 	}
 	if msg.FileURL != "" {
 		record.Set("file_url", msg.FileURL)
+	}
+	if msg.AudioURL != "" {
+		record.Set("audio_url", msg.AudioURL)
 	}
 	return s.app.Save(record)
 }

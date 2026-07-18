@@ -67,8 +67,10 @@ COPY --from=builder /out/ext-av /usr/local/bin/ext-av
 ENTRYPOINT ["ext-av"]
 
 # --- ext-rec image ---
+# ffmpeg is needed to extract audio (MP3) from the Egress MP4 after a
+# recording stops.
 FROM alpine:3.20 AS ext-rec
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates ffmpeg
 COPY --from=builder /out/ext-rec /usr/local/bin/ext-rec
 ENTRYPOINT ["ext-rec"]
 

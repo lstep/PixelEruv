@@ -344,6 +344,8 @@ type recordingRow struct {
 	Participants string
 	FileURL      string
 	HasFile      bool
+	AudioURL     string
+	HasAudio     bool
 }
 
 // handleRecordings renders the recordings management page with optional
@@ -415,6 +417,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			EndTime      string   `json:"end_time"`
 			Participants []string `json:"participants"`
 			FileURL      string   `json:"file_url"`
+			AudioURL     string   `json:"audio_url"`
 		} `json:"items"`
 		TotalItems int `json:"totalItems"`
 	}
@@ -439,6 +442,8 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			Participants: strings.Join(item.Participants, ", "),
 			FileURL:      item.FileURL,
 			HasFile:      item.FileURL != "",
+			AudioURL:     item.AudioURL,
+			HasAudio:     item.AudioURL != "",
 		}
 		row.Duration = computeDuration(item.StartTime, item.EndTime)
 		rows = append(rows, row)
@@ -542,6 +547,7 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 	}
 	id := r.FormValue("id")
 	fileURL := r.FormValue("file_url")
+	audioURL := r.FormValue("audio_url")
 	if id == "" {
 		http.Error(w, "missing id", http.StatusBadRequest)
 		return
@@ -571,18 +577,23 @@ func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Delete the file from disk if file_url points to a local /recordings/ path.
-	if fileURL != "" && s.cfg.RecordingsDir != "" {
-		if filename := extractFilename(fileURL); filename != "" {
-			path := s.cfg.RecordingsDir + "/" + filename
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				s.logger.Warn("delete recording file", "err", err, "path", path)
-				// Non-fatal: the PB record is already deleted.
+	// Delete files from disk if URLs point to local /recordings/ paths.
+	if s.cfg.RecordingsDir != "" {
+		for _, u := range []string{fileURL, audioURL} {
+			if u == "" {
+				continue
+			}
+			if filename := extractFilename(u); filename != "" {
+				path := s.cfg.RecordingsDir + "/" + filename
+				if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+					s.logger.Warn("delete recording file", "err", err, "path", path)
+					// Non-fatal: the PB record is already deleted.
+				}
 			}
 		}
 	}
 
-	s.logger.Info("recording deleted", "id", id, "by", sess.Email, "file_url", fileURL)
+	s.logger.Info("recording deleted", "id", id, "by", sess.Email, "file_url", fileURL, "audio_url", audioURL)
 	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
 }
 

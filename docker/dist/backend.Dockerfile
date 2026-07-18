@@ -4,7 +4,7 @@
 #     BINARY: pusher | worldsim | ext-demo | ext-walls | ext-props | ext-av | ext-rec | audit | admin
 FROM alpine:3.20
 ARG BINARY
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates ffmpeg
 COPY bin/${BINARY} /usr/local/bin/app
 # Include the seed-sprites CLI so admins can add sheets to a running worldsim
 # container (docker compose exec worldsim seed-sprites -dir /sprites -force).
