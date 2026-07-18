@@ -257,6 +257,29 @@ The admin portal uses nginx `auth_request` — unauthenticated requests to
 For direct access without the admin portal (e.g. localhost dev):
 `http://localhost:8082/` (audit) or `http://localhost:8090/_/` (PB admin).
 
+### How do I connect an LLM client (Claude Desktop, Devin, Cursor) to my Pixel Eruv instance?
+
+Use the MCP server at `https://<host>/mcp` (or `http://localhost:8085/mcp`
+in dev). It speaks the Model Context Protocol over HTTP/SSE and exposes
+16 tools (read world state, query audit, kick/ban/teleport, send chat as
+a player, set name/status/sprite/options, dispatch extension actions),
+11 resources (`pixeleruv://...` URIs), and 3 prompts
+(`summarize_recent_audit`, `investigate_player`, `world_health_report`).
+
+Auth is a bearer token, NOT the admin portal cookie. Set `MCP_AUTH_TOKEN`
+in your `.env` before starting the stack — the MCP server refuses to
+start without it. Configure your MCP client with the URL and the bearer
+token in the `Authorization` header.
+
+The MCP server is NOT behind the admin cookie auth_request at nginx —
+MCP clients present a bearer token, not a browser session cookie. The
+server exposes full PII (IP, device_id, client_id) for moderation, so
+do NOT expose it on the public internet without a strong token and
+network-level restrictions (firewall / VPN / Tailscale).
+
+See `documentation/plans/2026-07-19-mcp-server-design.md` for the full
+surface and `features.md` §5.9 for the storyboard.
+
 ### How do I access the audit UI?
 
 Via the admin portal at `/admin/` (see above), or directly at

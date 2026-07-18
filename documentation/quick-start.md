@@ -204,8 +204,11 @@ docker compose up --build -d
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://127.0.0.1:27686` | all backend services | OTLP/HTTP endpoint for traces and logs. Points at motel for `make debug`. OpenObserve is not included in the stack by default (requires AES-NI CPU). |
 | `AUDIT_RETENTION_HOURS` | `720` (30 days) | `audit` in compose | How long audit events are kept before automatic cleanup. |
 | `AUDIT_BASE_PATH` | `/audit` | `audit` in compose | URL prefix when proxied under a path. Must match the nginx `location` block. |
-| `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI (fallback when not behind nginx auth_request). Not set by default — admin portal handles auth. |
+| `AUDIT_AUTH_USER` / `AUDIT_AUTH_PASS` | `admin` / *(empty = no auth)* | `audit` in compose | Basic auth credentials for the audit UI (fallback when not behind nginx auth_request). Not set by default — admin portal handles auth. Also used by the MCP server to authenticate to the audit JSON API. |
 | `ADMIN_SESSION_SECRET` | `changeme` | `admin` in compose | HMAC-SHA256 signing key for admin session cookies. **Change in `.env`.** |
+| `MCP_AUTH_TOKEN` | *(empty = server refuses to start)* | `mcp` in compose | **Required.** Bearer token clients must present to access `/mcp`. Generate a strong random token (e.g. `openssl rand -hex 32`). The MCP server exposes full PII (IP, device_id, client_id) and admin actions (kick, ban, teleport, chat-as) — treat as a secret. |
+| `MCP_ACTOR` | `mcp` | `mcp` in compose | `actor.extension` label stamped on audit events emitted by admin actions initiated via the MCP server. Lets audit consumers filter LLM-initiated actions from client-initiated ones. |
+| `PB_ADMIN_TOKEN` | *(empty = unauthenticated)* | `mcp` in compose | Optional PocketBase admin token (Authorization header) for the MCP server's PB REST calls. If empty, requests are unauthenticated (works only if PB has no API rules). |
 
 > Only `PUBLIC_HOST` and `LIVEKIT_NODE_IP` are typically needed for a remote
 > deploy. The rest have working defaults; override them for production
@@ -533,6 +536,7 @@ without re-authenticating.
 | Welcome page | `https://<host-ip>/welcome` | Public community landing page (static HTML, customizable) |
 | PocketBase  | `https://<host-ip>/_/` (proxied, admin-protected) | Manage `maps`, `players`, `users` collections, upload map files |
 | Audit UI    | `https://<host-ip>/audit/` (proxied, admin-protected) | Search audit events, view world status, check service health |
+| MCP server  | `https://<host-ip>/mcp` (bearer-token auth) | LLM admin tooling — connect Claude Desktop / Devin / Cursor to inspect world state, query audit, kick/ban/teleport/chat-as. Requires `MCP_AUTH_TOKEN`. |
 | MailHog     | `http://<host-ip>:8025` (dev only) | View emails sent by the stack (verification, password reset) |
 
 > The admin portal (`/admin/`) handles email/password login against
@@ -540,6 +544,16 @@ without re-authenticating.
 > to check the cookie before proxying to `/_/` (PB admin) and `/audit/`.
 > Unauthenticated requests are redirected to `/admin/login`. Only users
 > with `is_admin=true` in PocketBase can log in.
+>
+> The MCP server (`/mcp`) is NOT behind the admin cookie auth_request —
+> MCP clients present a bearer token in the `Authorization` header, not a
+> browser session cookie. Set `MCP_AUTH_TOKEN` in your `.env` before
+> starting the stack; the MCP server refuses to start without it. The
+> server exposes full PII (IP, device_id, client_id) for moderation, so
+> do NOT expose it on the public internet without a strong token and
+> network-level restrictions (firewall / VPN / Tailscale). See
+> `documentation/plans/2026-07-19-mcp-server-design.md` for the full
+> surface (16 tools, 11 resources, 3 prompts).
 
 ---
 

@@ -470,6 +470,28 @@ flowchart LR
 - The Pusher validates the token and extracts the `sub` claim; the World
   Simulator maps `sub` → entity ID → avatar/entity via the embedded PocketBase.
 
+### MCP Server (Go — admin LLM tooling)
+- Separate binary (`backend/cmd/mcp`) exposing Pixel Eruv internals to MCP
+  clients (Claude Desktop, Devin, Cursor, etc.) over HTTP/SSE on `:8085/mcp`.
+- Bearer-token auth (`MCP_AUTH_TOKEN`, required). NOT behind the admin cookie
+  auth_request at nginx — MCP clients present a bearer token in the
+  `Authorization` header, not a browser session cookie.
+- Talks to worldsim over NATS request-reply (`worldsim.stats.get`,
+  `worldsim.entities.query`, `worldsim.client.kick`, `worldsim.admin.*`),
+  to the audit service over its JSON API (`/audit/api/*`), and to PocketBase
+  over REST. No new shared state.
+- Surface: 16 tools (read + control + admin overrides), 11 resources
+  (`pixeleruv://...` URIs), 3 prompts (`summarize_recent_audit`,
+  `investigate_player`, `world_health_report`).
+- Isolated from worldsim's critical path: MCP request handling can be slow
+  or hammered by an LLM retry loop without affecting the 20Hz game loop.
+  Restart or redeploy the MCP surface without dropping players.
+- Exposes full PII (IP, device_id, client_id) — necessary for moderation.
+  Access control is the bearer token. Do NOT expose on the public internet
+  without a strong token + network-level restrictions.
+- See `documentation/plans/2026-07-19-mcp-server-design.md` for the full
+  design and `features.md` §5.9 for the storyboard.
+
 ## Key data flows
 
 ### 1. Client connects and joins a world

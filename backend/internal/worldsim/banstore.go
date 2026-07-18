@@ -97,6 +97,33 @@ func (s *BanStore) CheckBan(sub, ip, deviceID string) (*Ban, bool) {
 	return nil, false
 }
 
+// Add inserts a new ban record into the bans collection. targetType must be one
+// of BanTargetUserID / BanTargetIP / BanTargetDeviceID; targetValue is the
+// identifier to ban; bannedUntil is a unix timestamp (0 = permanent); bannedBy
+// is an optional audit label (e.g. "mcp", an admin sub). Returns an error if
+// the collection can't be found or the record can't be saved.
+func (s *BanStore) Add(targetType, targetValue, reason string, bannedUntil int64, bannedBy string) error {
+	if targetType != BanTargetUserID && targetType != BanTargetIP && targetType != BanTargetDeviceID {
+		return fmt.Errorf("invalid ban target_type %q", targetType)
+	}
+	if targetValue == "" {
+		return fmt.Errorf("ban target_value is empty")
+	}
+	collection, err := s.app.FindCollectionByNameOrId("bans")
+	if err != nil {
+		return fmt.Errorf("find bans collection: %w", err)
+	}
+	record := core.NewRecord(collection)
+	record.Set("target_type", targetType)
+	record.Set("target_value", targetValue)
+	record.Set("reason", reason)
+	record.Set("banned_until", bannedUntil)
+	if bannedBy != "" {
+		record.Set("banned_by", bannedBy)
+	}
+	return s.app.Save(record)
+}
+
 func recordToBan(r *core.Record) Ban {
 	return Ban{
 		TargetType:  r.GetString("target_type"),

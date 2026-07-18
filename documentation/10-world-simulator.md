@@ -785,6 +785,15 @@ shared memory.
 | `trigger.<trigger_id>.reply` | Extension | Gate trigger reply (for `ask`) | Async |
 | `input.<input_type>.reply.<req_id>` | Extension | Input trigger response (updates, consume_items) | Async |
 | `worldsim.entity.teleport` | Extension | `{"entity_id", "map_id", "target_entity"}` — teleport an entity to a map (portal-style transition triggered by an extension) | On demand |
+| `worldsim.entities.query` | MCP server | `{"map_id?", "entity_type?", "owner_extension?", "zone_id?", "limit?"}` — filter entities, returns up to 500 snapshots sorted by entity_id. Reply: `[]entitySnapshot` or `{"error":"..."}`. | On demand |
+| `worldsim.entity.get` | MCP server | `{"entity_id"}` — single entity snapshot. Reply: `entitySnapshot` or `{"error":"entity not found"}`. | On demand |
+| `worldsim.client.kick` | MCP server | `{"client_id", "reason?", "actor"}` — despawn a connected client, emit `player.kicked` audit. Reply: `{"ok":true}` or `{"ok":false,"error":"not_connected"}`. | On demand |
+| `worldsim.client.ban` | MCP server | `{"target_type", "target_value", "reason?", "banned_until", "banned_by?", "actor"}` — insert a ban record (BanStore.Add) and kick any matching connected client. Reply: `{"ok":true,"kicked":bool}`. `target_type` ∈ `user_id`/`ip`/`device_id`. | On demand |
+| `worldsim.admin.chat` | MCP server | `{"entity_id", "channel", "text", "actor"}` — send chat as an entity, bypassing the connected-client requirement. `channel` ∈ `global`/`proximity`. Emits `chat.message` audit tagged `admin=true`. Reply: `{"ok":bool,"error":"..."}`. | On demand |
+| `worldsim.admin.set_name` | MCP server | `{"entity_id", "name", "actor"}` — rename an entity (sanitized to ASCII printable, truncated to 20 runes). Persists to PB for logged-in players. Reply: `{"ok":bool,"error":"..."}`. | On demand |
+| `worldsim.admin.set_status` | MCP server | `{"entity_id", "status", "actor"}` — set presence (0=Available, 1=Busy, 2=DND). Persists to PB for logged-in players. Broadcasts on `worldsim.player_status`. Reply: `{"ok":bool,"error":"..."}`. | On demand |
+| `worldsim.admin.set_sprite` | MCP server | `{"entity_id", "sprite_base", "actor"}` — set sprite_base (validated against `sprite_bases` PB collection unless empty). Persists to PB for logged-in players. Reply: `{"ok":bool,"error":"..."}`. | On demand |
+| `worldsim.admin.set_player_options` | MCP server | `{"entity_id", "options", "actor"}` — replace player options JSON (full replace, not partial merge). Persists to PB for logged-in players. Reply: `{"ok":bool,"error":"..."}`. | On demand |
 
 ### Outbound (published by the World Sim)
 

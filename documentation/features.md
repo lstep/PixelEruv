@@ -1214,7 +1214,10 @@ independent of worldsim or PocketBase. A Go templates + HTMX web UI at
 health, a searchable event table with filters (type, severity, actor),
 an event detail view with a deep-link to the corresponding OpenObserve
 trace, and a per-player timeline showing everything one player has
-done. Events are retained for 30 days (configurable) and the storage
+done. A JSON API (`/audit/api/events`, `/audit/api/events/{id}`,
+`/audit/api/players/{sub}`, `/audit/api/stats`) exposes the same data
+to programmatic consumers — the MCP server uses it for historical
+queries. Events are retained for 30 days (configurable) and the storage
 layer is behind an interface designed to upgrade to ClickHouse or
 TimescaleDB when volume grows.
 
@@ -1255,6 +1258,75 @@ was updated." Click the toast — it vanishes. Narrate: "deploy a new
 version and every connected player picks it up within seconds. No
 stale assets, no broken links, no support tickets asking people to
 refresh."
+
+### 5.9 MCP Server — Admin Tooling for LLM Clients
+
+A Model Context Protocol (MCP) server exposes Pixel Eruv's internals to
+LLM-powered clients — Claude Desktop, Devin, Cursor, any tool that
+speaks MCP. Connect a client to `https://<host>/mcp` with a bearer
+token, and the LLM can inspect the live world, query audit history,
+read PocketBase records, and take administrative actions: kick a
+player, ban by user ID / IP / device ID, teleport, send chat as a
+specific entity, rename a player, set presence status, swap a
+character sheet, replace player options, or dispatch an action to any
+extension. The LLM sees the same audit trail it just wrote to, so it
+can verify its own actions.
+
+The server is a separate binary (`backend/cmd/mcp`), not loaded into
+worldsim. This is deliberate: MCP request handling can be slow, can
+hang on PocketBase, can be hammered by an LLM retry loop, and none of
+that should touch the 20Hz game loop. The MCP server talks to worldsim
+over NATS request-reply, to the audit service over its JSON API, and
+to PocketBase over REST. No new shared state is introduced. Restart or
+redeploy the MCP surface without dropping a single player.
+
+The surface is three layers:
+
+- **16 tools** (callable, take arguments). Read: `get_world_stats`,
+  `get_zones`, `query_entities`, `get_entity`, `query_audit_events`,
+  `get_audit_event`, `player_timeline`, `list_pb_records`,
+  `get_pb_record`. Control: `teleport_entity`, `kick_player`,
+  `ban_player`. Admin overrides: `send_chat_as`, `set_player_name`,
+  `set_player_status`, `set_player_sprite`, `set_player_options`,
+  `dispatch_extension_action`.
+- **11 resources** (URI-addressable, read-only). Static:
+  `pixeleruv://world/stats`, `…/world/zones`, `…/world/players`,
+  `…/world/extensions`, `…/audit/stats`. Templated:
+  `pixeleruv://world/maps/{name}`, `…/world/entities/{id}`,
+  `…/audit/events/{id}`, `…/audit/players/{sub}`,
+  `…/pb/{collection}`, `…/pb/{collection}/{id}`.
+- **3 prompts** (pre-baked, fetch live data). `summarize_recent_audit`
+  groups the last N events by severity and type.
+  `investigate_player` pulls a player's audit timeline, current world
+  state, and PocketBase record in one shot.
+  `world_health_report` bundles worldsim stats, extension alive
+  status, and recent warn/error audit events for a quick health
+  assessment.
+
+Admin actions emit audit events stamped with `actor.extension="mcp"`
+so audit consumers can filter LLM-initiated actions from
+client-initiated ones. The MCP server exposes full PII (IP,
+device_id, client_id) — this is intentional, since moderation needs
+those fields (ban by IP, correlate by device_id). Access control is
+the bearer token (`MCP_AUTH_TOKEN`, required — the server refuses to
+start without it). Do NOT expose the MCP server on the public internet
+without a strong token and network-level restrictions (firewall, VPN,
+or Tailscale).
+
+**Storyboard:** Open Claude Desktop (or Devin, or Cursor) configured
+with the Pixel Eruv MCP server URL and bearer token. Ask the LLM:
+"who's online right now?" — it calls `get_world_stats` and lists the
+players, their maps, and their IPs. Ask: "summarize recent audit
+activity" — it runs the `summarize_recent_audit` prompt and reports
+that there were 3 kicks and 12 chat messages in the last hour. Ask:
+"investigate the player with sub `google-oauth2|12345`" — it runs
+`investigate_player` and shows their timeline, current online state,
+and PB record. Ask: "kick client `c_abc123` for being abusive" — it
+calls `kick_player`, confirms the action landed, then queries the
+audit log to show you the `player.kicked` event it just emitted.
+Narrate: "your LLM has the same tools a human admin has. It reads the
+world, queries the audit log, takes an action, and verifies its own
+work — all through one authenticated endpoint."
 
 ---
 

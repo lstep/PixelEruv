@@ -23,6 +23,7 @@ RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Ve
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-av ./cmd/ext-av
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/ext-rec ./cmd/ext-rec
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/audit ./cmd/audit
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/mcp ./cmd/mcp
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/admin ./cmd/admin
 
 # --- Pusher image ---
@@ -91,3 +92,14 @@ FROM alpine:3.20 AS admin
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/admin /usr/local/bin/admin
 ENTRYPOINT ["admin"]
+
+# --- mcp image ---
+# MCP (Model Context Protocol) server exposing PixelEruv internals to MCP
+# clients (Claude Desktop, Devin, Cursor, etc.) over HTTP/SSE. Connects to
+# NATS for worldsim request-reply + audit.event live subscription, the audit
+# HTTP API for historical queries, and PocketBase REST for record reads.
+# Requires MCP_AUTH_TOKEN — refuses to start without it.
+FROM alpine:3.20 AS mcp
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /out/mcp /usr/local/bin/mcp
+ENTRYPOINT ["mcp"]

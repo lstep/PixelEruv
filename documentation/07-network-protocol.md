@@ -258,6 +258,32 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 |---|---|---|---|
 | `admin.revoke.<entity_id>` | World Sim (execution) | Pusher (all) | Force-disconnect a user (policy decided by an admin extension; execution by the kernel) |
 
+### 2.6a MCP-server-facing subjects (worldsim request-reply)
+
+These subjects are subscribed by the World Sim and called by the MCP server
+(`backend/cmd/mcp`) to expose world state, audit history, and admin actions
+to LLM clients. All are request-reply with JSON payloads; admin actions
+reply with `{"ok":bool,"error":"..."}` so the MCP client can confirm the
+action landed. Audit events emitted by admin actions are stamped with
+`actor.extension="mcp"` (configurable via `MCP_ACTOR`) so audit consumers
+can filter LLM-initiated actions from client-initiated ones. See
+`documentation/plans/2026-07-19-mcp-server-design.md` for the full design.
+
+| Subject | Payload (request) | Reply |
+|---|---|---|
+| `worldsim.stats.get` | *(empty)* | `worldsim.statsResponse` (tick rate, uptime, players, entities, extensions, per-map counts) |
+| `worldsim.zones.get` | *(empty)* | `worldsim.zoneMetadataMsg` (zone metadata for all maps) |
+| `worldsim.entities.query` | `{"map_id?", "entity_type?", "owner_extension?", "zone_id?", "limit?"}` | `[]entitySnapshot` (up to 500, sorted by entity_id) or `{"error":"..."}` |
+| `worldsim.entity.get` | `{"entity_id"}` | `entitySnapshot` or `{"error":"entity not found"}` |
+| `worldsim.entity.teleport` | `{"entity_id", "map_id", "target_entity?"}` | *(fire-and-forget, no reply)* |
+| `worldsim.client.kick` | `{"client_id", "reason?", "actor"}` | `{"ok":true}` or `{"ok":false,"error":"not_connected"}` |
+| `worldsim.client.ban` | `{"target_type", "target_value", "reason?", "banned_until", "banned_by?", "actor"}` | `{"ok":true,"kicked":bool}`. `target_type` ∈ `user_id`/`ip`/`device_id`. |
+| `worldsim.admin.chat` | `{"entity_id", "channel", "text", "actor"}` | `{"ok":bool,"error":"..."}`. `channel` ∈ `global`/`proximity`. |
+| `worldsim.admin.set_name` | `{"entity_id", "name", "actor"}` | `{"ok":bool,"error":"..."}`. Sanitized to ASCII printable, truncated to 20 runes. |
+| `worldsim.admin.set_status` | `{"entity_id", "status", "actor"}` | `{"ok":bool,"error":"..."}`. `status` ∈ 0/1/2. |
+| `worldsim.admin.set_sprite` | `{"entity_id", "sprite_base", "actor"}` | `{"ok":bool,"error":"..."}`. Validated against `sprite_bases` PB collection unless empty. |
+| `worldsim.admin.set_player_options` | `{"entity_id", "options", "actor"}` | `{"ok":bool,"error":"..."}`. Full replace (not partial merge). |
+
 ### 2.7 JetStream KV buckets
 
 KV keys are **not** NATS subjects but follow a parallel convention. See

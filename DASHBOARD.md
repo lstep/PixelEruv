@@ -4,6 +4,53 @@
 
 - **Periodic world snapshot on the Welcome page** — show a 60s-refreshed full-map image (map + props + live players) below the buttons on `/welcome/`. Rendering approach deferred; the two obvious paths (headless browser container, Go server-side render) are rejected for now as respectively heavyweight or divergent. See `documentation/plans/2026-07-18-world-snapshot-on-welcome-roadmap.md` for alternatives to explore (SVG minimap via stats channel, real-client canvas upload, static map + live overlay, off-host headless).
 
+## MCP server (admin LLM tooling)
+
+**Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, and `go test ./cmd/mcp/` all pass. Not yet exercised end-to-end with a real MCP client (Claude Desktop / Devin / Cursor).
+
+A new `backend/cmd/mcp` binary exposes PixelEruv internals to MCP clients (Claude Desktop, Devin, Cursor, etc.) over HTTP/SSE on `:8085/mcp`. Bearer-token auth (`MCP_AUTH_TOKEN`, required). Separate binary from worldsim to isolate MCP load from the game loop. Talks to worldsim over NATS, audit over HTTP, PocketBase over REST.
+
+### What was built
+
+- **New worldsim NATS subjects** (request-reply, all reply with JSON):
+  - Read: `worldsim.entities.query` (filter by map/type/owner/zone, limit ≤500), `worldsim.entity.get` (single by ID). `backend/internal/worldsim/entities_query.go`.
+  - Control: `worldsim.client.kick` (despawn + audit), `worldsim.client.ban` (BanStore.Add + kick matching). `backend/internal/worldsim/admin_actions.go`.
+  - Admin overrides (bypass client-ID validation, use entity_id): `worldsim.admin.chat`, `worldsim.admin.set_name`, `worldsim.admin.set_status`, `worldsim.admin.set_sprite`, `worldsim.admin.set_player_options`. All reply `{"ok":bool,"error":"..."}`. `backend/internal/worldsim/admin_actions.go`.
+- **BanStore.Add** method (`backend/internal/worldsim/banstore.go`) — inserts a ban record into the `bans` PocketBase collection with target_type / target_value / reason / banned_until / banned_by.
+- **Audit JSON API** (`backend/cmd/audit/server.go`) — new endpoints `GET /audit/api/events`, `/audit/api/events/{id}`, `/audit/api/players/{sub}`, `/audit/api/stats` for historical queries (previously HTML-only).
+- **MCP binary** (`backend/cmd/mcp/`): `main.go` (env config + NATS connect), `server.go` (HTTP/SSE + bearer auth), `worldsim_client.go` / `audit_client.go` / `pb_client.go` (NATS + HTTP wrappers), `tools.go` (16 tools), `resources.go` (5 static + 6 templated resources), `prompts.go` (3 prompts: summarize_recent_audit, investigate_player, world_health_report).
+- **Docker**: `mcp` service in both `docker/docker-compose.yml` (builds from source) and `dist/docker-compose.yml` (uses pre-built binary). `backend.Dockerfile` `mcp` target. nginx proxies `/mcp` to `http://mcp:8085` with `proxy_buffering off` + 1h read timeout (SSE). NOT behind admin cookie auth_request — bearer-token auth at the app layer.
+- **Makefile**: `make build` now produces `dist/bin/mcp`.
+
+### Tools exposed
+
+- Read: `get_world_stats`, `get_zones`, `query_entities`, `get_entity`, `query_audit_events`, `get_audit_event`, `player_timeline`, `list_pb_records`, `get_pb_record`.
+- Control: `teleport_entity`, `kick_player`, `ban_player`.
+- Admin overrides: `send_chat_as`, `set_player_name`, `set_player_status`, `set_player_sprite`, `set_player_options`, `dispatch_extension_action`.
+
+### PII
+
+The MCP server exposes full PII (IP, device_id, client_id) — necessary for moderation (ban by IP, correlate by device_id). Access control is the bearer token. Do NOT expose on the public internet without a strong token + network-level restrictions.
+
+### Design doc
+
+`documentation/plans/2026-07-19-mcp-server-design.md`
+
+### Verification
+
+```
+cd backend && go test ./internal/worldsim/ ./cmd/mcp/
+```
+
+Tests: `entities_query_test.go`, `admin_actions_test.go` (worldsim); `server_test.go` (mcp — WorldsimClient against mock NATS, AuditClient + PocketBaseClient against mock HTTP, bearerAuth middleware).
+
+### Future work
+
+- Switch from SSE to streamable HTTP transport (2025-03-26 spec) once widely supported by clients.
+- Per-tenant servers via the `SSEHandler` getServer callback.
+- Live audit notifications via `ServerSession.SendNotification` (currently routed through slog → `notifications/message`).
+- OAuth for per-client tokens with revocation (currently a static bearer token).
+
 ## A/V meeting recording (ext-rec + LiveKit Egress)
 
 **Branch:** `feat/recording`

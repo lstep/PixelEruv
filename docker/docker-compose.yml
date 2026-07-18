@@ -302,6 +302,35 @@ services:
       - "8082:8082"
     restart: unless-stopped
 
+  # MCP (Model Context Protocol) server — exposes PixelEruv internals to MCP
+  # clients (Claude Desktop, Devin, Cursor, etc.) over HTTP/SSE on :8085/mcp.
+  # Connects to NATS for worldsim request-reply + audit.event live
+  # subscription, the audit HTTP API for historical queries, and PocketBase
+  # REST for record reads. Requires MCP_AUTH_TOKEN — refuses to start without
+  # it. Bearer-token auth on /mcp; /healthz is unauthenticated.
+  mcp:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+      target: mcp
+    depends_on:
+      - nats
+      - audit
+      - worldsim
+    environment:
+      NATS_URL: "nats://nats:4222"
+      MCP_HTTP_ADDR: ":8085"
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN is required}"
+      MCP_ACTOR: "mcp"
+      AUDIT_BASE_URL: "http://audit:8082/audit"
+      AUDIT_AUTH_USER: "${AUDIT_AUTH_USER:-}"
+      AUDIT_AUTH_PASS: "${AUDIT_AUTH_PASS:-}"
+      PB_BASE_URL: "http://worldsim:8090"
+      PB_ADMIN_TOKEN: "${PB_ADMIN_TOKEN:-}"
+    ports:
+      - "8085:8085"
+    restart: unless-stopped
+
   # Admin portal — email/password login via PocketBase, signed cookie
   # session, auth_request endpoint for nginx. Protects PB admin and audit UI.
   admin:
