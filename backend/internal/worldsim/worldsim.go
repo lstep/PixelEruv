@@ -439,6 +439,9 @@ func (s *Simulator) loadBaseEntities(mapName string, md *MapData) {
 			OnInteractAction: pe.OnInteractAction,
 			Actions:          pe.Actions,
 			Interactions:     pe.Interactions,
+			LightIntensity:   pe.LightIntensity,
+			LightColor:       pe.LightColor,
+			LightRadius:      pe.LightRadius,
 			spawnedTo:        make(map[string]bool),
 			currentZones:     make(map[string]bool),
 		}
@@ -484,6 +487,12 @@ func (s *Simulator) reloadBaseEntities(mapName string, newEntities []*PropEntity
 			e.OnInteractAction = pe.OnInteractAction
 			e.Actions = pe.Actions
 			e.Interactions = pe.Interactions
+			if e.LightIntensity != pe.LightIntensity || e.LightColor != pe.LightColor || e.LightRadius != pe.LightRadius {
+				e.LightIntensity = pe.LightIntensity
+				e.LightColor = pe.LightColor
+				e.LightRadius = pe.LightRadius
+				e.dirtyLightEmitter = true
+			}
 			e.dirtyPosition = true
 		} else {
 			s.entities[pe.ID] = &Entity{
@@ -498,6 +507,9 @@ func (s *Simulator) reloadBaseEntities(mapName string, newEntities []*PropEntity
 				OnInteractAction: pe.OnInteractAction,
 				Actions:          pe.Actions,
 				Interactions:     pe.Interactions,
+				LightIntensity:   pe.LightIntensity,
+				LightColor:       pe.LightColor,
+				LightRadius:      pe.LightRadius,
 				spawnedTo:        make(map[string]bool),
 				currentZones:     make(map[string]bool),
 			}
@@ -1414,6 +1426,9 @@ type adjacentEntityInfo struct {
 	OnInteractAction string              `json:"on_interact_action,omitempty"`
 	Actions          string              `json:"actions,omitempty"`
 	Interactions     map[string][]Effect `json:"interactions,omitempty"`
+	LightIntensity   uint32              `json:"light_intensity,omitempty"`
+	LightColor       uint32              `json:"light_color,omitempty"`
+	LightRadius      float32             `json:"light_radius,omitempty"`
 }
 
 // actionDispatchMsg is published to extension.<id>.action for every
@@ -1453,6 +1468,12 @@ type actionReplyMsg struct {
 		EntityID string `json:"entity_id"`
 		Gid      uint32 `json:"gid"`
 	} `json:"appearance_updates,omitempty"`
+	LightUpdates []struct {
+		EntityID string  `json:"entity_id"`
+		Intensity uint32 `json:"intensity"`
+		Color    uint32  `json:"color,omitempty"`
+		Radius   float32 `json:"radius,omitempty"`
+	} `json:"light_updates,omitempty"`
 	Animations []struct {
 		EntityID    string `json:"entity_id"`
 		AnimationID uint32 `json:"animation_id"`
@@ -1502,6 +1523,9 @@ func (s *Simulator) applyAction(ctx context.Context, clientID string, action *pb
 				Gid:            te.Gid,
 				GidOff:         te.GidOff,
 				GidOn:          te.GidOn,
+				LightIntensity: te.LightIntensity,
+				LightColor:     te.LightColor,
+				LightRadius:    te.LightRadius,
 			})
 		}
 	}
@@ -1585,6 +1609,9 @@ func (s *Simulator) adjacentEntitiesLocked(actingID string, px, py float32) []ad
 			OnInteractAction: e.OnInteractAction,
 			Actions:          e.Actions,
 			Interactions:     e.Interactions,
+			LightIntensity:   e.LightIntensity,
+			LightColor:       e.LightColor,
+			LightRadius:      e.LightRadius,
 		})
 	}
 	return result
@@ -1605,6 +1632,25 @@ func (s *Simulator) applyActionReply(resp *actionReplyMsg) {
 		if e, ok := s.entities[u.EntityID]; ok && e.Gid != u.Gid {
 			e.Gid = u.Gid
 			e.dirtyAppearance = true
+		}
+	}
+	for _, u := range resp.LightUpdates {
+		if e, ok := s.entities[u.EntityID]; ok {
+			// color/radius 0 = "unchanged" when intensity is non-zero, so
+			// the extension can set just the intensity without clobbering
+			// the existing color/radius.
+			if u.Intensity != 0 && u.Color == 0 {
+				u.Color = e.LightColor
+			}
+			if u.Intensity != 0 && u.Radius == 0 {
+				u.Radius = e.LightRadius
+			}
+			if e.LightIntensity != u.Intensity || e.LightColor != u.Color || e.LightRadius != u.Radius {
+				e.LightIntensity = u.Intensity
+				e.LightColor = u.Color
+				e.LightRadius = u.Radius
+				e.dirtyLightEmitter = true
+			}
 		}
 	}
 	for _, a := range resp.Animations {

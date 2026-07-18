@@ -36,6 +36,13 @@ type PropEntity struct {
 	OnInteractAction string              // immediate-mode: action_id fired on E press
 	Actions          string              // popup-mode: comma-separated action_ids
 	Interactions     map[string][]Effect // action_id -> effects list
+	// LightEmitter attributes parsed from Tiled properties. LightIntensity
+	// is 0-100 (0 = no light), LightColor is 0xRRGGBB (0 = default warm
+	// white), LightRadius is in tiles (0 = default 3). Copied into the
+	// entity's LightEmitter component at provisioning.
+	LightIntensity uint32
+	LightColor     uint32
+	LightRadius    float32
 }
 
 // Effect is a single action to apply to a set of targets, declared in
@@ -262,6 +269,18 @@ func parseTiledMapJSON(body []byte) (*MapData, error) {
 							// The entity will be inert (no effects to fire).
 						}
 					}
+				case "light_intensity":
+					if f, ok := prop.Value.(float64); ok {
+						pe.LightIntensity = uint32(f)
+					}
+				case "light_color":
+					if s, ok := prop.Value.(string); ok {
+						pe.LightColor = parseHexColor(s)
+					}
+				case "light_radius":
+					if f, ok := prop.Value.(float64); ok {
+						pe.LightRadius = float32(f)
+					}
 				}
 			}
 			entities = append(entities, pe)
@@ -385,4 +404,31 @@ func abs(n int) int {
 		return -n
 	}
 	return n
+}
+
+// parseHexColor parses a hex color string like "#ffe6b4" or "ffe6b4" into a
+// 0xRRGGBB uint32. Returns 0 on malformed input (caller treats 0 as
+// "use default warm white").
+func parseHexColor(s string) uint32 {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "#")
+	if len(s) != 6 {
+		return 0
+	}
+	var v uint32
+	for _, c := range s {
+		var d uint32
+		switch {
+		case c >= '0' && c <= '9':
+			d = uint32(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = uint32(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = uint32(c-'A') + 10
+		default:
+			return 0
+		}
+		v = v<<4 | d
+	}
+	return v
 }
