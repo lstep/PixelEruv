@@ -411,6 +411,9 @@ interface Avatar {
   // centered on the avatar's feet, visualizing the 2-tile chat radius.
   // Toggled on/off globally with the Q key.
   glow: Phaser.GameObjects.Image | null;
+  // Red outline rect drawn on entities with non-fatal validation warnings.
+  // Null when the entity has no warning. Created lazily in updateWarnings().
+  warningRect: Phaser.GameObjects.Rectangle | null;
 }
 
 // Apply `ticks` worth of movement from (x, y) under `state`, matching the
@@ -1063,6 +1066,7 @@ export class GameScene extends Phaser.Scene {
           av.sprite.destroy();
           av.nameTag?.destroy();
           av.glow?.destroy();
+          av.warningRect?.destroy();
         }
         this.avatars.clear();
         this.displayNameByEntity.clear();
@@ -1126,6 +1130,14 @@ export class GameScene extends Phaser.Scene {
             : "permanently";
           msg.setText(`You are banned ${expiry}\n${reason}`);
         }
+      },
+      onError: (_code, message) => {
+        const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
+        if (msg) {
+          msg.setText(`Server error\n${message}`);
+        }
+        this.disconnectOverlay?.setVisible(true);
+        document.body.classList.add("server-unavailable");
       },
       onActionResult: (result) => {
         if (result.availableActions.length > 0) {
@@ -1431,6 +1443,43 @@ export class GameScene extends Phaser.Scene {
     if (this.lightsEnabled) {
       this.updateLights();
     }
+
+    // Draw red outlines on entities with non-fatal validation warnings.
+    this.updateWarningRects();
+  }
+
+  // updateWarningRects syncs the red outline rect on every avatar with the
+  // current set of warned entity IDs from the WsClient. Rects are created
+  // lazily and destroyed when the entity is no longer warned. The rect
+  // follows the sprite each frame and is sized to the sprite's display
+  // bounds. Counter-scaled by camera zoom so it stays a constant screen
+  // thickness.
+  private updateWarningRects(): void {
+    const warnings = this.ws?.getMapWarnings() ?? [];
+    const warnedIds = new Set<string>();
+    for (const w of warnings) if (w.entityId) warnedIds.add(w.entityId);
+
+    for (const avatar of this.avatars.values()) {
+      const shouldShow = warnedIds.has(avatar.entityId);
+      if (shouldShow && !avatar.warningRect) {
+        const rect = this.add.rectangle(0, 0, TILE_SIZE, TILE_SIZE)
+          .setStrokeStyle(2, 0xff0000)
+          .setOrigin(0.5, 0.5)
+          .setDepth(10000);
+        rect.setStrokeStyle(2 / this.cameras.main.zoom, 0xff0000);
+        avatar.warningRect = rect;
+      } else if (!shouldShow && avatar.warningRect) {
+        avatar.warningRect.destroy();
+        avatar.warningRect = null;
+      }
+      if (avatar.warningRect) {
+        avatar.warningRect.x = avatar.sprite.x;
+        // Center vertically on the sprite (origin 0,1 means sprite.y is the
+        // feet; the visual center is roughly half a tile above).
+        avatar.warningRect.y = avatar.sprite.y - TILE_SIZE / 2;
+        avatar.warningRect.setScale(1 / this.cameras.main.zoom);
+      }
+    }
   }
 
   // Play walk or idle animation for an avatar based on direction and
@@ -1464,6 +1513,7 @@ export class GameScene extends Phaser.Scene {
           av.sprite.destroy();
           av.nameTag?.destroy();
           av.glow?.destroy();
+          av.warningRect?.destroy();
         }
         this.avatars.clear();
         this.displayNameByEntity.clear();
@@ -1649,6 +1699,7 @@ export class GameScene extends Phaser.Scene {
             predY: 0,
             nameTag: null,
             glow: null,
+            warningRect: null,
           });
           // Register as an active light if intensity > 0. The per-frame
           // update() loop will build the masked glow canvas.
@@ -1695,6 +1746,7 @@ export class GameScene extends Phaser.Scene {
         predY: y / TILE_SIZE,
         nameTag: null,
         glow: null,
+        warningRect: null,
       });
       if (lightIntensity > 0) {
         this.activeLights.add(spawn.entityId);
@@ -1858,6 +1910,7 @@ export class GameScene extends Phaser.Scene {
         avatar.nameTag?.destroy();
         avatar.glow?.destroy();
         avatar.lightGlow?.destroy();
+        avatar.warningRect?.destroy();
         avatar.sprite.destroy();
         this.activeLights.delete(dest.entityId);
         // Remove the per-light CanvasTexture if one was allocated.

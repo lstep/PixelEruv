@@ -30,10 +30,11 @@ func (l CheckLevel) String() string {
 
 // CheckResult is a single integrity issue found by CheckMapIntegrity.
 type CheckResult struct {
-	Level   CheckLevel
-	Layer   string // layer name, or "" for map-level
-	Zone    string // zone ID, or "" for non-zone issues
-	Message string
+	Level    CheckLevel
+	Layer    string // layer name, or "" for map-level
+	Zone     string // zone ID, or "" for non-zone issues
+	EntityID string // entity ID, or "" for non-entity issues
+	Message  string
 }
 
 // String formats a check result for logging.
@@ -59,6 +60,20 @@ var knownZoneTypes = map[string]bool{
 	"work":    true,
 	"silent":  true,
 	"spawn":   true,
+}
+
+// knownActionVerbs is the set of effect action verbs that ext-props knows
+// how to handle. Unknown verbs are a warning (ext-props silently skips
+// them, but a typo means the effect will never fire).
+var knownActionVerbs = map[string]bool{
+	"toggle":       true,
+	"set_state":    true,
+	"activate":     true,
+	"deactivate":   true,
+	"turn_on":      true,
+	"turn_off":     true,
+	"set_light":    true,
+	"toggle_light": true,
 }
 
 // CheckMapIntegrity validates a parsed Tiled map for common issues:
@@ -208,6 +223,98 @@ func CheckMapIntegrity(md *MapData) []CheckResult {
 					Zone:    z.ID,
 					Message: "spawn zone contains no walkable tiles; players will fall back to map-center spawn",
 				})
+			}
+		}
+	}
+
+	// --- Entity and trigger checks ---
+	results = append(results, checkEntities(md)...)
+
+	return results
+}
+
+// checkEntities validates the map's PropEntity list: duplicate IDs,
+// interactions JSON structure, known action verbs, and target_id
+// references that resolve to entities on this map.
+func checkEntities(md *MapData) []CheckResult {
+	var results []CheckResult
+
+	// Build a set of entity IDs for target_id resolution.
+	entityIDs := make(map[string]bool)
+	for _, e := range md.Entities {
+		entityIDs[e.ID] = true
+	}
+
+	seenIDs := make(map[string]bool)
+	for _, e := range md.Entities {
+		// Duplicate entity ID.
+		if seenIDs[e.ID] {
+			results = append(results, CheckResult{
+				Level:    LevelError,
+				Layer:    "Entities",
+				EntityID: e.ID,
+				Message:  fmt.Sprintf("duplicate entity ID %q", e.ID),
+			})
+		}
+		seenIDs[e.ID] = true
+
+		// Light attribute validation.
+		if e.LightIntensity > 100 {
+			results = append(results, CheckResult{
+				Level:    LevelWarning,
+				Layer:    "Entities",
+				EntityID: e.ID,
+				Message:  fmt.Sprintf("light_intensity %d > 100, clamped at load", e.LightIntensity),
+			})
+		}
+		if e.LightRadius < 0 {
+			results = append(results, CheckResult{
+				Level:    LevelWarning,
+				Layer:    "Entities",
+				EntityID: e.ID,
+				Message:  fmt.Sprintf("light_radius %.2f < 0, ignored", e.LightRadius),
+			})
+		}
+
+		// Interactions JSON structure.
+		for actionID, effects := range e.Interactions {
+			for i, fx := range effects {
+				if fx.Action == "" {
+					results = append(results, CheckResult{
+						Level:    LevelError,
+						Layer:    "Entities",
+						EntityID: e.ID,
+						Message:  fmt.Sprintf("interactions[%q][%d] has empty action", actionID, i),
+					})
+					continue
+				}
+				if !knownActionVerbs[fx.Action] {
+					results = append(results, CheckResult{
+						Level:    LevelWarning,
+						Layer:    "Entities",
+						EntityID: e.ID,
+						Message:  fmt.Sprintf("interactions[%q][%d] unknown action verb %q (silently skipped by ext-props)", actionID, i, fx.Action),
+					})
+				}
+				if len(fx.TargetIDs) == 0 {
+					results = append(results, CheckResult{
+						Level:    LevelError,
+						Layer:    "Entities",
+						EntityID: e.ID,
+						Message:  fmt.Sprintf("interactions[%q][%d] action %q has no target_ids", actionID, i, fx.Action),
+					})
+					continue
+				}
+				for _, tid := range fx.TargetIDs {
+					if !entityIDs[tid] {
+						results = append(results, CheckResult{
+							Level:    LevelWarning,
+							Layer:    "Entities",
+							EntityID: e.ID,
+							Message:  fmt.Sprintf("interactions[%q][%d] action %q targets %q which does not exist on this map", actionID, i, fx.Action, tid),
+						})
+					}
+				}
 			}
 		}
 	}

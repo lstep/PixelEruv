@@ -31,9 +31,9 @@ func TestParseTiledMapJSON_Entities(t *testing.T) {
 		]
 	}`)
 
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
-		t.Fatalf("parseTiledMapJSON: %v", err)
+		t.Fatalf("ParseTiledMapJSON: %v", err)
 	}
 	if len(md.Entities) != 1 {
 		t.Fatalf("expected 1 entity (unnamed object skipped), got %d", len(md.Entities))
@@ -58,9 +58,9 @@ func TestParseTiledMapJSON_Entities(t *testing.T) {
 
 func TestParseTiledMapJSON_NoEntitiesLayer(t *testing.T) {
 	body := []byte(`{"width": 5, "height": 5, "layers": []}`)
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
-		t.Fatalf("parseTiledMapJSON: %v", err)
+		t.Fatalf("ParseTiledMapJSON: %v", err)
 	}
 	if len(md.Entities) != 0 {
 		t.Errorf("expected no entities, got %d", len(md.Entities))
@@ -115,9 +115,9 @@ func TestParseTiledMapJSON_InteractionProperties(t *testing.T) {
 		]
 	}`)
 
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
-		t.Fatalf("parseTiledMapJSON: %v", err)
+		t.Fatalf("ParseTiledMapJSON: %v", err)
 	}
 	if len(md.Entities) != 2 {
 		t.Fatalf("expected 2 entities, got %d", len(md.Entities))
@@ -237,9 +237,9 @@ func TestParseTiledMapJSON_LightAttributes(t *testing.T) {
 		]
 	}`)
 
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
-		t.Fatalf("parseTiledMapJSON: %v", err)
+		t.Fatalf("ParseTiledMapJSON: %v", err)
 	}
 	if len(md.Entities) != 3 {
 		t.Fatalf("expected 3 entities, got %d", len(md.Entities))
@@ -329,9 +329,9 @@ func TestParseTiledMapJSON_EffectGidOverride(t *testing.T) {
 		]
 	}`)
 
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
-		t.Fatalf("parseTiledMapJSON: %v", err)
+		t.Fatalf("ParseTiledMapJSON: %v", err)
 	}
 	if len(md.Entities) != 1 {
 		t.Fatalf("expected 1 entity, got %d", len(md.Entities))

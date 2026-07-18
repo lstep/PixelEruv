@@ -178,7 +178,7 @@ func (s *MapStore) loadMapOnce(mapName string) (*MapData, error) {
 		return nil, fmt.Errorf("read tiled json body: %w", err)
 	}
 
-	md, err := parseTiledMapJSON(body)
+	md, err := ParseTiledMapJSON(body)
 	if err != nil {
 		return nil, err
 	}

@@ -173,10 +173,10 @@
             150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
             150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
             150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
-            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
-            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
-            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
-            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
+            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150, 150, 150, 0, 0, 150,
+            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150, 150, 150, 0, 0, 150,
+            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150, 150, 150, 0, 0, 150,
+            150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150, 150, 150, 0, 0, 150,
             150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
             150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
             150, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 150,
@@ -216,7 +216,7 @@
                         {
                          "name":"interactions",
                          "type":"string",
-                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-switch-1\"], \"gid_on\": 379, \"gid_off\": 379}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"], \"gid_on\": 508, \"gid_off\": 491}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]}]}"
+                         "value":"{\"toggle\": [{\"action\": \"toggle\", \"target_ids\": [\"light-switch-1\"], \"gid_on\": 379, \"gid_off\": 379}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-1\"], \"gid_on\": 508, \"gid_off\": 491}, {\"action\": \"toggle_light\", \"target_ids\": [\"light-2\"]},{\"action\": \"toggle_light\", \"target_ids\": [\"light-3\"]}]}"
                         }, 
                         {
                          "name":"on_interact_action",
@@ -357,6 +357,65 @@
                  "width":32,
                  "x":286.588904694168,
                  "y":121.172119487909
+                }, 
+                {
+                 "gid":508,
+                 "height":32,
+                 "id":22,
+                 "name":"light-3",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"actions",
+                         "type":"string",
+                         "value":"toggle,activate,deactivate"
+                        }, 
+                        {
+                         "name":"entity_type",
+                         "type":"string",
+                         "value":"light"
+                        }, 
+                        {
+                         "name":"gid_on",
+                         "type":"int",
+                         "value":491
+                        }, 
+                        {
+                         "name":"interactions",
+                         "type":"string",
+                         "value":"{\"toggle\":[{\"action\":\"toggle_light\",\"target_ids\":[\"light-3\"]}],\"activate\":[{\"action\":\"set_light\",\"payload\":\"80\",\"target_ids\":[\"light-1\"]}],\"deactivate\":[{\"action\":\"set_light\",\"payload\":\"0\",\"target_ids\":[\"light-3\"]}]}"
+                        }, 
+                        {
+                         "name":"light_color",
+                         "type":"string",
+                         "value":"#ffe6b4"
+                        }, 
+                        {
+                         "name":"light_intensity",
+                         "type":"int",
+                         "value":0
+                        }, 
+                        {
+                         "name":"light_radius",
+                         "type":"float",
+                         "value":6
+                        }, 
+                        {
+                         "name":"owner_extension",
+                         "type":"string",
+                         "value":"props"
+                        }, 
+                        {
+                         "name":"trigger_radius",
+                         "type":"float",
+                         "value":1.5
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":714.856330014225,
+                 "y":394.765291607397
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -585,7 +644,7 @@
          "y":0
         }],
  "nextlayerid":9,
- "nextobjectid":22,
+ "nextobjectid":23,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",

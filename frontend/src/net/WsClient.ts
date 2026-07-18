@@ -44,8 +44,9 @@ export interface ConnectHandlers {
   onChatMessage?: (msg: { channel: "global" | "proximity"; entityId: string; displayName: string; text: string; timestamp: number }) => void;
   // Fired when a MapTransitionFrame is received — the server moved the
   // player to a different map. The frontend should load the new tilemap
-  // and clear entities from the old map.
-  onMapTransition?: (msg: { mapId: string; spawnX: number; spawnY: number; mapOptions: string }) => void;
+  // and clear entities from the old map. mapWarnings carries non-fatal
+  // validation warnings (entity_id + message) for the new map.
+  onMapTransition?: (msg: { mapId: string; spawnX: number; spawnY: number; mapOptions: string; mapWarnings: { entityId: string; message: string }[] }) => void;
   // Fired when a MapOptionsUpdateFrame is received — the map's options were
   // edited in the PB admin GUI and hot-reloaded to connected clients.
   onMapOptionsUpdate?: (msg: { mapOptions: string }) => void;
@@ -63,6 +64,9 @@ export interface ConnectHandlers {
   // immediate-mode interactions, availableActions is empty and the side
   // effects arrive via replication (state/sprite/animation updates).
   onActionResult?: (result: ActionResultView) => void;
+  // Fired when an ErrorFrame is received (e.g. fatal map validation error).
+  // The client should display the message to the user (black overlay).
+  onError?: (code: number, message: string) => void;
 }
 
 export interface SpawnEntityView {
@@ -102,6 +106,10 @@ export class WsClient {
   private mapOptions: string = "";
   private playerOptions: string = "";
   private admin = false;
+  // Non-fatal validation warnings for the current map. Each entry has
+  // entityId ("" for map-level) and message. The frontend draws a red
+  // outline on entities that appear here.
+  private mapWarnings: { entityId: string; message: string }[] = [];
   private seq = 0;
   private handlers!: ConnectHandlers;
   // True after the first successful auth; used to dispatch onReady vs
@@ -173,6 +181,16 @@ export class WsClient {
             connectSpan.setAttribute("client.id", ar.clientId);
             connectSpan.end();
             console.log(`authenticated: client=${this.clientId} entity=${this.entityId}`);
+            if (ar.mapError) {
+              console.error(`fatal map error for ${ar.mapId}: ${ar.mapError}`);
+              this.handlers.onError?.(0, ar.mapError);
+            }
+            const warnings = (ar.mapWarnings ?? []).map((w) => ({ entityId: w.entityId, message: w.message }));
+            if (warnings.length > 0) {
+              console.warn(`map validation warnings for ${ar.mapId}:`);
+              for (const w of warnings) console.warn(`  ${w.entityId ? `[${w.entityId}] ` : ""}${w.message}`);
+            }
+            this.mapWarnings = warnings;
             this.setState("open");
             if (this.hadFirstAuth) {
               this.handlers.onReconnect?.(ar.clientId, this.entityId ?? "");
@@ -281,18 +299,28 @@ export class WsClient {
           });
           break;
         }
-        case "error":
-          console.error("server error:", serverFrame.payload.value);
+        case "error": {
+          const ef = serverFrame.payload.value;
+          console.error("server error:", ef);
+          this.handlers.onError?.(Number(ef.code), ef.message);
           break;
+        }
         case "mapTransition": {
           const mt = serverFrame.payload.value;
           this.mapId = mt.mapId || null;
           this.mapOptions = mt.mapOptions || "";
+          const twarnings = (mt.mapWarnings ?? []).map((w) => ({ entityId: w.entityId, message: w.message }));
+          if (twarnings.length > 0) {
+            console.warn(`map validation warnings for ${mt.mapId}:`);
+            for (const w of twarnings) console.warn(`  ${w.entityId ? `[${w.entityId}] ` : ""}${w.message}`);
+          }
+          this.mapWarnings = twarnings;
           this.handlers.onMapTransition?.({
             mapId: mt.mapId,
             spawnX: Number(mt.spawnX),
             spawnY: Number(mt.spawnY),
             mapOptions: mt.mapOptions || "",
+            mapWarnings: twarnings,
           });
           break;
         }
@@ -545,6 +573,13 @@ export class WsClient {
 
   getPlayerOptions(): string {
     return this.playerOptions;
+  }
+
+  // Returns the non-fatal validation warnings for the current map. Each
+  // entry has entityId ("" for map-level) and message. The frontend draws
+  // a red outline on entities that appear here.
+  getMapWarnings(): { entityId: string; message: string }[] {
+    return this.mapWarnings;
   }
 
   isAdmin(): boolean {
