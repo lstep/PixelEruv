@@ -24,7 +24,7 @@ The wiring between these components is described in `05-architecture.md`.
 
 ## Backend
 
-- **Go**-based backend, split into two services:
+- **Go**-based backend, split into several services:
   - **Pusher** — a thin WebSocket proxy that handles client connections, token
     validation, and NATS forwarding. No game logic. See `09-pusher.md`.
   - **World Simulator** — the spatial authority and replication gateway: ECS,
@@ -32,7 +32,22 @@ The wiring between these components is described in `05-architecture.md`.
     player avatar movement, and state-store access (provisioning + persistence).
     All other gameplay behavior is delegated to extensions via NATS. See
     `10-world-simulator.md` and `18-extensions.md`.
-- The two services communicate exclusively via **NATS Core** pub/sub.
+  - **Audit service** (`backend/cmd/audit`) — standalone subscriber to
+    `audit.event` on NATS, persists events to its own SQLite DB, serves an
+    HTMX web UI at `/audit/` and a JSON API at `/audit/api/*`. Independent of
+    worldsim/PocketBase — survives worldsim crashes.
+  - **Admin portal** (`backend/cmd/admin`) — email/password login via
+    PocketBase, signed cookie session, `auth_request` endpoint for nginx.
+    Protects PB admin and the audit UI.
+  - **MCP server** (`backend/cmd/mcp`) — Model Context Protocol server
+    exposing Pixel Eruv internals (world state, audit history, PocketBase
+    records) and admin actions (kick, ban, teleport, chat-as, set_*,
+    dispatch_extension_action) to LLM clients (Claude Desktop, Devin,
+    Cursor) over HTTP/SSE on `:8085/mcp`. Bearer-token auth. Separate binary
+    from worldsim to isolate MCP load from the game loop. See
+    `documentation/plans/2026-07-19-mcp-server-design.md`.
+- The services communicate via **NATS Core** pub/sub (and NATS request-reply
+  for the MCP server's worldsim queries).
 - Uses **protobuf** for serialisation.
 - Uses the Go **standard library `net/http`** packages — no web framework
   (Gin, Echo, etc.) is needed.

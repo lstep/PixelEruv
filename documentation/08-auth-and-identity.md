@@ -288,6 +288,25 @@ nginx uses `auth_request` to check the cookie before proxying to `/_/`
 (PB admin) and `/audit/`. Only users with `is_admin=true` in PocketBase
 can log in to the admin portal.
 
+### 8a. MCP server access (LLM admin tooling)
+
+The MCP server (`/mcp`, `backend/cmd/mcp`) is a third admin surface,
+distinct from the admin portal. It exposes world state, audit history,
+and admin actions (kick, ban, teleport, chat-as, set_*) to LLM clients
+(Claude Desktop, Devin, Cursor) over HTTP/SSE. Auth is a **bearer
+token** (`MCP_AUTH_TOKEN` env, required — the server refuses to start
+without it), NOT the admin portal cookie. nginx does NOT apply the
+admin `auth_request` to `/mcp` — MCP clients present a bearer token in
+the `Authorization` header, not a browser session cookie.
+
+The bearer token is a shared secret: anyone who has it can kick, ban,
+read full PII (IP, device_id, client_id), and impersonate any entity in
+chat. Treat it as a root credential. Do NOT expose the MCP server on
+the public internet without a strong token and network-level
+restrictions (firewall / VPN / Tailscale). See
+`documentation/plans/2026-07-19-mcp-server-design.md` for the full
+surface.
+
 ---
 
 ## 9. Ban system
@@ -316,7 +335,9 @@ Bans are stored in the PocketBase `bans` collection (see
 `06-data-model-and-persistence.md`). Each record specifies a `target_type`,
 `target_value`, optional `reason`, and optional `banned_until` (unix
 timestamp; 0 or empty = permanent). Bans are currently issued via the
-PocketBase admin dashboard. An in-game admin ban command is planned.
+PocketBase admin dashboard, or via the MCP server's `ban_player` tool
+(which calls `worldsim.client.ban` → `BanStore.Add` + kicks any matching
+connected client). An in-game admin ban command is planned.
 
 ### Ban check
 

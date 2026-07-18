@@ -110,6 +110,7 @@ Browser ──WS──> Nginx ──> Pusher ──NATS──> WorldSim ──> 
 - **WorldSim** (`backend/cmd/worldsim`): Spatial authority + ECS kernel. Owns entities, zones, collision, replication. Only gameplay system is avatar movement. Emits `worldsim.ready` on NATS after subscriptions are live.
 - **Extensions** (`ext-demo`, `ext-walls`, `ext-props`, `ext-av`): Peer processes on the NATS bus. Register triggers via `extension.<id>.register`. All gameplay logic lives here, not in the kernel.
 - **PocketBase**: Maps, players, positions storage. Worldsim hits it for map data, user lookup, position persistence.
+- **MCP** (`backend/cmd/mcp`): Model Context Protocol server exposing worldsim state, audit history, and admin actions (kick/ban/teleport/chat-as/set_*) to LLM clients over HTTP/SSE on `:8085/mcp`. Bearer-token auth (`MCP_AUTH_TOKEN`, required). Separate binary from worldsim to isolate MCP load from the game loop. See `documentation/plans/2026-07-19-mcp-server-design.md`.
 - **Frontend** (`frontend/`): Phaser 4 client (TypeScript/Vite). PocketBase auth (email/password + OAuth2), sprite rendering, WebSocket client.
 
 ### Build and test commands

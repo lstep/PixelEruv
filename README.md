@@ -21,8 +21,9 @@ Instead of switching between chat applications, video meetings and shared docume
 * 🔌 Extension system — add NPCs, custom behaviors, and objects as separate programs in any language
 * ⚡ High-performance Go backend
 * 🌐 Self-hostable via Docker Compose (no Kubernetes required)
-* 🔍 Audit log + observability — searchable audit event history (HTMX UI) + OpenTelemetry traces (motel dev / OpenObserve optional)
+* 🔍 Audit log + observability — searchable audit event history (HTMX UI + JSON API) + OpenTelemetry traces (motel dev / OpenObserve optional)
 * 🔐 Admin portal — unified email/password login via PocketBase, protects PB admin + audit UI behind a single auth gate
+* 🤖 MCP server — expose world state, audit history, and admin actions (kick, ban, teleport, chat-as, set_*) to LLM clients (Claude Desktop, Devin, Cursor) over HTTP/SSE with bearer-token auth
 
 🧭 Roadmap (post-MVP)
 

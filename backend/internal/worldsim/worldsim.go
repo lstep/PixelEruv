@@ -815,6 +815,39 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe worldsim.stats.get: %w", err)
 	}
 
+	// Entity query handlers (worldsim.entities.query / worldsim.entity.get):
+	// read-only snapshots of the entity table, used by the MCP server to
+	// expose entity reads to MCP clients. See entities_query.go.
+	if err := s.subscribeEntitiesQuery(); err != nil {
+		return fmt.Errorf("subscribe worldsim.entities.query: %w", err)
+	}
+
+	// Admin / control handlers (worldsim.client.kick, worldsim.client.ban,
+	// worldsim.admin.chat / set_name / set_status / set_sprite /
+	// set_player_options). Used by the MCP server to expose control actions
+	// to MCP clients. See admin_actions.go.
+	if err := s.subscribeClientKick(); err != nil {
+		return fmt.Errorf("subscribe worldsim.client.kick: %w", err)
+	}
+	if err := s.subscribeClientBan(); err != nil {
+		return fmt.Errorf("subscribe worldsim.client.ban: %w", err)
+	}
+	if err := s.subscribeAdminChat(); err != nil {
+		return fmt.Errorf("subscribe worldsim.admin.chat: %w", err)
+	}
+	if err := s.subscribeAdminSetName(); err != nil {
+		return fmt.Errorf("subscribe worldsim.admin.set_name: %w", err)
+	}
+	if err := s.subscribeAdminSetStatus(); err != nil {
+		return fmt.Errorf("subscribe worldsim.admin.set_status: %w", err)
+	}
+	if err := s.subscribeAdminSetSprite(); err != nil {
+		return fmt.Errorf("subscribe worldsim.admin.set_sprite: %w", err)
+	}
+	if err := s.subscribeAdminSetPlayerOptions(); err != nil {
+		return fmt.Errorf("subscribe worldsim.admin.set_player_options: %w", err)
+	}
+
 	// Announce readiness so extensions can register against a live subscriber
 	// instead of racing their initial publish (NATS Core drops publishes with
 	// no subscribers). Flush guarantees the broadcast is on the wire before

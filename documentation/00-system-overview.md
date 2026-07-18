@@ -300,6 +300,30 @@ application code changes.
 
 See `08-auth-and-identity.md` for token lifecycle, validation, and flows.
 
+### MCP Server — admin tooling for LLM clients
+
+A separate Go binary (`backend/cmd/mcp`) exposes Pixel Eruv's internals to
+MCP (Model Context Protocol) clients — Claude Desktop, Devin, Cursor, any
+tool that speaks MCP. Connect a client to `https://<host>/mcp` with a
+bearer token, and the LLM can inspect the live world, query audit history,
+read PocketBase records, and take administrative actions: kick, ban,
+teleport, send chat as a player, rename, set status, swap sprite, replace
+player options, dispatch extension actions.
+
+It is not loaded into worldsim. MCP request handling can be slow or
+hammered by an LLM retry loop, and none of that should touch the 20Hz game
+loop. The server talks to worldsim over NATS request-reply, to the audit
+service over its JSON API, and to PocketBase over REST. Restart or
+redeploy the MCP surface without dropping a single player.
+
+Access control is a bearer token (`MCP_AUTH_TOKEN`, required). The server
+exposes full PII (IP, device_id, client_id) — necessary for moderation.
+Do NOT expose on the public internet without a strong token and
+network-level restrictions.
+
+See `documentation/plans/2026-07-19-mcp-server-design.md` for the full
+design and `features.md` §5.9 for the storyboard.
+
 ---
 
 ## 4. Three data flows (simplified)

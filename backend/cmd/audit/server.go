@@ -70,6 +70,14 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc(bp+"/world/partial", s.handleWorldPartial)
 	mux.HandleFunc(bp+"/healthz", s.handleHealthz)
 
+	// JSON API endpoints (machine-readable mirrors of the HTML pages). Used
+	// by the MCP server (backend/cmd/mcp) for historical audit queries; the
+	// live event stream is delivered via the audit.event NATS subject.
+	mux.HandleFunc(bp+"/api/events", s.handleAPIEvents)
+	mux.HandleFunc(bp+"/api/events/", s.handleAPIEventDetail)
+	mux.HandleFunc(bp+"/api/players/", s.handleAPIPlayerTimeline)
+	mux.HandleFunc(bp+"/api/stats", s.handleAPIStats)
+
 	// Static files (HTMX, CSS) — served from embedded filesystem.
 	mux.Handle(bp+"/static/", http.StripPrefix(bp+"/static/", http.FileServer(http.FS(staticFilesystem()))))
 
@@ -355,4 +363,142 @@ func (s *Server) basicAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// --- JSON API handlers (machine-readable mirrors of the HTML pages) ---
+//
+// These endpoints exist so the MCP server (backend/cmd/mcp) can query audit
+// history without coupling to the SQLite storage backend. They mirror the
+// HTML handlers but return application/json. Live events are delivered via
+// the audit.event NATS subject, not these endpoints.
+
+// apiEvent is the JSON shape returned by the audit API. It is the same as
+// StoredEvent but with a stable, exported timestamp string for clients that
+// don't parse time.Time.
+type apiEvent struct {
+	ID        int64           `json:"id"`
+	EventType string          `json:"event_type"`
+	Severity  string          `json:"severity"`
+	Timestamp string          `json:"timestamp"`
+	Actor     audit.Actor     `json:"actor"`
+	Details   json.RawMessage `json:"details"`
+	TraceID   string          `json:"trace_id,omitempty"`
+}
+
+func toAPIEvent(se StoredEvent) apiEvent {
+	return apiEvent{
+		ID:        se.ID,
+		EventType: se.EventType,
+		Severity:  se.Severity,
+		Timestamp: se.Timestamp.UTC().Format(time.RFC3339),
+		Actor:     se.Actor,
+		Details:   se.Details,
+		TraceID:   se.TraceID,
+	}
+}
+
+func (s *Server) handleAPIEvents(w http.ResponseWriter, r *http.Request) {
+	f := QueryFilter{
+		EventType: r.URL.Query().Get("type"),
+		Severity:  r.URL.Query().Get("severity"),
+		ActorSub:  r.URL.Query().Get("actor"),
+		EntityID:  r.URL.Query().Get("entity"),
+		Limit:     50,
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			f.Limit = n
+		}
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			f.Offset = n
+		}
+	}
+	events, err := s.store.Query(f)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "query failed: "+err.Error())
+		return
+	}
+	out := make([]apiEvent, 0, len(events))
+	for _, se := range events {
+		out = append(out, toAPIEvent(se))
+	}
+	writeAPIJSON(w, out)
+}
+
+func (s *Server) handleAPIEventDetail(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, s.basePath+"/api/events/")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	se, err := s.store.GetByID(id)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "not found")
+		return
+	}
+	writeAPIJSON(w, toAPIEvent(se))
+}
+
+func (s *Server) handleAPIPlayerTimeline(w http.ResponseWriter, r *http.Request) {
+	sub := strings.TrimPrefix(r.URL.Path, s.basePath+"/api/players/")
+	if sub == "" {
+		writeAPIError(w, http.StatusBadRequest, "missing sub")
+		return
+	}
+	events, err := s.store.Query(QueryFilter{ActorSub: sub, Limit: 200})
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "query failed: "+err.Error())
+		return
+	}
+	out := make([]apiEvent, 0, len(events))
+	for _, se := range events {
+		out = append(out, toAPIEvent(se))
+	}
+	writeAPIJSON(w, out)
+}
+
+// apiStats is the JSON shape returned by /api/stats: severity + type counts
+// for the last 24h, plus service uptime and version.
+type apiStats struct {
+	Uptime         string         `json:"uptime"`
+	Version        string         `json:"version"`
+	SeverityCounts map[string]int `json:"severity_counts_24h"`
+	TypeCounts     map[string]int `json:"type_counts_24h"`
+}
+
+func (s *Server) handleAPIStats(w http.ResponseWriter, r *http.Request) {
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	sevCounts, sevErr := s.store.CountBySeverity(since)
+	if sevErr != nil {
+		s.logger.Warn("api stats CountBySeverity", "err", sevErr)
+		sevCounts = map[string]int{}
+	}
+	typeCounts, typeErr := s.store.CountByType(since)
+	if typeErr != nil {
+		s.logger.Warn("api stats CountByType", "err", typeErr)
+		typeCounts = map[string]int{}
+	}
+	writeAPIJSON(w, apiStats{
+		Uptime:         time.Since(s.startTime).Round(time.Second).String(),
+		Version:        version.Version,
+		SeverityCounts: sevCounts,
+		TypeCounts:     typeCounts,
+	})
+}
+
+func writeAPIJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		http.Error(w, "encode error", http.StatusInternalServerError)
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]any{"error": msg})
 }
