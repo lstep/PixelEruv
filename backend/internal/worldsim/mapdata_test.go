@@ -298,3 +298,59 @@ func TestParseHexColor(t *testing.T) {
 		}
 	}
 }
+
+// TestParseTiledMapJSON_EffectGidOverride verifies that the optional
+// gid_on/gid_off fields on an Effect are parsed from the interactions
+// JSON. These let a single toggle/toggle_light/set_light effect choose
+// a different sprite pair than the target's authored defaults.
+func TestParseTiledMapJSON_EffectGidOverride(t *testing.T) {
+	body := []byte(`{
+		"width": 10,
+		"height": 10,
+		"tilewidth": 32,
+		"tileheight": 32,
+		"layers": [
+			{
+				"name": "Entities",
+				"type": "objectgroup",
+				"objects": [
+					{
+						"name": "switch-1",
+						"x": 64,
+						"y": 64,
+						"width": 32,
+						"height": 32,
+						"properties": [
+							{"name": "interactions", "type": "string", "value": "{\"toggle\":[{\"action\":\"toggle\",\"target_ids\":[\"light-1\"],\"gid_on\":250,\"gid_off\":251}]}"}
+						]
+					}
+				]
+			}
+		]
+	}`)
+
+	md, err := parseTiledMapJSON(body)
+	if err != nil {
+		t.Fatalf("parseTiledMapJSON: %v", err)
+	}
+	if len(md.Entities) != 1 {
+		t.Fatalf("expected 1 entity, got %d", len(md.Entities))
+	}
+	effects := md.Entities[0].Interactions["toggle"]
+	if len(effects) != 1 {
+		t.Fatalf("toggle effects len = %d, want 1", len(effects))
+	}
+	fx := effects[0]
+	if fx.GidOn != 250 {
+		t.Errorf("effect GidOn = %d, want 250", fx.GidOn)
+	}
+	if fx.GidOff != 251 {
+		t.Errorf("effect GidOff = %d, want 251", fx.GidOff)
+	}
+	if fx.Action != "toggle" {
+		t.Errorf("effect Action = %q, want toggle", fx.Action)
+	}
+	if len(fx.TargetIDs) != 1 || fx.TargetIDs[0] != "light-1" {
+		t.Errorf("effect TargetIDs = %v, want [light-1]", fx.TargetIDs)
+	}
+}
