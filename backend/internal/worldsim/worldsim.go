@@ -33,10 +33,11 @@ import (
 // --- Minimal ECS ---
 
 const (
-	compPosition    = 1
-	compEntityState = 2
-	compAppearance  = 3
-	compDisplayName = 4
+	compPosition     = 1
+	compEntityState  = 2
+	compAppearance   = 3
+	compDisplayName  = 4
+	compLightEmitter = 5
 )
 
 // Player presence status, replicated as DisplayName.status and used to gate
@@ -118,11 +119,19 @@ type Entity struct {
 	// State is a generic opaque string (EntityState component) that
 	// extensions can set via an input-trigger reply, e.g. "on"/"off".
 	State string
+	// LightEmitter component: intensity 0-100 (0 = no light), color 0xRRGGBB
+	// (0 = default warm white 0xffe6b4), radius in tiles (0 = default 3).
+	// Set from Tiled entity attributes at provisioning and updated at runtime
+	// via the set_light effect verb in ext-props.
+	LightIntensity uint32
+	LightColor     uint32
+	LightRadius    float32
 	// dirty: which components changed since last replication tick
-	dirtyPosition   bool
-	dirtyState      bool
-	dirtyName       bool
-	dirtyAppearance bool
+	dirtyPosition     bool
+	dirtyState        bool
+	dirtyName         bool
+	dirtyAppearance   bool
+	dirtyLightEmitter bool
 	// pendingAnimations: animation IDs to replicate as PlayAnimation on the
 	// next tick, then cleared.
 	pendingAnimations []uint32
@@ -2072,6 +2081,7 @@ func (s *Simulator) tick() {
 		e.dirtyState = false
 		e.dirtyName = false
 		e.dirtyAppearance = false
+		e.dirtyLightEmitter = false
 		e.pendingAnimations = nil
 	}
 
@@ -2192,6 +2202,10 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
 				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
 			}
+			if e.LightIntensity > 0 {
+				lightBytes, _ := proto.Marshal(&pb.LightEmitter{Intensity: e.LightIntensity, Color: e.LightColor, Radius: e.LightRadius})
+				components = append(components, &pb.ComponentData{ComponentId: compLightEmitter, Data: lightBytes})
+			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
 				EntityId:    e.ID,
 				SnapshotSeq: s.snapshotSeq,
@@ -2234,6 +2248,15 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compAppearance,
 					Data:        appBytes,
+					SnapshotSeq: s.snapshotSeq,
+				})
+			}
+			if e.dirtyLightEmitter {
+				lightBytes, _ := proto.Marshal(&pb.LightEmitter{Intensity: e.LightIntensity, Color: e.LightColor, Radius: e.LightRadius})
+				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
+					EntityId:    e.ID,
+					ComponentId: compLightEmitter,
+					Data:        lightBytes,
 					SnapshotSeq: s.snapshotSeq,
 				})
 			}

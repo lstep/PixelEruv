@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { fromBinary } from "@bufbuild/protobuf";
-import { AppearanceSchema, DisplayNameSchema, EntityStateSchema } from "../proto/components_pb";
+import { AppearanceSchema, DisplayNameSchema, EntityStateSchema, LightEmitterSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState, AvailableActionView } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
 import { VideoBar } from "../ui/VideoBar";
@@ -379,9 +379,19 @@ interface Avatar {
   // True for entities that support interactions (Appearance.interactable
   // flag). Used by the client-side sparks-on-approach polling.
   interactable: boolean;
-  // Light glow overlay (null for non-light props). A 7x7-tile PNG with a
-  // radial gradient, shown when state === "on".
+  // LightEmitter component values (comp ID 5). intensity 0-100 (0 = no
+  // light), color 0xRRGGBB (0 = default warm white 0xffe6b4), radius in
+  // tiles (0 = default 3). The glow is rendered when intensity > 0.
+  lightIntensity: number;
+  lightColor: number;
+  lightRadius: number;
+  // Light glow overlay (null when not lit). A procedural CanvasTexture with
+  // a radial gradient, masked per-frame by walls and wall zones. Shown when
+  // lightIntensity > 0.
   lightGlow: Phaser.GameObjects.Image | null;
+  // True when a preFX.addGlow is currently applied to sprite (so we don't
+  // re-add every frame). Cleared when the sprite is no longer lit.
+  preFXGlowActive: boolean;
   // Tracks whether the sparks animation has been shown for the current
   // proximity entry. Reset when the player leaves the trigger radius so
   // it can fire again on re-entry.
@@ -485,6 +495,20 @@ export class GameScene extends Phaser.Scene {
   // each frame via connected-components on feet-distance ≤ 2 tiles (matching
   // the server's runProximityClustering). Used to highlight group members.
   private proximityGroup: Set<string> = new Set();
+  // Map option: whether the LightEmitter lighting system is enabled. Default
+  // true. Set from the PB maps.options JSON (lights_enabled key). When false,
+  // no glow rendering and no sprite brightening happens at all.
+  private lightsEnabled = true;
+  // Entity IDs currently emitting light (LightEmitter.intensity > 0).
+  // Maintained incrementally on spawn/component-update; the per-frame glow
+  // redraw iterates this set, not the full avatar map.
+  private activeLights = new Set<string>();
+  // Default LightEmitter values when the component or fields are 0/missing.
+  private static readonly LIGHT_DEFAULT_COLOR = 0xffe6b4;
+  private static readonly LIGHT_DEFAULT_RADIUS = 3;
+  // Max light radius we allocate canvas textures for (in tiles). Bounds the
+  // canvas size so a stray large radius can't OOM the page.
+  private static readonly LIGHT_MAX_RADIUS_TILES = 12;
 
   constructor() {
     super("GameScene");
@@ -619,7 +643,8 @@ export class GameScene extends Phaser.Scene {
 
     // Interaction system assets.
     this.load.audio("clic", "/assets/sounds/clic.wav");
-    this.load.image("lightGlow", "/assets/sprites/light-glow.png");
+    // Note: the light glow texture is generated procedurally in create()
+    // (lightGlowBase) — no PNG asset is loaded for it.
     this.load.spritesheet("sparks", "/assets/sprites/sparks.png", {
       frameWidth: 32,
       frameHeight: 32,
@@ -1399,6 +1424,13 @@ export class GameScene extends Phaser.Scene {
       // Drive spectrograms, speaking state, and speaking-first reordering.
       this.videoBar.tick();
     }
+
+    // Per-frame light glow redraw: for each active light, redraw the masked
+    // CanvasTexture at the light's current position and brighten nearby
+    // sprites. Skipped entirely when lights_enabled is false.
+    if (this.lightsEnabled) {
+      this.updateLights();
+    }
   }
 
   // Play walk or idle animation for an avatar based on direction and
@@ -1449,22 +1481,37 @@ export class GameScene extends Phaser.Scene {
   }
 
   // applyMapOptions parses the map options JSON and applies map-level feature
-  // toggles. Currently handles day_night_enabled (default true). The map option
-  // sets the default — the player's explicit localStorage preference takes
-  // precedence (see DayNightOverlay.applyDefault).
+  // toggles. Currently handles day_night_enabled (default true) and
+  // lights_enabled (default true). The map option sets the default — the
+  // player's explicit localStorage preference takes precedence (see
+  // DayNightOverlay.applyDefault).
   private applyMapOptions(mapOptions: string): void {
     let dayNightEnabled = true; // default
+    let lightsEnabled = true; // default
     if (mapOptions) {
       try {
-        const opts = JSON.parse(mapOptions) as { day_night_enabled?: boolean };
+        const opts = JSON.parse(mapOptions) as { day_night_enabled?: boolean; lights_enabled?: boolean };
         if (typeof opts.day_night_enabled === "boolean") {
           dayNightEnabled = opts.day_night_enabled;
+        }
+        if (typeof opts.lights_enabled === "boolean") {
+          lightsEnabled = opts.lights_enabled;
         }
       } catch {
         // malformed JSON — use defaults
       }
     }
     this.dayNightOverlay?.applyDefault(dayNightEnabled);
+    // Apply lights_enabled: when toggled off at runtime, tear down all
+    // existing glows; when toggled on, the next update() tick rebuilds them.
+    if (this.lightsEnabled !== lightsEnabled) {
+      this.lightsEnabled = lightsEnabled;
+      if (!lightsEnabled) {
+        for (const id of this.activeLights) {
+          this.avatars.get(id)?.lightGlow?.setVisible(false);
+        }
+      }
+    }
   }
 
   // applyPlayerOptions parses the player options JSON and applies player-level
@@ -1535,6 +1582,9 @@ export class GameScene extends Phaser.Scene {
       let isGuest = false;
       let isAdmin = false;
       let status = 0;
+      let lightIntensity = 0;
+      let lightColor = 0;
+      let lightRadius = 0;
       for (const comp of spawn.components) {
         if (comp.componentId === 1) {
           // Position component
@@ -1558,6 +1608,13 @@ export class GameScene extends Phaser.Scene {
           isGuest = dn.isGuest;
           isAdmin = dn.isAdmin;
           status = dn.status;
+        } else if (comp.componentId === 5) {
+          // LightEmitter component — intensity/color/radius for the lighting
+          // system. intensity > 0 marks the entity as an active light.
+          const le = fromBinary(LightEmitterSchema, comp.data);
+          lightIntensity = le.intensity;
+          lightColor = le.color;
+          lightRadius = le.radius;
         }
       }
 
@@ -1580,7 +1637,11 @@ export class GameScene extends Phaser.Scene {
             isProp: true,
             state,
             interactable,
+            lightIntensity,
+            lightColor,
+            lightRadius,
             lightGlow: null,
+            preFXGlowActive: false,
             sparksShown: false,
             remotePosA: null,
             remotePosB: null,
@@ -1589,11 +1650,12 @@ export class GameScene extends Phaser.Scene {
             nameTag: null,
             glow: null,
           });
-          // Show glow overlay if the prop starts in the "on" state.
-          if (state === "on" && this.textures.exists("lightGlow")) {
-            this.showLightGlow(this.avatars.get(spawn.entityId)!);
+          // Register as an active light if intensity > 0. The per-frame
+          // update() loop will build the masked glow canvas.
+          if (lightIntensity > 0) {
+            this.activeLights.add(spawn.entityId);
           }
-          console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid} state=${state}`);
+          console.log(`spawned prop ${spawn.entityId} at (${x}, ${y}) gid=${gid} state=${state} light=${lightIntensity}`);
           continue;
         }
       }
@@ -1621,7 +1683,11 @@ export class GameScene extends Phaser.Scene {
         isProp: false,
         state: "",
         interactable: false,
+        lightIntensity,
+        lightColor,
+        lightRadius,
         lightGlow: null,
+        preFXGlowActive: false,
         sparksShown: false,
         remotePosA: null,
         remotePosB: { x, y: y + TILE_SIZE / 2, t: performance.now() },
@@ -1630,6 +1696,9 @@ export class GameScene extends Phaser.Scene {
         nameTag: null,
         glow: null,
       });
+      if (lightIntensity > 0) {
+        this.activeLights.add(spawn.entityId);
+      }
       // Create the proximity spotlight (soft warm pool at the avatar's feet).
       // Toggled globally with Q; texture swapped to "active" for group members.
       const avatar = this.avatars.get(spawn.entityId)!;
@@ -1759,15 +1828,22 @@ export class GameScene extends Phaser.Scene {
         }
       } else if (upd.componentId === 2) {
         // EntityState component — opaque state string (e.g. "on"/"off").
-        // For props, show/hide the light glow overlay based on state.
+        // No longer drives the light glow (LightEmitter component does).
         const es = fromBinary(EntityStateSchema, upd.data);
         avatar.state = es.state;
-        if (avatar.isProp) {
-          if (es.state === "on") {
-            this.showLightGlow(avatar);
-          } else {
-            this.hideLightGlow(avatar);
-          }
+      } else if (upd.componentId === 5) {
+        // LightEmitter component — intensity/color/radius. Toggle the
+        // activeLights membership; the per-frame update() loop draws the
+        // masked glow canvas for active lights.
+        const le = fromBinary(LightEmitterSchema, upd.data);
+        avatar.lightIntensity = le.intensity;
+        avatar.lightColor = le.color;
+        avatar.lightRadius = le.radius;
+        if (le.intensity > 0) {
+          this.activeLights.add(upd.entityId);
+        } else {
+          this.activeLights.delete(upd.entityId);
+          this.hideLightGlow(avatar);
         }
       }
     }
@@ -1783,6 +1859,9 @@ export class GameScene extends Phaser.Scene {
         avatar.glow?.destroy();
         avatar.lightGlow?.destroy();
         avatar.sprite.destroy();
+        this.activeLights.delete(dest.entityId);
+        // Remove the per-light CanvasTexture if one was allocated.
+        this.textures.remove(`lightGlow:${dest.entityId}`);
         this.avatars.delete(dest.entityId);
         this.displayNameByEntity.delete(dest.entityId);
         this.isGuestByEntity.delete(dest.entityId);
@@ -2105,24 +2184,237 @@ export class GameScene extends Phaser.Scene {
     this.openDropdownEntityId = null;
   }
 
-  // showLightGlow creates (if needed) and shows the light glow overlay
-  // above a prop entity. The overlay is a 7x7-tile PNG with a radial
-  // gradient, centered on the prop's base.
+  // updateLights is called every frame from update() when lightsEnabled is
+  // true. For each active light it redraws the masked glow CanvasTexture at
+  // the light's current position, then brightens nearby sprites via preFX.
+  private updateLights(): void {
+    if (this.activeLights.size === 0) return;
+    for (const id of this.activeLights) {
+      const avatar = this.avatars.get(id);
+      if (!avatar) {
+        this.activeLights.delete(id);
+        continue;
+      }
+      this.showLightGlow(avatar);
+      this.redrawLightGlowMask(avatar);
+    }
+    this.applyLightSpriteBrightening();
+  }
+
+  // showLightGlow creates (if needed) and shows the light glow overlay for
+  // an entity. The overlay is a procedural CanvasTexture with a radial
+  // gradient, masked per-frame by walls and wall zones, centered on the
+  // entity's base.
   private showLightGlow(avatar: Avatar): void {
-    if (!this.textures.exists("lightGlow")) return;
+    const radius = this.effectiveLightRadius(avatar);
+    const size = Math.ceil(radius * 2 * TILE_SIZE);
+    const texKey = `lightGlow:${avatar.entityId}`;
     if (!avatar.lightGlow) {
-      avatar.lightGlow = this.add.image(avatar.sprite.x, avatar.sprite.y, "lightGlow");
+      // Allocate the per-light CanvasTexture at the light's diameter.
+      if (!this.textures.exists(texKey)) {
+        this.textures.createCanvas(texKey, size, size);
+      }
+      avatar.lightGlow = this.add.image(avatar.sprite.x, avatar.sprite.y, texKey);
       avatar.lightGlow.setOrigin(0.5, 0.5);
       avatar.lightGlow.setDepth(avatar.sprite.depth - 0.1);
       avatar.lightGlow.setBlendMode(Phaser.BlendModes.ADD);
+      const color = this.effectiveLightColor(avatar);
+      avatar.lightGlow.setTint(color);
     }
     avatar.lightGlow.setVisible(true);
     avatar.lightGlow.setPosition(avatar.sprite.x, avatar.sprite.y);
+    avatar.lightGlow.setAlpha(avatar.lightIntensity / 100);
   }
 
-  // hideLightGlow hides the light glow overlay for a prop entity.
+  // hideLightGlow hides the light glow overlay for an entity and removes it
+  // from the active light set.
   private hideLightGlow(avatar: Avatar): void {
     avatar.lightGlow?.setVisible(false);
+  }
+
+  // effectiveLightRadius returns the light's radius in tiles, clamped to
+  // LIGHT_MAX_RADIUS_TILES, defaulting to LIGHT_DEFAULT_RADIUS when 0.
+  private effectiveLightRadius(avatar: Avatar): number {
+    const r = avatar.lightRadius > 0 ? avatar.lightRadius : GameScene.LIGHT_DEFAULT_RADIUS;
+    return Math.min(r, GameScene.LIGHT_MAX_RADIUS_TILES);
+  }
+
+  // effectiveLightColor returns the light's color as a 0xRRGGBB integer,
+  // defaulting to LIGHT_DEFAULT_COLOR (warm white) when 0.
+  private effectiveLightColor(avatar: Avatar): number {
+    return avatar.lightColor > 0 ? avatar.lightColor : GameScene.LIGHT_DEFAULT_COLOR;
+  }
+
+  // redrawLightGlowMask redraws the per-light CanvasTexture: a white radial
+  // gradient (alpha falloff) with walls and wall zones cut out via
+  // destination-out compositing. Called every frame for each active light.
+  private redrawLightGlowMask(avatar: Avatar): void {
+    const texKey = `lightGlow:${avatar.entityId}`;
+    const tex = this.textures.get(texKey) as Phaser.Textures.CanvasTexture | null;
+    if (!tex || !(tex instanceof Phaser.Textures.CanvasTexture)) return;
+    const ctx = tex.getContext();
+    const size = tex.width;
+    const cx = size / 2;
+    const r = cx;
+    // Clear and draw the radial gradient (white with alpha falloff). The
+    // color is applied via setTint on the Image, so the texture itself is
+    // white — only the alpha channel carries the falloff.
+    ctx.clearRect(0, 0, size, size);
+    ctx.globalCompositeOperation = "source-over";
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, r);
+    grad.addColorStop(0.00, "rgba(255, 255, 255, 0.85)");
+    grad.addColorStop(0.45, "rgba(255, 255, 255, 0.45)");
+    grad.addColorStop(1.00, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+
+    // Mask step: cut out walls and wall zones using destination-out so
+    // those pixels become transparent (no glow added there).
+    ctx.globalCompositeOperation = "destination-out";
+    // The canvas is centered on the light's sprite position in world space.
+    // World-to-canvas offset: canvas pixel (px, py) = world (wx, wy) - (lightX - r, lightY - r).
+    const lightX = avatar.sprite.x;
+    const lightY = avatar.sprite.y;
+    const originX = lightX - r;
+    const originY = lightY - r;
+    // 1. Cut out blocked collisionGrid cells (full-tile rects in world coords).
+    const minTx = Math.floor((originX) / TILE_SIZE);
+    const minTy = Math.floor((originY) / TILE_SIZE);
+    const maxTx = Math.floor((originX + size) / TILE_SIZE);
+    const maxTy = Math.floor((originY + size) / TILE_SIZE);
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      for (let tx = minTx; tx <= maxTx; tx++) {
+        if (this.isBlocked(tx, ty)) {
+          const wx = tx * TILE_SIZE;
+          const wy = ty * TILE_SIZE;
+          ctx.fillRect(wx - originX, wy - originY, TILE_SIZE, TILE_SIZE);
+        }
+      }
+    }
+    // 2. Cut out wall zone shapes (raw, no Minkowski expansion) in world coords.
+    for (const z of this.wallZones) {
+      switch (z.shape) {
+        case "rect": {
+          // Quick bounds check: skip zones that can't overlap the canvas.
+          if (z.x + z.w < originX || z.x > originX + size || z.y + z.h < originY || z.y > originY + size) break;
+          ctx.fillRect(z.x - originX, z.y - originY, z.w, z.h);
+          break;
+        }
+        case "circle": {
+          if (z.cx + z.r < originX || z.cx - z.r > originX + size || z.cy + z.r < originY || z.cy - z.r > originY + size) break;
+          ctx.beginPath();
+          ctx.arc(z.cx - originX, z.cy - originY, z.r, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case "polygon": {
+          // Compute polygon bounding box for quick reject.
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const [vx, vy] of z.verts) {
+            if (vx < minX) minX = vx;
+            if (vy < minY) minY = vy;
+            if (vx > maxX) maxX = vx;
+            if (vy > maxY) maxY = vy;
+          }
+          if (maxX < originX || minX > originX + size || maxY < originY || minY > originY + size) break;
+          ctx.beginPath();
+          for (let i = 0; i < z.verts.length; i++) {
+            const [vx, vy] = z.verts[i];
+            const px = vx - originX;
+            const py = vy - originY;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          ctx.fill();
+          break;
+        }
+      }
+    }
+    ctx.globalCompositeOperation = "source-over";
+    tex.refresh();
+  }
+
+  // applyLightSpriteBrightening applies or removes preFX.addGlow on each
+  // sprite based on whether it's lit by any active light with an unoccluded
+  // line of sight. WebGL only — on Canvas renderer, preFX is unavailable.
+  private applyLightSpriteBrightening(): void {
+    const isWebGL = this.sys.game.renderer.type === Phaser.WEBGL;
+    for (const avatar of this.avatars.values()) {
+      if (!isWebGL) {
+        // No preFX on Canvas; clear any stale flag and skip.
+        if (avatar.preFXGlowActive) avatar.preFXGlowActive = false;
+        continue;
+      }
+      // Find the strongest unoccluded light illuminating this sprite.
+      let bestIntensity = 0;
+      let bestColor = 0;
+      const spriteBaseX = avatar.sprite.x;
+      const spriteBaseY = avatar.sprite.y;
+      for (const lightId of this.activeLights) {
+        const light = this.avatars.get(lightId);
+        if (!light) continue;
+        const lx = light.sprite.x;
+        const ly = light.sprite.y;
+        const radius = this.effectiveLightRadius(light) * TILE_SIZE;
+        const dist = Math.hypot(spriteBaseX - lx, spriteBaseY - ly);
+        if (dist > radius) continue;
+        // Occlusion test: segment from light center to sprite base, in tile
+        // coords, against collisionGrid (cell sampling) + raw wallZone shapes.
+        if (this.isLightOccluded(lx, ly, spriteBaseX, spriteBaseY)) continue;
+        if (light.lightIntensity > bestIntensity) {
+          bestIntensity = light.lightIntensity;
+          bestColor = this.effectiveLightColor(light);
+        }
+      }
+      if (bestIntensity > 0) {
+        if (!avatar.preFXGlowActive) {
+          avatar.sprite.enableFilters();
+          avatar.sprite.filters?.internal.addGlow(bestColor, 4);
+          avatar.preFXGlowActive = true;
+        }
+      } else if (avatar.preFXGlowActive) {
+        avatar.sprite.filters?.internal.clear();
+        avatar.preFXGlowActive = false;
+      }
+    }
+  }
+
+  // isLightOccluded tests whether the segment from (lx,ly) to (tx,ty) in
+  // world pixel coords is blocked by a collisionGrid wall cell or a raw
+  // wallZone shape. Uses sub-tile DDA for the grid and analytic segment
+  // tests for zones (no Minkowski expansion — light has no body).
+  private isLightOccluded(lx: number, ly: number, tx: number, ty: number): boolean {
+    // Convert to tile coords for grid DDA.
+    const ltx = lx / TILE_SIZE;
+    const lty = ly / TILE_SIZE;
+    const ttx = tx / TILE_SIZE;
+    const tty = ty / TILE_SIZE;
+    // DDA across the grid cells the segment passes through.
+    const dx = ttx - ltx;
+    const dy = tty - lty;
+    const steps = Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) * 2) + 1;
+    for (let i = 1; i < steps; i++) {
+      const f = i / steps;
+      const cx = Math.floor(ltx + dx * f);
+      const cy = Math.floor(lty + dy * f);
+      if (this.isBlocked(cx, cy)) return true;
+    }
+    // Wall zones: raw segment-vs-shape (no expansion).
+    for (const z of this.wallZones) {
+      switch (z.shape) {
+        case "rect":
+          if (segmentIntersectsRect(ltx, lty, ttx, tty, z.x, z.y, z.w, z.h)) return true;
+          break;
+        case "circle":
+          if (segmentIntersectsCircle(ltx, lty, ttx, tty, z.cx, z.cy, z.r)) return true;
+          break;
+        case "polygon":
+          if (segmentIntersectsPolygon(ltx, lty, ttx, tty, z.verts)) return true;
+          break;
+      }
+    }
+    return false;
   }
 
   // playSparks plays a one-shot sparks animation above the entity to
