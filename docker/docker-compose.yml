@@ -103,6 +103,9 @@ services:
       # (email verification links), and LiveKit public URL.
       # Defaults to localhost (same-machine dev).
       PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
+    volumes:
+      # Read-only access to recordings for download via /recordings/ (admin-auth).
+      - recordings:/var/www/recordings:ro
     restart: unless-stopped
 
   ext-demo:
@@ -257,6 +260,7 @@ services:
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
       RECORDINGS_DIR: "/recordings"
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
       # YouTube RTMP target — leave empty to disable YouTube streaming (MP4
       # still works). Set in .env to enable.
       YOUTUBE_RTMP_URL: "${YOUTUBE_RTMP_URL:-}"

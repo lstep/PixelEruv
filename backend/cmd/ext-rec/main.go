@@ -151,6 +151,7 @@ func main() {
 	livekitAPIKey := os.Getenv("LIVEKIT_API_KEY")
 	livekitAPISecret := os.Getenv("LIVEKIT_API_SECRET")
 	recordingsDir := envOr("RECORDINGS_DIR", "./recordings")
+	publicHost := envOr("PUBLIC_HOST", "localhost")
 	youtubeRTMPURL := os.Getenv("YOUTUBE_RTMP_URL")
 	youtubeStreamKey := os.Getenv("YOUTUBE_STREAM_KEY")
 	heartbeatS := 10
@@ -283,21 +284,23 @@ func main() {
 
 	// buildEgressRequest constructs a RoomCompositeEgressRequest for the
 	// given target. MP4 writes to RECORDINGS_DIR; YouTube streams RTMP.
-	buildEgressRequest := func(room, target string) (*livekit.RoomCompositeEgressRequest, error) {
+	// Returns the request and the filename (for MP4) used to build file_url.
+	buildEgressRequest := func(room, target string) (*livekit.RoomCompositeEgressRequest, string, error) {
 		req := &livekit.RoomCompositeEgressRequest{
 			RoomName: room,
 			Layout:   "speaker",
 		}
+		filename := ""
 		switch target {
 		case "mp4":
-			filepath := filepath.Join(recordingsDir, fmt.Sprintf("%s-%d.mp4", room, time.Now().Unix()))
+			filename = fmt.Sprintf("%s-%d.mp4", room, time.Now().Unix())
 			req.FileOutputs = []*livekit.EncodedFileOutput{{
 				FileType: livekit.EncodedFileType_MP4,
-				Filepath: filepath,
+				Filepath: filepath.Join(recordingsDir, filename),
 			}}
 		case "youtube":
 			if youtubeRTMPURL == "" || youtubeStreamKey == "" {
-				return nil, fmt.Errorf("YOUTUBE_RTMP_URL and YOUTUBE_STREAM_KEY must be set for youtube target")
+				return nil, "", fmt.Errorf("YOUTUBE_RTMP_URL and YOUTUBE_STREAM_KEY must be set for youtube target")
 			}
 			rtmpURL := strings.TrimRight(youtubeRTMPURL, "/") + "/" + youtubeStreamKey
 			req.StreamOutputs = []*livekit.StreamOutput{{
@@ -305,9 +308,9 @@ func main() {
 				Urls:     []string{rtmpURL},
 			}}
 		default:
-			return nil, fmt.Errorf("invalid target %q", target)
+			return nil, "", fmt.Errorf("invalid target %q", target)
 		}
-		return req, nil
+		return req, filename, nil
 	}
 
 	// fanOutRecordingActive publishes recording_active to all participants in
@@ -377,7 +380,7 @@ func main() {
 		mu.Unlock()
 
 		// Build and start the Egress.
-		egressReq, err := buildEgressRequest(req.Room, req.Target)
+		egressReq, filename, err := buildEgressRequest(req.Room, req.Target)
 		if err != nil {
 			logger.Warn("build egress request", "err", err)
 			publishRecordingState(req.ClientID, recordingStateMsg{
@@ -396,6 +399,12 @@ func main() {
 
 		// Snapshot participants for the PB row + recording_active fan-out.
 		participants, _ := listRoomParticipants(req.Room)
+
+		// Build the download URL for MP4 target. YouTube has no file URL.
+		fileURL := ""
+		if filename != "" {
+			fileURL = fmt.Sprintf("https://%s/recordings/%s", publicHost, filename)
+		}
 
 		meetingID := uuid.NewString()
 		rec := &activeRec{
@@ -428,6 +437,7 @@ func main() {
 			Participants: participants,
 			StartTime:    rec.StartedAt.UnixMilli(),
 			Status:       "active",
+			FileURL:      fileURL,
 		})
 		if createErr != nil {
 			logger.Warn("create recording row", "err", createErr, "meeting", meetingID)
