@@ -88,6 +88,7 @@ dist-stage:
 	@# --- stage Docker support files into dist/docker/ ---
 	@mkdir -p $(DIST_DIR)/docker
 	cp docker/dist/backend.Dockerfile   $(DIST_DIR)/docker/backend.Dockerfile
+	cp docker/dist/backend-rec.Dockerfile $(DIST_DIR)/docker/backend-rec.Dockerfile
 	cp docker/dist/frontend.Dockerfile  $(DIST_DIR)/docker/frontend.Dockerfile
 	cp docker/nginx.conf                $(DIST_DIR)/docker/nginx.conf
 	cp docker/dist/example.nginx.conf   $(DIST_DIR)/example.nginx.conf

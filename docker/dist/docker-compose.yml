@@ -215,7 +215,7 @@ services:
   ext-rec:
     build:
       context: .
-      dockerfile: docker/backend.Dockerfile
+      dockerfile: docker/backend-rec.Dockerfile
       args:
         BINARY: ext-rec
     depends_on:

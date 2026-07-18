@@ -1,10 +1,10 @@
 # Binary-based image: copies a pre-built binary from dist/bin/ instead of
 # compiling from source. Used by dist/docker-compose.yml with:
 #   args:
-#     BINARY: pusher | worldsim | ext-demo | ext-walls | ext-props | ext-av | ext-rec | audit | admin
+#     BINARY: pusher | worldsim | ext-demo | ext-walls | ext-props | ext-av | audit | admin
 FROM alpine:3.20
 ARG BINARY
-RUN apk add --no-cache ca-certificates ffmpeg
+RUN apk add --no-cache ca-certificates
 COPY bin/${BINARY} /usr/local/bin/app
 # Include the seed-sprites CLI so admins can add sheets to a running worldsim
 # container (docker compose exec worldsim seed-sprites -dir /sprites -force).
