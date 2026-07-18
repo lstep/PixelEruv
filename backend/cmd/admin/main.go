@@ -24,8 +24,11 @@ import (
 func main() {
 	addr := envOr("ADMIN_HTTP_ADDR", ":8083")
 	cfg := Config{
-		SessionSecret: os.Getenv("ADMIN_SESSION_SECRET"),
-		PBApiURL:      envOr("PB_API_URL", "http://worldsim:8090/api"),
+		SessionSecret:   os.Getenv("ADMIN_SESSION_SECRET"),
+		PBApiURL:        envOr("PB_API_URL", "http://worldsim:8090/api"),
+		PBAdminEmail:    os.Getenv("PB_ADMIN_EMAIL"),
+		PBAdminPassword: os.Getenv("PB_ADMIN_PASSWORD"),
+		RecordingsDir:   envOr("RECORDINGS_DIR", "/recordings"),
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

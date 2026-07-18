@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Recordings - PixelEruv Admin</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --surface2: #0f3460;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+  --danger: #e74c3c;
+  --ok: #2ecc71;
+  --warn: #f39c12;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 1rem 2rem; }
+h1 { margin-bottom: 0.5rem; }
+.user { color: var(--muted); margin-bottom: 1rem; }
+.nav { margin-bottom: 1.5rem; }
+.nav a { color: var(--accent); text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+.search { background: var(--surface); border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.search label { font-size: 0.8rem; color: var(--muted); display: flex; flex-direction: column; gap: 0.25rem; }
+.search input, .search select { background: var(--bg); color: var(--text); border: 1px solid var(--surface2); border-radius: 4px; padding: 0.4rem 0.6rem; font-size: 0.9rem; }
+.search button { background: var(--accent); color: #fff; border: none; border-radius: 4px; padding: 0.4rem 1rem; cursor: pointer; font-size: 0.9rem; }
+.search button:hover { opacity: 0.9; }
+.search a { color: var(--muted); font-size: 0.85rem; text-decoration: none; padding: 0.4rem 0.5rem; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }
+th, td { padding: 0.6rem 0.8rem; text-align: left; font-size: 0.85rem; }
+th { background: var(--surface2); color: var(--accent); font-weight: 600; white-space: nowrap; }
+td { border-top: 1px solid var(--surface2); }
+tr:hover td { background: rgba(78,154,241,0.05); }
+.status-active { color: var(--danger); font-weight: 600; }
+.status-completed { color: var(--ok); }
+.status-error { color: var(--warn); }
+.status-stopped { color: var(--ok); }
+.mono { font-family: monospace; font-size: 0.8rem; }
+.truncate { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dl { color: var(--accent); text-decoration: none; }
+.dl:hover { text-decoration: underline; }
+.del-form { display: inline; }
+.del-btn { background: transparent; color: var(--danger); border: 1px solid var(--danger); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; }
+.del-btn:hover { background: var(--danger); color: #fff; }
+.empty { text-align: center; color: var(--muted); padding: 2rem; }
+.total { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
+.logout { margin-top: 2rem; }
+.logout a { color: var(--muted); text-decoration: none; }
+.version { color: var(--muted); font-size: 0.8rem; margin-top: 1rem; }
+</style>
+</head>
+<body>
+<h1>Recordings</h1>
+<p class="user">Logged in as {{.Email}}</p>
+<div class="nav"><a href="/admin/">&larr; Back to Admin</a></div>
+
+<form class="search" method="GET" action="/admin/recordings">
+  <label>Room <input type="text" name="room" value="{{.Room}}" placeholder="zone-meeting-room-1"></label>
+  <label>Status
+    <select name="status">
+      <option value=""{{if eq .Status ""}} selected{{end}}>Any</option>
+      <option value="active"{{if eq .Status "active"}} selected{{end}}>Active</option>
+      <option value="completed"{{if eq .Status "completed"}} selected{{end}}>Completed</option>
+      <option value="stopped"{{if eq .Status "stopped"}} selected{{end}}>Stopped</option>
+      <option value="error"{{if eq .Status "error"}} selected{{end}}>Error</option>
+    </select>
+  </label>
+  <label>Target
+    <select name="target">
+      <option value=""{{if eq .Target ""}} selected{{end}}>Any</option>
+      <option value="mp4"{{if eq .Target "mp4"}} selected{{end}}>MP4</option>
+      <option value="youtube"{{if eq .Target "youtube"}} selected{{end}}>YouTube</option>
+    </select>
+  </label>
+  <label>Started by <input type="text" name="started_by" value="{{.StartedBy}}" placeholder="e_admin"></label>
+  <button type="submit">Search</button>
+  <a href="/admin/recordings">Clear</a>
+</form>
+
+<p class="total">{{.Total}} recording(s)</p>
+
+{{if .Rows}}
+<table>
+  <thead>
+    <tr>
+      <th>Meeting ID</th>
+      <th>Room</th>
+      <th>Target</th>
+      <th>Status</th>
+      <th>Started by</th>
+      <th>Start</th>
+      <th>Duration</th>
+      <th>Participants</th>
+      <th>File</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Rows}}
+    <tr>
+      <td class="mono truncate" title="{{.MeetingID}}">{{.MeetingID}}</td>
+      <td>{{.Room}}</td>
+      <td>{{.Target}}</td>
+      <td class="status-{{.Status}}">{{.Status}}</td>
+      <td class="mono">{{.StartedBy}}</td>
+      <td class="mono">{{.StartTime}}</td>
+      <td>{{.Duration}}</td>
+      <td class="mono truncate" title="{{.Participants}}">{{.Participants}}</td>
+      <td>
+        {{if .HasFile}}<a class="dl" href="{{.FileURL}}" download>Download</a>{{else}}&mdash;{{end}}
+      </td>
+      <td>
+        <form class="del-form" method="POST" action="/admin/recordings/delete" onsubmit="return confirm('Delete this recording? This removes the PB record and the MP4 file.');">
+          <input type="hidden" name="id" value="{{.ID}}">
+          <input type="hidden" name="file_url" value="{{.FileURL}}">
+          <button type="submit" class="del-btn">Delete</button>
+        </form>
+      </td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No recordings found.</p>
+{{end}}
+
+<div class="logout"><a href="/admin/logout">Logout</a></div>
+<p class="version">v{{.Version}}</p>
+</body>
+</html>

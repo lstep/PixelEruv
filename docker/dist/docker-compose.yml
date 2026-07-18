@@ -288,6 +288,12 @@ services:
       ADMIN_HTTP_ADDR: ":8083"
       ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:-changeme}"
       PB_API_URL: "http://worldsim:8090/api"
+      PB_ADMIN_EMAIL: "admin@pixeleruv.local"
+      PB_ADMIN_PASSWORD: "password123"
+      RECORDINGS_DIR: "/recordings"
+    volumes:
+      # Read-write access to recordings for file deletion from the management UI.
+      - ./recordings:/recordings
     restart: unless-stopped
 
 volumes:

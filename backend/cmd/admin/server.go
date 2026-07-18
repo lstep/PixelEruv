@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -21,8 +22,11 @@ import (
 
 // Config holds the admin service configuration.
 type Config struct {
-	SessionSecret string
-	PBApiURL      string
+	SessionSecret   string
+	PBApiURL        string
+	PBAdminEmail    string
+	PBAdminPassword string
+	RecordingsDir   string
 }
 
 // Server is the admin portal HTTP service.
@@ -37,6 +41,9 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse template: %w", err)
 	}
+	if _, err := tmpl.New("recordings").Parse(recordingsHTML); err != nil {
+		return nil, fmt.Errorf("parse recordings template: %w", err)
+	}
 	return &Server{cfg: cfg, logger: logger, tmpl: tmpl}, nil
 }
 
@@ -47,6 +54,8 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/admin/authenticate", s.handleAuthenticate)
 	mux.HandleFunc("/admin/logout", s.handleLogout)
 	mux.HandleFunc("/admin/auth-check", s.handleAuthCheck)
+	mux.HandleFunc("/admin/recordings", s.handleRecordings)
+	mux.HandleFunc("/admin/recordings/delete", s.handleRecordingsDelete)
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
@@ -285,6 +294,259 @@ func (s *Server) checkIsAdmin(sub string) (bool, error) {
 		return false, nil
 	}
 	return result.Items[0].IsAdmin, nil
+}
+
+// pbAdminToken authenticates to PocketBase as superadmin and returns the
+// auth token. Used to access admin-only collections (recordings).
+func (s *Server) pbAdminToken() (string, error) {
+	if s.cfg.PBAdminEmail == "" || s.cfg.PBAdminPassword == "" {
+		return "", fmt.Errorf("PB_ADMIN_EMAIL/PB_ADMIN_PASSWORD not configured")
+	}
+	body, _ := json.Marshal(map[string]string{
+		"identity": s.cfg.PBAdminEmail,
+		"password": s.cfg.PBAdminPassword,
+	})
+	resp, err := http.Post(
+		s.cfg.PBApiURL+"/collections/_superusers/auth-with-password",
+		"application/json",
+		strings.NewReader(string(body)),
+	)
+	if err != nil {
+		return "", fmt.Errorf("pb admin auth: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("pb admin auth: status %d", resp.StatusCode)
+	}
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("pb admin auth: decode: %w", err)
+	}
+	return result.Token, nil
+}
+
+// recordingRow is one row in the recordings table.
+type recordingRow struct {
+	ID           string
+	MeetingID    string
+	Room         string
+	ZoneID       string
+	Target       string
+	Status       string
+	StartedBy    string
+	StartTime    string
+	EndTime      string
+	Duration     string
+	Participants string
+	FileURL      string
+	HasFile      bool
+}
+
+// handleRecordings renders the recordings management page with optional
+// search filters (room, status, target, started_by).
+func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+
+	q := r.URL.Query()
+	room := q.Get("room")
+	status := q.Get("status")
+	target := q.Get("target")
+	startedBy := q.Get("started_by")
+
+	token, err := s.pbAdminToken()
+	if err != nil {
+		s.logger.Warn("pb admin token", "err", err)
+		http.Error(w, "failed to authenticate to PocketBase", http.StatusBadGateway)
+		return
+	}
+
+	// Build PB query with filters.
+	pbURL := s.cfg.PBApiURL + "/collections/recordings/records?perPage=100&sort=-start_time"
+	var filters []string
+	if room != "" {
+		filters = append(filters, fmt.Sprintf("room~%q", room))
+	}
+	if status != "" {
+		filters = append(filters, fmt.Sprintf("status=%q", status))
+	}
+	if target != "" {
+		filters = append(filters, fmt.Sprintf("target=%q", target))
+	}
+	if startedBy != "" {
+		filters = append(filters, fmt.Sprintf("started_by~%q", startedBy))
+	}
+	if len(filters) > 0 {
+		pbURL += "&filter=" + url.QueryEscape(strings.Join(filters, " && "))
+	}
+
+	req, _ := http.NewRequest("GET", pbURL, nil)
+	req.Header.Set("Authorization", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Warn("pb recordings query", "err", err)
+		http.Error(w, "failed to query recordings", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		s.logger.Warn("pb recordings query status", "status", resp.StatusCode)
+		http.Error(w, "failed to query recordings", http.StatusBadGateway)
+		return
+	}
+
+	var result struct {
+		Items []struct {
+			ID           string   `json:"id"`
+			MeetingID    string   `json:"meeting_id"`
+			Room         string   `json:"room"`
+			ZoneID       string   `json:"zone_id"`
+			Target       string   `json:"target"`
+			Status       string   `json:"status"`
+			StartedBy    string   `json:"started_by"`
+			StartTime    string   `json:"start_time"`
+			EndTime      string   `json:"end_time"`
+			Participants []string `json:"participants"`
+			FileURL      string   `json:"file_url"`
+		} `json:"items"`
+		TotalItems int `json:"totalItems"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		s.logger.Warn("pb recordings decode", "err", err)
+		http.Error(w, "failed to parse recordings", http.StatusBadGateway)
+		return
+	}
+
+	rows := make([]recordingRow, 0, len(result.Items))
+	for _, item := range result.Items {
+		row := recordingRow{
+			ID:           item.ID,
+			MeetingID:    item.MeetingID,
+			Room:         item.Room,
+			ZoneID:       item.ZoneID,
+			Target:       item.Target,
+			Status:       item.Status,
+			StartedBy:    item.StartedBy,
+			StartTime:    item.StartTime,
+			EndTime:      item.EndTime,
+			Participants: strings.Join(item.Participants, ", "),
+			FileURL:      item.FileURL,
+			HasFile:      item.FileURL != "",
+		}
+		row.Duration = computeDuration(item.StartTime, item.EndTime)
+		rows = append(rows, row)
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.tmpl.ExecuteTemplate(w, "recordings", map[string]any{
+		"Email":     sess.Email,
+		"Version":   version.Version,
+		"Rows":      rows,
+		"Total":     result.TotalItems,
+		"Room":      room,
+		"Status":    status,
+		"Target":    target,
+		"StartedBy": startedBy,
+	})
+}
+
+// computeDuration returns a human-readable duration between start and end
+// times (PocketBase ISO 8601 strings). Returns "" if end is empty.
+func computeDuration(start, end string) string {
+	if start == "" || end == "" {
+		return ""
+	}
+	t1, err1 := time.Parse(time.RFC3339Nano, start)
+	t2, err2 := time.Parse(time.RFC3339Nano, end)
+	if err1 != nil || err2 != nil {
+		return ""
+	}
+	d := t2.Sub(t1)
+	if d < 0 {
+		return ""
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+}
+
+// handleRecordingsDelete deletes a recording: PB record + file on disk.
+func (s *Server) handleRecordingsDelete(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := r.FormValue("id")
+	fileURL := r.FormValue("file_url")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+
+	token, err := s.pbAdminToken()
+	if err != nil {
+		s.logger.Warn("pb admin token", "err", err)
+		http.Error(w, "failed to authenticate to PocketBase", http.StatusBadGateway)
+		return
+	}
+
+	// Delete the PB record.
+	delURL := fmt.Sprintf("%s/collections/recordings/records/%s", s.cfg.PBApiURL, id)
+	req, _ := http.NewRequest("DELETE", delURL, nil)
+	req.Header.Set("Authorization", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Warn("pb recording delete", "err", err, "id", id)
+		http.Error(w, "failed to delete record", http.StatusBadGateway)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 204 {
+		s.logger.Warn("pb recording delete status", "status", resp.StatusCode, "id", id)
+		http.Error(w, "failed to delete record", http.StatusBadGateway)
+		return
+	}
+
+	// Delete the file from disk if file_url points to a local /recordings/ path.
+	if fileURL != "" && s.cfg.RecordingsDir != "" {
+		if filename := extractFilename(fileURL); filename != "" {
+			path := s.cfg.RecordingsDir + "/" + filename
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				s.logger.Warn("delete recording file", "err", err, "path", path)
+				// Non-fatal: the PB record is already deleted.
+			} else {
+				// Also try to delete the egress JSON sidecar if it exists.
+				egressJSON := s.cfg.RecordingsDir + "/" + strings.TrimSuffix(filename, ".mp4") + ".json"
+				// Egress names the sidecar by egress ID, not filename. Best-effort.
+				_ = os.Remove(egressJSON)
+			}
+		}
+	}
+
+	s.logger.Info("recording deleted", "id", id, "by", sess.Email, "file_url", fileURL)
+	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
+}
+
+// extractFilename pulls the filename out of a file_url like
+// https://host/recordings/zone-room-123.mp4. Returns "" if the URL
+// doesn't match the expected pattern.
+func extractFilename(fileURL string) string {
+	idx := strings.Index(fileURL, "/recordings/")
+	if idx < 0 {
+		return ""
+	}
+	return fileURL[idx+len("/recordings/"):]
 }
 
 // loginHTML is the email/password login form for the admin portal.
