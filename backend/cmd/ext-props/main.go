@@ -390,14 +390,7 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				State    string `json:"state"`
 			}{EntityID: tid, State: newState})
 			target := findEntityInDispatch(dispatch, tid)
-			if target != nil && target.GidOn != 0 {
-				gid := target.GidOff
-				if gid == 0 {
-					gid = target.Gid
-				}
-				if newState == "on" {
-					gid = target.GidOn
-				}
+			if gid, ok := resolveGidSwap(fx, target, newState == "on"); ok {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 					EntityID string `json:"entity_id"`
 					Gid      uint32 `json:"gid"`
