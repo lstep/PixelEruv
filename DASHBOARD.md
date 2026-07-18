@@ -740,3 +740,25 @@ ClickHouse (preferred) or TimescaleDB. 30-day retention (configurable via
 | `documentation/quick-start.md` | env vars table, admin backends, stack list, §10 added |
 | `README.md` | features list, debugging section, project layout, audit section |
 | `documentation/plans/2026-07-12-audit-observability-design.md` | New — full design doc |
+
+## Light system (LightEmitter component + procedural masked glow)
+
+**Branch:** `feat/light-emitter-component`
+**Status:** Phase 1 implemented (rendering) — `make proto`, `go build ./...`, `go test ./internal/worldsim/`, and `npm run build` all pass. Phase 2 (trigger extension) pending.
+
+Replaces the old additive `lightGlow` PNG (a flat decal that didn't make the scene brighter and ignored occlusion) with a procedural, per-frame-masked `CanvasTexture` glow cut out by `collisionGrid` wall cells and raw `wallZone` shapes (rect/circle/polygon, sub-tile precise). Sprite brightening via Phaser 4 `enableFilters()` + `filters.internal.addGlow()`, gated by a per-sprite segment occlusion test (DDA grid + raw zone shapes, no Minkowski expansion).
+
+New `LightEmitter` proto component (ID 5: intensity 0-100, color 0xRRGGBB, radius in tiles). Worldsim replicates it on spawn (when intensity > 0) and on delta (dirty flag). Frontend maintains an `activeLights: Set<entityId>` iterated each frame — no full-entity scan.
+
+Map option `lights_enabled` (default `true`) in the PB `maps.options` JSON disables all light rendering and sprite brightening when `false`. No PB schema migration needed — `options` field already exists.
+
+No backward compat: the old `state === "on"` glow path is removed. Existing maps must add `light_intensity` (Phase 2) to show glow.
+
+### Files (Phase 1)
+
+| File | Changes |
+|---|---|
+| `proto/components.proto` | New `LightEmitter` message (component ID 5) |
+| `backend/internal/worldsim/worldsim.go` | `compLightEmitter=5`; entity `LightIntensity`/`LightColor`/`LightRadius`/`dirtyLightEmitter` fields; replication on spawn + delta; dirty flag reset |
+| `frontend/src/scenes/GameScene.ts` | `LightEmitterSchema` import; `Avatar` light fields + `preFXGlowActive`; `lightsEnabled` + `activeLights` fields; `applyMapOptions` parses `lights_enabled`; spawn/update handlers for component ID 5; removed `state === "on"` glow path; removed `lightGlow` PNG loader; `updateLights`/`showLightGlow`/`hideLightGlow`/`redrawLightGlowMask`/`applyLightSpriteBrightening`/`isLightOccluded`/`effectiveLightRadius`/`effectiveLightColor` methods; per-frame `updateLights()` call in `update()` |
+| `frontend/public/assets/sprites/light-glow.png` | Deleted |

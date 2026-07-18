@@ -59,3 +59,17 @@ message DisplayName {
   // A/V rooms. See documentation/plans/2026-07-15-player-status-design.md.
   uint32 status = 4;
 }
+
+// Component ID 5 — LightEmitter
+// Marks an entity as a light source for the client-side lighting system.
+// intensity is 0-100 (0 = off, 100 = maximum); color is 0xRRGGBB (default
+// 0xffe6b4 warm white when 0); radius is the light's reach in tiles (default
+// 3 when 0). The frontend renders a procedural radial glow masked by walls
+// and wall zones. Set via Tiled entity attributes (light_intensity,
+// light_color, light_radius) and updated at runtime via the set_light effect
+// verb in ext-props. See documentation/plans/2026-07-18-light-system-design.md.
+message LightEmitter {
+  uint32 intensity = 1;  // 0-100, 0 = no light
+  uint32 color = 2;      // 0xRRGGBB, 0 = default warm white (0xffe6b4)
+  float radius = 3;      // tiles, 0 = default 3
+}
