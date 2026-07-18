@@ -456,13 +456,14 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 }
 
 // computeDuration returns a human-readable duration between start and end
-// times (PocketBase ISO 8601 strings). Returns "" if end is empty.
+// times. PocketBase serializes DateField as "2006-01-02 15:04:05.000Z"
+// (space-separated, not RFC3339's T separator). Returns "" if end is empty.
 func computeDuration(start, end string) string {
 	if start == "" || end == "" {
 		return ""
 	}
-	t1, err1 := time.Parse(time.RFC3339Nano, start)
-	t2, err2 := time.Parse(time.RFC3339Nano, end)
+	t1, err1 := time.Parse("2006-01-02 15:04:05.000Z", start)
+	t2, err2 := time.Parse("2006-01-02 15:04:05.000Z", end)
 	if err1 != nil || err2 != nil {
 		return ""
 	}
