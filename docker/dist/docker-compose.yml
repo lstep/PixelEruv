@@ -216,11 +216,16 @@ services:
       args:
         BINARY: ext-rec
     depends_on:
-      - nats
-      - worldsim
-      - livekit
-      - livekit-egress
-      - recordings-init
+      nats:
+        condition: service_started
+      worldsim:
+        condition: service_started
+      livekit:
+        condition: service_started
+      livekit-egress:
+        condition: service_started
+      recordings-init:
+        condition: service_completed_successfully
     environment:
       NATS_URL: "nats://nats:4222"
       EXTENSION_ID: "rec"
