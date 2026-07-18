@@ -497,8 +497,10 @@ export class TopMenu {
   }
 
   // setRecordingActive is called by the GameScene when a RecordingActiveFrame
-  // arrives (ext-rec → all participants). For the host, this is redundant with
-  // setRecordingState; for non-host participants, it's the only signal.
+  // arrives (ext-rec → all participants). For manual stops, the host also
+  // receives a recording_state frame; for admin_stop and auto_empty stops,
+  // this is the only signal that reaches the host, so it must fully reset
+  // the button state.
   setRecordingActive(active: boolean): void {
     // Non-host admins still show the record button (they could stop it too).
     // The active flag is only meaningful for the host's stop button; for
@@ -509,6 +511,11 @@ export class TopMenu {
       this.recBtn.style.opacity = "0.5";
       this.recBtn.title = "A recording is already active in this room";
     } else if (!active) {
+      // Recording ended (manual stop, admin stop, or auto-empty). Reset the
+      // host's button so it shows "Record" again, not a stale "Stop REC".
+      this.recActive = false;
+      this.recBtn.textContent = "Record";
+      this.recBtn.style.background = "";
       this.recBtn.style.opacity = "";
       this.recBtn.title = "Record this A/V meeting (admin only)";
     }
