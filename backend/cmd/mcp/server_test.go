@@ -166,12 +166,16 @@ func TestAuditClient_HTTP(t *testing.T) {
 }
 
 // TestPocketBaseClient verifies ListRecords and GetRecord hit the expected
-// PocketBase REST URLs.
+// PocketBase REST URLs and that the admin token is sent raw (no "Bearer "
+// prefix) in the Authorization header, matching PocketBase's convention
+// (see backend/cmd/admin/server.go pbAdminToken).
 func TestPocketBaseClient(t *testing.T) {
 	var lastPath string
+	var lastAuth string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/collections/", func(w http.ResponseWriter, r *http.Request) {
 		lastPath = r.URL.Path + "?" + r.URL.RawQuery
+		lastAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Query().Get("filter") == "is_default = true" {
 			json.NewEncoder(w).Encode(map[string]any{
@@ -188,7 +192,7 @@ func TestPocketBaseClient(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	pbClient := NewPocketBaseClient(srv.URL, "Bearer token123")
+	pbClient := NewPocketBaseClient(srv.URL, "token123")
 
 	data, err := pbClient.ListRecords(context.Background(), "players", ListParams{PerPage: 30, Page: 1})
 	if err != nil {
@@ -205,6 +209,11 @@ func TestPocketBaseClient(t *testing.T) {
 	}
 	if len(resp.Items) != 1 || resp.Items[0]["display_name"] != "Alice" {
 		t.Errorf("ListRecords items: %+v", resp.Items)
+	}
+	// PocketBase expects the raw admin token in the Authorization header,
+	// NOT "Bearer <token>" — see backend/cmd/admin/server.go pbAdminToken.
+	if lastAuth != "token123" {
+		t.Errorf("Authorization header: %q, want %q (raw token, no Bearer prefix)", lastAuth, "token123")
 	}
 
 	// Filter path
