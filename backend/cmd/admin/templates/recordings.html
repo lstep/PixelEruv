@@ -50,6 +50,7 @@ tr:hover td { background: rgba(78,154,241,0.05); }
 .stop-btn:hover { background: var(--warn); color: #fff; }
 .play-btn { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 4px; padding: 0.2rem 0.5rem; cursor: pointer; font-size: 0.75rem; text-decoration: none; margin-right: 0.3rem; }
 .play-btn:hover { background: var(--accent); color: #fff; }
+.video-cell { white-space: nowrap; }
 .empty { text-align: center; color: var(--muted); padding: 2rem; }
 .total { color: var(--muted); font-size: 0.85rem; margin-bottom: 0.5rem; }
 .disk { font-size: 0.85rem; margin-bottom: 0.5rem; }
@@ -222,7 +223,7 @@ tr:hover td { background: rgba(78,154,241,0.05); }
       <td class="mono">{{.StartTime}}</td>
       <td>{{.Duration}}</td>
       <td class="mono truncate" title="{{.Participants}}">{{.Participants}}</td>
-      <td>
+      <td class="video-cell">
         {{if .HasFile}}
           <button class="play-btn" onclick="playRecording('{{.FileURL}}', '{{.Room}} - {{.StartTime}}')">Play</button>
           <a class="dl" href="{{.FileURL}}" download title="{{if .FileSize}}{{.FileSize}}{{else}}file not on disk{{end}}">MP4</a>
