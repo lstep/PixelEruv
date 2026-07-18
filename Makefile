@@ -150,7 +150,7 @@ REMOTE_PATH ?= /opt/pixeleruv
 
 deploy-remote: dist-x86
 	@echo "==> Rsyncing dist/ to $(REMOTE_HOST):$(REMOTE_PATH)/"
-	rsync -avz --delete dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
+	rsync -avz --delete --exclude recordings/ --exclude backups/ --exclude .env dist/ "$(REMOTE_HOST):$(REMOTE_PATH)/"
 	@echo "==> Running deploy.sh on $(REMOTE_HOST)"
 	ssh "$(REMOTE_HOST)" "cd '$(REMOTE_PATH)' && ./deploy.sh"
 
