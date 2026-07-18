@@ -63,7 +63,13 @@ func (s *RecordingStore) Create(msg recordingCreateMsg) (string, error) {
 		participantsJSON, _ := json.Marshal(msg.Participants)
 		record.Set("participants", json.RawMessage(participantsJSON))
 	}
-	record.Set("start_time", types.NowDateTime())
+	startTime := types.NowDateTime()
+	if msg.StartTime > 0 {
+		if parsed, err := types.ParseDateTime(time.UnixMilli(msg.StartTime)); err == nil {
+			startTime = parsed
+		}
+	}
+	record.Set("start_time", startTime)
 	record.Set("status", msg.Status)
 	record.Set("file_url", msg.FileURL)
 	record.Set("audio_url", msg.AudioURL)
