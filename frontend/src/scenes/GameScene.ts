@@ -2291,37 +2291,45 @@ export class GameScene extends Phaser.Scene {
         }
       }
     }
-    // 2. Cut out wall zone shapes (raw, no Minkowski expansion) in world coords.
+    // 2. Cut out wall zone shapes (raw, no Minkowski expansion). wallZones
+    //    are stored in tile coords; convert to pixels to match originX/originY.
     for (const z of this.wallZones) {
       switch (z.shape) {
         case "rect": {
-          // Quick bounds check: skip zones that can't overlap the canvas.
-          if (z.x + z.w < originX || z.x > originX + size || z.y + z.h < originY || z.y > originY + size) break;
-          ctx.fillRect(z.x - originX, z.y - originY, z.w, z.h);
+          const zx = z.x * TILE_SIZE;
+          const zy = z.y * TILE_SIZE;
+          const zw = z.w * TILE_SIZE;
+          const zh = z.h * TILE_SIZE;
+          if (zx + zw < originX || zx > originX + size || zy + zh < originY || zy > originY + size) break;
+          ctx.fillRect(zx - originX, zy - originY, zw, zh);
           break;
         }
         case "circle": {
-          if (z.cx + z.r < originX || z.cx - z.r > originX + size || z.cy + z.r < originY || z.cy - z.r > originY + size) break;
+          const zcx = z.cx * TILE_SIZE;
+          const zcy = z.cy * TILE_SIZE;
+          const zr = z.r * TILE_SIZE;
+          if (zcx + zr < originX || zcx - zr > originX + size || zcy + zr < originY || zcy - zr > originY + size) break;
           ctx.beginPath();
-          ctx.arc(z.cx - originX, z.cy - originY, z.r, 0, Math.PI * 2);
+          ctx.arc(zcx - originX, zcy - originY, zr, 0, Math.PI * 2);
           ctx.fill();
           break;
         }
         case "polygon": {
-          // Compute polygon bounding box for quick reject.
           let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
           for (const [vx, vy] of z.verts) {
-            if (vx < minX) minX = vx;
-            if (vy < minY) minY = vy;
-            if (vx > maxX) maxX = vx;
-            if (vy > maxY) maxY = vy;
+            const px = vx * TILE_SIZE;
+            const py = vy * TILE_SIZE;
+            if (px < minX) minX = px;
+            if (py < minY) minY = py;
+            if (px > maxX) maxX = px;
+            if (py > maxY) maxY = py;
           }
           if (maxX < originX || minX > originX + size || maxY < originY || minY > originY + size) break;
           ctx.beginPath();
           for (let i = 0; i < z.verts.length; i++) {
             const [vx, vy] = z.verts[i];
-            const px = vx - originX;
-            const py = vy - originY;
+            const px = vx * TILE_SIZE - originX;
+            const py = vy * TILE_SIZE - originY;
             if (i === 0) ctx.moveTo(px, py);
             else ctx.lineTo(px, py);
           }
