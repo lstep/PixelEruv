@@ -199,6 +199,37 @@ func (s *UserStore) IsAdmin(userID string) (bool, error) {
 	return user.IsAdmin, nil
 }
 
+// AdminEmails returns the email addresses of every user linked to a players
+// row with is_admin=true. Used by the audit service's error-email notifier
+// when error_email_recipients_mode == "all_admins" (resolved via the
+// worldsim.admin_emails.get NATS request-reply). Returns de-duplicated
+// emails; users without an email field are skipped.
+func (s *UserStore) AdminEmails() ([]string, error) {
+	records, err := s.app.FindRecordsByFilter("players", "is_admin=true", "", 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("query admin players: %w", err)
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range records {
+		uid := r.GetString("user_id")
+		if uid == "" {
+			continue
+		}
+		user, err := s.app.FindRecordById("users", uid)
+		if err != nil || user == nil {
+			continue
+		}
+		email := user.GetString("email")
+		if email == "" || seen[email] {
+			continue
+		}
+		seen[email] = true
+		out = append(out, email)
+	}
+	return out, nil
+}
+
 // findByEntityIDRecord returns the raw *core.Record for update operations.
 func (s *UserStore) findByEntityIDRecord(entityID string) (*core.Record, error) {
 	record, err := s.app.FindFirstRecordByData("players", "entity_id", entityID)

@@ -29,6 +29,7 @@ type Server struct {
 	authPass    string
 	startTime   time.Time
 	templates   map[string]*template.Template
+	notifier    *notifier
 }
 
 func NewServer(nc *nats.Conn, store EventStore, logger *slog.Logger, healthzURL, otelBaseURL, basePath, authUser, authPass string) (*Server, error) {
@@ -48,6 +49,7 @@ func NewServer(nc *nats.Conn, store EventStore, logger *slog.Logger, healthzURL,
 		authPass:    authPass,
 		startTime:   time.Now(),
 		templates:   tmpls,
+		notifier:    newNotifier(nc, logger),
 	}
 
 	// Subscribe to audit events.
@@ -100,7 +102,8 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	return srv.ListenAndServe()
 }
 
-// handleAuditEvent is the NATS callback that persists each event.
+// handleAuditEvent is the NATS callback that persists each event and, for
+// SeverityError events, dispatches an error email via the notifier.
 func (s *Server) handleAuditEvent(m *nats.Msg) {
 	var ev audit.Event
 	if err := json.Unmarshal(m.Data, &ev); err != nil {
@@ -109,6 +112,12 @@ func (s *Server) handleAuditEvent(m *nats.Msg) {
 	}
 	if err := s.store.Insert(ev); err != nil {
 		s.logger.Warn("audit event insert", "err", err, "type", ev.EventType)
+	}
+	// Email on SeverityError only. Dispatch in a goroutine so persistence
+	// (above) is never blocked on SMTP. The notifier is a no-op when mode
+	// is "" or "none".
+	if ev.Severity == audit.SeverityError && s.notifier != nil {
+		go s.notifier.notify(ev)
 	}
 }
 

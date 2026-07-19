@@ -13,6 +13,7 @@ export interface WorldOptionsYouTube {
   youtube_rtmp_url: string;
   youtube_stream_key: string;
   public_host: string;
+  recording_enabled: boolean;
 }
 
 let cached: WorldOptionsYouTube | null = null;
@@ -32,6 +33,7 @@ export async function fetchWorldOptions(): Promise<WorldOptionsYouTube | null> {
         youtube_rtmp_url: res.youtube_rtmp_url ?? "",
         youtube_stream_key: res.youtube_stream_key ?? "",
         public_host: res.public_host ?? "",
+        recording_enabled: res.recording_enabled !== false,
       };
       return cached;
     } catch {

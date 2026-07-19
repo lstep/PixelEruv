@@ -2,6 +2,7 @@ package worldsim
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/lstep/pixeleruv/backend/internal/audit"
@@ -57,6 +58,9 @@ func (s *Simulator) subscribeWorldOptions() error {
 				"app_url":            opts.AppURL,
 				"ffmpeg_concurrency": opts.FFmpegConcurrency,
 				"ffmpeg_timeout_s":   int64(opts.FFmpegTimeout.Seconds()),
+				"recording_enabled":  opts.RecordingEnabled,
+				"king_name":          opts.KingName,
+				"error_email_mode":   opts.ErrorEmailRecipientsMode,
 			},
 			"")
 		reply, _ := json.Marshal(worldOptionsReply{OK: true, Options: s.worldOpts.Get()})
@@ -65,6 +69,27 @@ func (s *Simulator) subscribeWorldOptions() error {
 		}
 	}); err != nil {
 		return err
+	}
+
+	// worldsim.admin_emails.get returns the email addresses of every user
+	// linked to a players row with is_admin=true. Used by the audit service's
+	// error-email notifier when error_email_recipients_mode == "all_admins".
+	// worldsim owns PocketBase, so it resolves the query; the audit service
+	// has no PB access.
+	if _, err := s.nc.Subscribe("worldsim.admin_emails.get", func(msg *nats.Msg) {
+		emails, err := s.userStore.AdminEmails()
+		if err != nil {
+			s.logger.Warn("admin_emails.get", "err", err)
+			reply, _ := json.Marshal(map[string]any{"ok": false, "error": err.Error()})
+			msg.Respond(reply)
+			return
+		}
+		reply, _ := json.Marshal(map[string]any{"ok": true, "emails": emails})
+		if err := msg.Respond(reply); err != nil {
+			s.logger.Warn("admin_emails.get respond", "err", err)
+		}
+	}); err != nil {
+		return fmt.Errorf("subscribe worldsim.admin_emails.get: %w", err)
 	}
 	return nil
 }
@@ -93,5 +118,18 @@ func (s *Simulator) handleWorldOptionsHTTP(e *core.RequestEvent) error {
 		"youtube_rtmp_url":   opts.YoutubeRTMPURL,
 		"youtube_stream_key": opts.YoutubeStreamKey,
 		"public_host":        opts.PublicHost,
+		"recording_enabled":  opts.RecordingEnabled,
+	})
+}
+
+// handleWorldKingHTTP is the GET /api/world-king handler on the embedded
+// PocketBase. Public (no auth) — returns only the king's display name so the
+// welcome page footer can show it. The king's email is NOT exposed here
+// (spam risk); it's visible only on the admin World Options page. Returns
+// 200 with {"name":""} when no king is configured.
+func (s *Simulator) handleWorldKingHTTP(e *core.RequestEvent) error {
+	opts := s.worldOpts.Get()
+	return e.JSON(http.StatusOK, map[string]any{
+		"name": opts.KingName,
 	})
 }

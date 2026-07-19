@@ -186,7 +186,7 @@ docker compose up --build -d
 | Variable | Default | Set on | Purpose |
 |----------|---------|--------|---------|
 | `PUBLIC_HOST` | `localhost` | compose | Hostname/IP remote browsers use. Drives the self-signed TLS cert SAN, the default `APP_URL`, and the default `LIVEKIT_PUBLIC_URL`. |
-| `LIVEKIT_PUBLIC_URL` | `ws://${PUBLIC_HOST:-localhost}:7880` | `ext-av` in compose | WebSocket URL the browser's LiveKit SDK connects to. Override to the proxied `ws://<host>/livekit` path when proxying signaling through nginx (§5c). The frontend auto-upgrades `ws://`→`wss://` on HTTPS. |
+| `LIVEKIT_PUBLIC_URL` | `ws://${PUBLIC_HOST:-localhost}:7880` | `ext-av` and `worldsim` in compose | WebSocket URL the browser's LiveKit SDK connects to. Override to the proxied `ws://<host>/livekit` path when proxying signaling through nginx (§5c). The frontend auto-upgrades `ws://`→`wss://` on HTTPS. worldsim also reads this (defaults to `ws://<PUBLIC_HOST>:7880` if unset) to mirror it into world_options as a read-only display field. |
 | `LIVEKIT_NODE_IP` | `127.0.0.1` | compose (LiveKit `--node-ip`) | IP LiveKit advertises in WebRTC ICE candidates. Must be routable from the browser — set to the host's public/LAN IP for remote A/V. |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | `devkey` / `devsecret…` | `ext-av` in compose **and** `docker/livekit.yaml` | Shared secret for signing LiveKit join tokens. **Must match** in both places. Rotate for production (§3a). |
 | `TLS_HOSTS` | `localhost,127.0.0.1` | `frontend` in compose | Comma-separated DNS/IP entries for the self-signed cert's SAN. `PUBLIC_HOST` is auto-appended at startup, so you usually don't set this directly. |
@@ -232,6 +232,22 @@ and ffmpeg limits, without restarting.
 frontend's TLS cert SAN and ext-av's token URLs at startup — not safely
 hot-reloadable). They are mirrored into world_options as read-only display
 fields.
+
+Additional world_options fields (all editable via Admin > World Options,
+hot-reloaded on save):
+
+- **World king** — `king_name` (shown on the welcome page footer via the
+  public `GET /api/world-king` endpoint) and `king_email` (admin-only; used
+  as the error-email recipient when mode = "king"). Display-only, no
+  permissions.
+- **Error email notifications** — `error_email_recipients_mode` ∈
+  {none, king, all_admins, custom}. The audit service emails recipients on
+  `SeverityError` audit events. `all_admins` resolves via
+  `worldsim.admin_emails.get` (worldsim queries PocketBase). `custom` uses
+  the comma-separated `error_email_custom_addresses` field.
+- **Recording gate** — `recording_enabled` (default true). When false,
+  ext-rec refuses `recording.start` and the frontend disables the Record
+  button.
 
 ---
 
@@ -550,11 +566,11 @@ without re-authenticating.
 | Service     | URL                                  | Use |
 |-------------|--------------------------------------|-----|
 | Admin portal | `https://<host-ip>/admin/` | Email/password login, landing page with links to all admin services |
-| Welcome page | `https://<host-ip>/welcome` | Public community landing page (static HTML, customizable) |
+| Welcome page | `https://<host-ip>/welcome` | Public community landing page (static HTML, customizable). Shows the world king's name in the footer if set via Admin > World Options. |
 | PocketBase  | `https://<host-ip>/_/` (proxied, admin-protected) | Manage `maps`, `players`, `users` collections, upload map files |
 | Audit UI    | `https://<host-ip>/audit/` (proxied, admin-protected) | Search audit events, view world status, check service health |
 | MCP server  | `https://<host-ip>/mcp` (bearer-token auth) | LLM admin tooling — connect Claude Desktop / Devin / Cursor to inspect world state, query audit, kick/ban/teleport/chat-as. Requires `MCP_AUTH_TOKEN`. |
-| MailHog     | `http://<host-ip>:8025` (dev only) | View emails sent by the stack (verification, password reset) |
+| MailHog     | `http://<host-ip>:8025` (dev only) | View emails sent by the stack (verification, password reset, error notifications) |
 
 > The admin portal (`/admin/`) handles email/password login against
 > PocketBase and sets a signed session cookie. nginx uses `auth_request`
@@ -988,3 +1004,62 @@ motel or OpenObserve to jump from *what* happened to *why*.
 See
 [`documentation/plans/2026-07-12-audit-observability-design.md`](plans/2026-07-12-audit-observability-design.md)
 for the full design, event type catalog, and storage upgrade path.
+
+### 11d. Error email notifications
+
+The audit service can email recipients when an audit event with severity
+`error` is emitted (e.g. `recording.audio_extraction_failed`). Configure
+it via **Admin > World Options** → "Error email notifications":
+
+- **Recipients mode**:
+  - `none` — disable error emails (default behavior when SMTP is off).
+  - `king` — send to the world king's email (set `king_email` in the same
+    form).
+  - `all_admins` — send to every user linked to a `players` row with
+    `is_admin=true`. The audit service resolves the list via the
+    `worldsim.admin_emails.get` NATS request-reply (worldsim owns
+    PocketBase; the audit service has no PB access).
+  - `custom` — send to the comma-separated addresses in the "Custom
+    addresses" field.
+- **SMTP** — uses the SMTP host/port/credentials from the same World
+  Options page (the same config worldsim uses for verification emails).
+
+Hot-reloaded on save — no restart needed. Emails are sent in a goroutine
+so audit persistence is never blocked on SMTP. Failures are logged and
+dropped (best-effort, like audit itself).
+
+## 12. Meeting recording (MP4 + YouTube)
+
+Admins can record A/V meetings via the **Record** button in the top menu
+(only visible to admins inside an A/V room). Two targets:
+
+- **MP4** — records to disk, served from `/recordings/<file>.mp4`. Audio
+  is extracted as MP3 in a follow-up ffmpeg pass so recordings can be
+  listened to without video. Thumbnails are extracted for the admin UI.
+- **YouTube** — streams the meeting to a YouTube RTMP endpoint. The
+  confirm modal pre-fills the RTMP URL and stream key from
+  **Admin > World Options**; the host can override them per-recording
+  without editing the global defaults.
+
+Recordings are listed and managed at **Admin > Recordings** (`/admin/recordings`):
+browse, search, download, delete, backfill thumbnails, stop an active
+recording. Active recording state is replicated to all participants in
+the room (a REC indicator appears in the corner).
+
+### 12a. Global recording gate
+
+Recording can be disabled globally via **Admin > World Options** →
+"Meeting recording" → "Allow meeting recording (MP4 + YouTube)". When
+unchecked:
+
+- ext-rec refuses `recording.start` requests and emits a
+  `recording.start_denied` audit event (reason=`globally_disabled`).
+- The frontend dims the Record button and shows a "Recording is disabled
+  globally" tooltip; the dropdown is suppressed so clicks do nothing.
+- Hot-reloaded on save — no restart needed.
+
+### 12b. YouTube RTMP defaults
+
+Set the default RTMP URL and stream key at **Admin > World Options** →
+"YouTube live streaming". Empty values disable YouTube streaming (MP4
+still works). The host can override per-recording via the confirm modal.

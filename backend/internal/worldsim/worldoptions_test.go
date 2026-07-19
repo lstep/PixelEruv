@@ -98,11 +98,12 @@ func TestWorldOptionsManager_PersistAcrossInstances(t *testing.T) {
 	}
 	// Mutate and persist.
 	if err := mgr1.Set(WorldOptions{
-		SMTPHost:          "smtp.example.com",
-		SMTPPort:          587,
-		FFmpegConcurrency: 4,
-		FFmpegTimeout:     5 * time.Minute,
-		AppURL:            "https://example.com",
+		SMTPHost:                 "smtp.example.com",
+		SMTPPort:                 587,
+		FFmpegConcurrency:        4,
+		FFmpegTimeout:            5 * time.Minute,
+		AppURL:                   "https://example.com",
+		ErrorEmailRecipientsMode: "none",
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -161,10 +162,11 @@ func TestWorldOptionsManager_SetBroadcastsUpdate(t *testing.T) {
 	nc.Flush()
 
 	if err := mgr.Set(WorldOptions{
-		SMTPHost:          "broadcast.example.com",
-		SMTPPort:          2525,
-		FFmpegConcurrency: 3,
-		FFmpegTimeout:     2 * time.Minute,
+		SMTPHost:                 "broadcast.example.com",
+		SMTPPort:                 2525,
+		FFmpegConcurrency:        3,
+		FFmpegTimeout:            2 * time.Minute,
+		ErrorEmailRecipientsMode: "none",
 	}); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -206,6 +208,11 @@ func TestWorldOptionsManager_SetRejectsInvalid(t *testing.T) {
 		{"zero timeout", WorldOptions{SMTPHost: "h", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: 0}},
 		{"empty host", WorldOptions{SMTPHost: "", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute}},
 		{"bad port", WorldOptions{SMTPHost: "h", SMTPPort: 99999, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute}},
+		{"king mode without king_email", WorldOptions{SMTPHost: "h", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute, ErrorEmailRecipientsMode: "king"}},
+		{"custom mode without addresses", WorldOptions{SMTPHost: "h", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute, ErrorEmailRecipientsMode: "custom"}},
+		{"custom mode with bad email", WorldOptions{SMTPHost: "h", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute, ErrorEmailRecipientsMode: "custom", ErrorEmailCustomAddresses: "not-an-email"}},
+		{"bad king_email", WorldOptions{SMTPHost: "h", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute, KingEmail: "no-at-sign"}},
+		{"bad recipients mode", WorldOptions{SMTPHost: "h", SMTPPort: 25, FFmpegConcurrency: 1, FFmpegTimeout: time.Minute, ErrorEmailRecipientsMode: "bogus"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -213,5 +220,80 @@ func TestWorldOptionsManager_SetRejectsInvalid(t *testing.T) {
 				t.Error("Set succeeded, want validation error")
 			}
 		})
+	}
+}
+
+// TestWorldOptionsManager_NewFieldsPersist verifies that the king / error-
+// email / recording fields round-trip through Set + Get (KV persistence).
+func TestWorldOptionsManager_NewFieldsPersist(t *testing.T) {
+	_, natsURL := startEmbeddedNATSWithJetStream(t)
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	mgr, err := NewWorldOptionsManager(nc, logger, "h", "ws://h:7880")
+	if err != nil {
+		t.Fatalf("mgr: %v", err)
+	}
+	want := WorldOptions{
+		SMTPHost:                  "smtp.example.com",
+		SMTPPort:                  587,
+		FFmpegConcurrency:         2,
+		FFmpegTimeout:             5 * time.Minute,
+		KingName:                  "Lord Pixel",
+		KingEmail:                 "king@example.com",
+		ErrorEmailRecipientsMode:  "custom",
+		ErrorEmailCustomAddresses: "a@x.com, b@x.com",
+		RecordingEnabled:          false,
+	}
+	if err := mgr.Set(want); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	// Re-bind the same bucket to simulate a worldsim restart.
+	mgr2, err := NewWorldOptionsManager(nc, logger, "h", "ws://h:7880")
+	if err != nil {
+		t.Fatalf("mgr2: %v", err)
+	}
+	got := mgr2.Get()
+	if got.KingName != want.KingName {
+		t.Errorf("KingName = %q, want %q", got.KingName, want.KingName)
+	}
+	if got.KingEmail != want.KingEmail {
+		t.Errorf("KingEmail = %q, want %q", got.KingEmail, want.KingEmail)
+	}
+	if got.ErrorEmailRecipientsMode != want.ErrorEmailRecipientsMode {
+		t.Errorf("ErrorEmailRecipientsMode = %q, want %q", got.ErrorEmailRecipientsMode, want.ErrorEmailRecipientsMode)
+	}
+	if got.ErrorEmailCustomAddresses != want.ErrorEmailCustomAddresses {
+		t.Errorf("ErrorEmailCustomAddresses = %q, want %q", got.ErrorEmailCustomAddresses, want.ErrorEmailCustomAddresses)
+	}
+	if got.RecordingEnabled != want.RecordingEnabled {
+		t.Errorf("RecordingEnabled = %v, want %v", got.RecordingEnabled, want.RecordingEnabled)
+	}
+}
+
+// TestWorldOptionsManager_RecordingEnabledDefault verifies that a fresh
+// bucket seeds RecordingEnabled=true and ErrorEmailRecipientsMode="king".
+func TestWorldOptionsManager_RecordingEnabledDefault(t *testing.T) {
+	_, natsURL := startEmbeddedNATSWithJetStream(t)
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	mgr, err := NewWorldOptionsManager(nc, logger, "h", "ws://h:7880")
+	if err != nil {
+		t.Fatalf("mgr: %v", err)
+	}
+	opts := mgr.Get()
+	if !opts.RecordingEnabled {
+		t.Error("RecordingEnabled default = false, want true")
+	}
+	if opts.ErrorEmailRecipientsMode != "king" {
+		t.Errorf("ErrorEmailRecipientsMode default = %q, want king", opts.ErrorEmailRecipientsMode)
 	}
 }
