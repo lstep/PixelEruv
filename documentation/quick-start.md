@@ -569,7 +569,7 @@ without re-authenticating.
 | Welcome page | `https://<host-ip>/welcome` | Public community landing page (static HTML, customizable). Shows the world king's name in the footer if set via Admin > World Options. |
 | PocketBase  | `https://<host-ip>/_/` (proxied, admin-protected) | Manage `maps`, `players`, `users` collections, upload map files |
 | Audit UI    | `https://<host-ip>/audit/` (proxied, admin-protected) | Search audit events, view world status, check service health |
-| MCP server  | `https://<host-ip>/mcp` (bearer-token auth) | LLM admin tooling — connect Claude Desktop / Devin / Cursor to inspect world state, query audit, kick/ban/teleport/chat-as. Requires `MCP_AUTH_TOKEN`. |
+| MCP server  | `https://<host-ip>/mcp` (bearer-token auth) | LLM admin tooling — connect Claude Desktop / Devin / Cursor to inspect world state, query audit, read/edit world options, kick/ban/teleport/chat-as. Requires `MCP_AUTH_TOKEN`. See `documentation/25-mcp-server.md`. |
 | MailHog     | `http://<host-ip>:8025` (dev only) | View emails sent by the stack (verification, password reset, error notifications) |
 
 > The admin portal (`/admin/`) handles email/password login against
@@ -585,8 +585,9 @@ without re-authenticating.
 > server exposes full PII (IP, device_id, client_id) for moderation, so
 > do NOT expose it on the public internet without a strong token and
 > network-level restrictions (firewall / VPN / Tailscale). See
-> `documentation/plans/2026-07-19-mcp-server-design.md` for the full
-> surface (16 tools, 11 resources, 3 prompts).
+> `documentation/25-mcp-server.md` for the full reference (18 tools, 11
+> resources, 3 prompts, client connection examples) and
+> `documentation/plans/2026-07-19-mcp-server-design.md` for the design.
 
 ---
 

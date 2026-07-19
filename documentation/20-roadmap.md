@@ -60,7 +60,8 @@ From `01-vision-and-goals.md` and `02-functional-requirements.md` § 8:
   it exposes world state + admin actions to LLM clients (Claude Desktop,
   Devin, Cursor) so an LLM can moderate, investigate, and operate the
   world. NPC agents inhabiting the world as extensions are still
-  post-MVP. See `documentation/plans/2026-07-19-mcp-server-design.md`.
+  post-MVP. See `documentation/25-mcp-server.md` for the reference and
+  `documentation/plans/2026-07-19-mcp-server-design.md` for the design.
 - **Horizontal scale**: multiple World Sim shards (per-map/per-region),
   cross-shard visibility (`10-world-simulator.md` § 6).
 - **Organizations**: an `organizations → worlds → maps` layer (deferred; MVP

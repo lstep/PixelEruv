@@ -477,20 +477,22 @@ flowchart LR
   auth_request at nginx — MCP clients present a bearer token in the
   `Authorization` header, not a browser session cookie.
 - Talks to worldsim over NATS request-reply (`worldsim.stats.get`,
-  `worldsim.entities.query`, `worldsim.client.kick`, `worldsim.admin.*`),
-  to the audit service over its JSON API (`/audit/api/*`), and to PocketBase
-  over REST. No new shared state.
-- Surface: 16 tools (read + control + admin overrides), 11 resources
-  (`pixeleruv://...` URIs), 3 prompts (`summarize_recent_audit`,
-  `investigate_player`, `world_health_report`).
+  `worldsim.entities.query`, `worldsim.client.kick`, `worldsim.admin.*`,
+  `worldsim.world_options.get` / `.set`), to the audit service over its JSON
+  API (`/audit/api/*`), and to PocketBase over REST. No new shared state.
+- Surface: 18 tools (10 read + 3 control + 6 admin overrides, including
+  `set_world_options`), 11 resources (`pixeleruv://...` URIs), 3 prompts
+  (`summarize_recent_audit`, `investigate_player`, `world_health_report`).
 - Isolated from worldsim's critical path: MCP request handling can be slow
   or hammered by an LLM retry loop without affecting the 20Hz game loop.
   Restart or redeploy the MCP surface without dropping players.
 - Exposes full PII (IP, device_id, client_id) — necessary for moderation.
   Access control is the bearer token. Do NOT expose on the public internet
   without a strong token + network-level restrictions.
-- See `documentation/plans/2026-07-19-mcp-server-design.md` for the full
-  design and `features.md` §5.9 for the storyboard.
+- See `documentation/25-mcp-server.md` for the full reference (surface,
+  configuration, client connection examples) and
+  `documentation/plans/2026-07-19-mcp-server-design.md` for the design.
+  `features.md` §5.9 has the storyboard.
 
 ## Key data flows
 

@@ -41,11 +41,13 @@ The wiring between these components is described in `05-architecture.md`.
     Protects PB admin and the audit UI.
   - **MCP server** (`backend/cmd/mcp`) — Model Context Protocol server
     exposing Pixel Eruv internals (world state, audit history, PocketBase
-    records) and admin actions (kick, ban, teleport, chat-as, set_*,
-    dispatch_extension_action) to LLM clients (Claude Desktop, Devin,
-    Cursor) over HTTP/SSE on `:8085/mcp`. Bearer-token auth. Separate binary
-    from worldsim to isolate MCP load from the game loop. See
-    `documentation/plans/2026-07-19-mcp-server-design.md`.
+    records, world options) and admin actions (kick, ban, teleport,
+    chat-as, set_*, set_world_options, dispatch_extension_action) to LLM
+    clients (Claude Desktop, Devin, Cursor) over HTTP/SSE on `:8085/mcp`.
+    Bearer-token auth. Separate binary from worldsim to isolate MCP load
+    from the game loop. See `documentation/25-mcp-server.md` for the full
+    reference and `documentation/plans/2026-07-19-mcp-server-design.md`
+    for the design.
 - The services communicate via **NATS Core** pub/sub (and NATS request-reply
   for the MCP server's worldsim queries).
 - Uses **protobuf** for serialisation.

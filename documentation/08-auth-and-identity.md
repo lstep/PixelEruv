@@ -300,12 +300,13 @@ admin `auth_request` to `/mcp` — MCP clients present a bearer token in
 the `Authorization` header, not a browser session cookie.
 
 The bearer token is a shared secret: anyone who has it can kick, ban,
-read full PII (IP, device_id, client_id), and impersonate any entity in
-chat. Treat it as a root credential. Do NOT expose the MCP server on
-the public internet without a strong token and network-level
-restrictions (firewall / VPN / Tailscale). See
-`documentation/plans/2026-07-19-mcp-server-design.md` for the full
-surface.
+read full PII (IP, device_id, client_id), edit server-wide runtime
+config, and impersonate any entity in chat. Treat it as a root
+credential. Do NOT expose the MCP server on the public internet
+without a strong token and network-level restrictions (firewall / VPN
+/ Tailscale). See `documentation/25-mcp-server.md` for the full
+reference and `documentation/plans/2026-07-19-mcp-server-design.md`
+for the design.
 
 ---
 
