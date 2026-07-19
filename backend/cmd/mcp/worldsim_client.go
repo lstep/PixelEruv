@@ -375,3 +375,83 @@ func (w *WorldsimClient) DispatchExtensionAction(ctx context.Context, extID stri
 	}
 	return w.nc.Publish(subject, data)
 }
+
+// --- World options ---
+
+// WorldOptions mirrors worldsim.WorldOptions (worldoptions.go). Re-declared
+// here so the MCP server doesn't depend on the worldsim package internals.
+// FFmpegTimeout is int64 nanoseconds on the wire (Go time.Duration marshals
+// to ns); 1 minute = 60000000000.
+type WorldOptions struct {
+	SMTPHost                  string `json:"smtp_host"`
+	SMTPPort                  int    `json:"smtp_port"`
+	SMTPUsername              string `json:"smtp_username"`
+	SMTPPassword              string `json:"smtp_password"`
+	SMTPFrom                  string `json:"smtp_from"`
+	SMTPSender                string `json:"smtp_sender_name"`
+	SMTPTLS                   bool   `json:"smtp_tls"`
+	AppURL                    string `json:"app_url"`
+	YoutubeRTMPURL            string `json:"youtube_rtmp_url"`
+	YoutubeStreamKey          string `json:"youtube_stream_key"`
+	FFmpegConcurrency         int    `json:"ffmpeg_concurrency"`
+	FFmpegTimeout             int64  `json:"ffmpeg_timeout"` // nanoseconds
+	KingName                  string `json:"king_name"`
+	KingEmail                 string `json:"king_email"`
+	ErrorEmailRecipientsMode  string `json:"error_email_recipients_mode"`
+	ErrorEmailCustomAddresses string `json:"error_email_custom_addresses"`
+	RecordingEnabled          bool   `json:"recording_enabled"`
+	PublicHost                string `json:"public_host"`         // readOnly
+	LivekitPublicURL          string `json:"livekit_public_url"`  // readOnly
+}
+
+// worldOptionsReply mirrors worldsim.worldOptionsReply.
+type worldOptionsReply struct {
+	OK      bool         `json:"ok"`
+	Error   string       `json:"error,omitempty"`
+	Options WorldOptions `json:"options,omitempty"`
+}
+
+// GetWorldOptions calls worldsim.world_options.get and returns the current
+// server-wide runtime config (SMTP, AppURL, YouTube RTMP, ffmpeg limits,
+// world king, error-email recipients, recording gate, readOnly env mirrors).
+func (w *WorldsimClient) GetWorldOptions(ctx context.Context) (*WorldOptions, error) {
+	data, err := w.requestReply(ctx, "worldsim.world_options.get", nil)
+	if err != nil {
+		return nil, err
+	}
+	var resp worldOptionsReply
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshal world_options.get: %w", err)
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("world_options.get: %s", resp.Error)
+	}
+	return &resp.Options, nil
+}
+
+// SetWorldOptions calls worldsim.world_options.set with a full WorldOptions
+// payload and an actor tag identifying the MCP server. worldsim validates,
+// writes the NATS KV bucket, broadcasts world_options.update so consumers
+// (worldsim SMTP, ext-rec ffmpeg/YouTube, frontend recording gate)
+// hot-reload, and emits a world_options.updated audit event attributed to
+// actor.extension=w.actor (default "mcp"). readOnly fields (PublicHost,
+// LivekitPublicURL) in opts are ignored — worldsim preserves them from the
+// current value. Returns the post-write options on success.
+func (w *WorldsimClient) SetWorldOptions(ctx context.Context, opts WorldOptions) (*WorldOptions, error) {
+	payload := map[string]any{
+		"options": opts,
+		"actor":   w.adminActor(),
+	}
+	data, err := w.requestReply(ctx, "worldsim.world_options.set", payload)
+	if err != nil {
+		return nil, err
+	}
+	var resp worldOptionsReply
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshal world_options.set: %w", err)
+	}
+	if !resp.OK {
+		return nil, fmt.Errorf("world_options.set: %s", resp.Error)
+	}
+	return &resp.Options, nil
+}

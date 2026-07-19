@@ -60,6 +60,9 @@ browser session cookie.
 - `player_timeline` — audit timeline for a player by OIDC subject.
 - `list_pb_records` — PocketBase collection list with filter/sort/pagination.
 - `get_pb_record` — single PocketBase record by collection + ID.
+- `get_world_options` — current server-wide runtime config (world_options KV
+  bucket): SMTP, AppURL, YouTube RTMP defaults, ffmpeg limits, world king,
+  error-email recipients, recording gate, readOnly env mirrors.
 
 **Control:**
 - `teleport_entity` — teleport a player to a map / beacon.
@@ -73,6 +76,12 @@ browser session cookie.
 - `set_player_status` — set presence (0=Available, 1=Busy, 2=DND).
 - `set_player_sprite` — set sprite_base (validated against sprite_bases).
 - `set_player_options` — replace player options JSON.
+- `set_world_options` — replace server-wide runtime config (world_options KV
+  bucket). Full replace; clients should call `get_world_options` first, modify
+  the desired fields, then pass the full object back. worldsim validates,
+  writes KV, broadcasts `world_options.update` so consumers (SMTP client,
+  ext-rec ffmpeg/YouTube, frontend recording gate) hot-reload. readOnly
+  fields (`public_host`, `livekit_public_url`) are preserved by worldsim.
 - `dispatch_extension_action` — publish to `extension.<id>.action`.
 
 ### Resources (URI-addressable, read-only)
@@ -197,3 +206,10 @@ cd backend && go test ./internal/worldsim/ ./cmd/mcp/
   custom `notifications/audit-event` to subscribed clients.
 - **OAuth**: the SDK has auth primitives; we use a static bearer token for
   simplicity. OAuth would let us issue per-client tokens with revocation.
+- **MCP-attributed `world_options.updated` audit**: the
+  `worldsim.world_options.set` handler currently hardcodes
+  `audit.Actor{Extension: "admin"}`, so sets initiated via the MCP
+  `set_world_options` tool are audited as "admin" rather than "mcp". Fixing
+  this requires accepting an `actor` field in the worldsim handler payload
+  and updating the admin portal's call site to pass it — out of scope for the
+  initial `set_world_options` tool.
