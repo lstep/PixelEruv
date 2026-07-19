@@ -235,6 +235,48 @@ func TestPocketBaseClient(t *testing.T) {
 	}
 }
 
+// TestNewMCPServer constructs the full MCP server with all tools/resources/
+// prompts registered against a live in-process NATS + mock HTTP backends.
+// It catches struct-tag panics like the one that crashed production on first
+// deploy (jsonschema:"description=..." is rejected by jsonschema-go v0.4.3 —
+// the tag value IS the description, no prefix). Without this test, the unit
+// tests in this file all bypass NewMCPServer/registerTools, so a bad tag
+// would only panic at runtime.
+func TestNewMCPServer(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+	registerMockWorldsim(t, nc)
+
+	// Mock audit + PB HTTP backends so AuditClient/PocketBaseClient construct.
+	auditSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"events":[],"total":0}`))
+	}))
+	t.Cleanup(auditSrv.Close)
+	pbSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[],"totalItems":0,"page":1,"perPage":30,"totalPages":0}`))
+	}))
+	t.Cleanup(pbSrv.Close)
+
+	deps := Deps{
+		Worldsim: NewWorldsimClient(nc, "mcp-test"),
+		Audit:    NewAuditClient(auditSrv.URL, "", "", nil),
+		PB:       NewPocketBaseClient(pbSrv.URL, ""),
+	}
+	logger := slog.New(slog.NewTextHandler(&discardWriter{}, nil))
+
+	// Must not panic. All 16 tools, 11 resources, 3 prompts register.
+	s := NewMCPServer(deps, logger)
+	if s == nil {
+		t.Fatal("NewMCPServer returned nil")
+	}
+}
+
 // TestBearerAuth verifies the bearer-token middleware accepts valid tokens
 // and rejects missing/wrong tokens.
 func TestBearerAuth(t *testing.T) {
