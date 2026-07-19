@@ -207,9 +207,10 @@ cd backend && go test ./internal/worldsim/ ./cmd/mcp/
 - **OAuth**: the SDK has auth primitives; we use a static bearer token for
   simplicity. OAuth would let us issue per-client tokens with revocation.
 - **MCP-attributed `world_options.updated` audit**: the
-  `worldsim.world_options.set` handler currently hardcodes
-  `audit.Actor{Extension: "admin"}`, so sets initiated via the MCP
-  `set_world_options` tool are audited as "admin" rather than "mcp". Fixing
-  this requires accepting an `actor` field in the worldsim handler payload
-  and updating the admin portal's call site to pass it — out of scope for the
-  initial `set_world_options` tool.
+  `worldsim.world_options.set` handler accepts a `{options, actor}` request
+  payload. The admin portal passes `actor.extension="admin"` +
+  `actor.sub=<admin email>`; the MCP `set_world_options` tool passes
+  `actor.extension="mcp"` (configurable via `MCP_ACTOR`). The handler
+  defaults `actor.extension` to `"admin"` for back-compat with callers that
+  omit it. The audit event is emitted with the passed actor, so MCP-initiated
+  config changes are distinguishable from admin-portal-initiated ones.
