@@ -390,3 +390,7 @@ Pixel Eruv is an open-source community project.
 Whether you’re interested in Go, Phaser, networking, distributed systems, game development, UI/UX or documentation, contributions are welcome.
 
 Together, let’s build the open infrastructure for spatial collaboration.
+
+## Credits
+
+The character and tile sprites used in Pixel Eruv come from [limezu](https://limezu.itch.io/)’s **Modern Interiors** and **Modern Office** packs. They’re really cool — if you’re building your own pixel-art project, go buy them for your work (the license requires attribution, which is the least we can do for art this good).
