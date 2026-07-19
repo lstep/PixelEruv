@@ -584,16 +584,31 @@ export class WsClient {
 
   // sendRecording sends a RecordingRequestFrame to start or stop recording
   // the given LiveKit room. target is "mp4" or "youtube" (ignored on stop).
+  // For target="youtube", youtubeRtmpUrl/youtubeStreamKey optionally override
+  // the world_options defaults for this recording only (empty = use defaults).
   // The pusher forwards to ext-rec on the recording.<action> NATS subject.
   // Fire-and-forget; the result arrives via onRecordingState.
-  sendRecording(action: "start" | "stop", room: string, target: "mp4" | "youtube" = "mp4"): void {
+  sendRecording(
+    action: "start" | "stop",
+    room: string,
+    target: "mp4" | "youtube" = "mp4",
+    youtubeRtmpUrl: string = "",
+    youtubeStreamKey: string = "",
+  ): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const span = tracer.startSpan("ws.send_recording", {
       attributes: { "client.id": this.clientId ?? "", "action": action, "room": room, "target": target },
     });
     try {
       const req = context.with(trace.setSpan(context.active(), span), () =>
-        create(RecordingRequestFrameSchema, { action, room, target, traceparent: traceparentFor() }),
+        create(RecordingRequestFrameSchema, {
+          action,
+          room,
+          target,
+          traceparent: traceparentFor(),
+          youtubeRtmpUrl,
+          youtubeStreamKey,
+        }),
       );
       const frame = create(ClientFrameSchema, { payload: { case: "recording", value: req } });
       this.ws.send(toBinary(ClientFrameSchema, frame));

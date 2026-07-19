@@ -58,12 +58,16 @@ type optionFieldDef struct {
 
 // recordingStartMsg is the NATS payload of recording.start. The pusher adds
 // client_id and entity_id from the session; room and target come from the
-// RecordingRequestFrame.
+// RecordingRequestFrame. YoutubeRTMPURL/YoutubeStreamKey are optional
+// per-recording overrides for the "youtube" target; when empty, ext-rec
+// falls back to the world_options defaults.
 type recordingStartMsg struct {
-	ClientID string `json:"client_id"`
-	EntityID string `json:"entity_id"`
-	Room     string `json:"room"`
-	Target   string `json:"target"` // "mp4" | "youtube"
+	ClientID         string `json:"client_id"`
+	EntityID         string `json:"entity_id"`
+	Room             string `json:"room"`
+	Target           string `json:"target"` // "mp4" | "youtube"
+	YoutubeRTMPURL   string `json:"youtube_rtmp_url,omitempty"`
+	YoutubeStreamKey string `json:"youtube_stream_key,omitempty"`
 }
 
 type recordingStopMsg struct {
@@ -178,9 +182,6 @@ func main() {
 	livekitAPIKey := os.Getenv("LIVEKIT_API_KEY")
 	livekitAPISecret := os.Getenv("LIVEKIT_API_SECRET")
 	recordingsDir := envOr("RECORDINGS_DIR", "./recordings")
-	publicHost := envOr("PUBLIC_HOST", "localhost")
-	youtubeRTMPURL := os.Getenv("YOUTUBE_RTMP_URL")
-	youtubeStreamKey := os.Getenv("YOUTUBE_STREAM_KEY")
 	heartbeatS := 10
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -210,6 +211,122 @@ func main() {
 		os.Exit(1)
 	}
 	defer nc.Close()
+
+	// worldOptions holds the server-wide runtime config (YouTube RTMP
+	// defaults, ffmpeg concurrency/timeout, public host) fetched from
+	// worldsim via NATS request-reply and hot-reloaded via the
+	// world_options.update broadcast. Replaces the old YOUTUBE_RTMP_URL /
+	// YOUTUBE_STREAM_KEY / PUBLIC_HOST env vars.
+	type worldOptions struct {
+		YoutubeRTMPURL   string
+		YoutubeStreamKey string
+		PublicHost       string
+		FFmpegConcurrency int
+		FFmpegTimeout     time.Duration
+	}
+	fetchWorldOptions := func() (worldOptions, error) {
+		msg, err := nc.Request("worldsim.world_options.get", nil, 3*time.Second)
+		if err != nil {
+			return worldOptions{}, fmt.Errorf("world_options.get request: %w", err)
+		}
+		var resp struct {
+			OK      bool `json:"ok"`
+			Error   string `json:"error,omitempty"`
+			Options struct {
+				YoutubeRTMPURL    string        `json:"youtube_rtmp_url"`
+				YoutubeStreamKey  string        `json:"youtube_stream_key"`
+				PublicHost        string        `json:"public_host"`
+				FFmpegConcurrency int           `json:"ffmpeg_concurrency"`
+				FFmpegTimeout     time.Duration `json:"ffmpeg_timeout"`
+			} `json:"options"`
+		}
+		if err := json.Unmarshal(msg.Data, &resp); err != nil {
+			return worldOptions{}, fmt.Errorf("world_options.get unmarshal: %w", err)
+		}
+		if !resp.OK {
+			return worldOptions{}, fmt.Errorf("world_options.get: %s", resp.Error)
+		}
+		o := worldOptions{
+			YoutubeRTMPURL:    resp.Options.YoutubeRTMPURL,
+			YoutubeStreamKey:  resp.Options.YoutubeStreamKey,
+			PublicHost:        resp.Options.PublicHost,
+			FFmpegConcurrency: resp.Options.FFmpegConcurrency,
+			FFmpegTimeout:     resp.Options.FFmpegTimeout,
+		}
+		if o.PublicHost == "" {
+			o.PublicHost = "localhost"
+		}
+		if o.FFmpegConcurrency < 1 {
+			o.FFmpegConcurrency = 2
+		}
+		if o.FFmpegTimeout < 1*time.Second {
+			o.FFmpegTimeout = 10 * time.Minute
+		}
+		return o, nil
+	}
+	var optsMu sync.RWMutex
+	currentOpts, err := fetchWorldOptions()
+	if err != nil {
+		logger.Error("fetch world_options at startup", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("world_options loaded",
+		"youtube_rtmp_url", currentOpts.YoutubeRTMPURL,
+		"public_host", currentOpts.PublicHost,
+		"ffmpeg_concurrency", currentOpts.FFmpegConcurrency,
+		"ffmpeg_timeout", currentOpts.FFmpegTimeout)
+	getOpts := func() worldOptions {
+		optsMu.RLock()
+		defer optsMu.RUnlock()
+		return currentOpts
+	}
+
+	// audioSem caps concurrent ffmpeg/ffprobe extractions so a burst of stop
+	// events doesn't saturate CPU. Capacity is read from world_options
+	// (default 2) and hot-reloaded on world_options.update.
+	audioSem := newDynamicSemaphore(currentOpts.FFmpegConcurrency)
+
+	// Subscribe to world_options.update for hot-reload. worldsim publishes
+	// the full options JSON on every change.
+	if _, err := nc.Subscribe("world_options.update", func(msg *nats.Msg) {
+		var o struct {
+			YoutubeRTMPURL    string        `json:"youtube_rtmp_url"`
+			YoutubeStreamKey  string        `json:"youtube_stream_key"`
+			PublicHost        string        `json:"public_host"`
+			FFmpegConcurrency int           `json:"ffmpeg_concurrency"`
+			FFmpegTimeout     time.Duration `json:"ffmpeg_timeout"`
+		}
+		if err := json.Unmarshal(msg.Data, &o); err != nil {
+			logger.Warn("world_options.update unmarshal", "err", err)
+			return
+		}
+		if o.PublicHost == "" {
+			o.PublicHost = "localhost"
+		}
+		if o.FFmpegConcurrency < 1 {
+			o.FFmpegConcurrency = 2
+		}
+		if o.FFmpegTimeout < 1*time.Second {
+			o.FFmpegTimeout = 10 * time.Minute
+		}
+		optsMu.Lock()
+		currentOpts = worldOptions{
+			YoutubeRTMPURL:    o.YoutubeRTMPURL,
+			YoutubeStreamKey:  o.YoutubeStreamKey,
+			PublicHost:        o.PublicHost,
+			FFmpegConcurrency: o.FFmpegConcurrency,
+			FFmpegTimeout:     o.FFmpegTimeout,
+		}
+		optsMu.Unlock()
+		audioSem.SetLimit(currentOpts.FFmpegConcurrency)
+		logger.Info("world_options hot-reloaded",
+			"youtube_rtmp_url", currentOpts.YoutubeRTMPURL,
+			"ffmpeg_concurrency", currentOpts.FFmpegConcurrency,
+			"ffmpeg_timeout", currentOpts.FFmpegTimeout)
+	}); err != nil {
+		logger.Error("subscribe world_options.update", "err", err)
+		os.Exit(1)
+	}
 
 	var mu sync.Mutex
 	activeRecs := make(map[string]*activeRec) // keyed by room name
@@ -437,8 +554,11 @@ func main() {
 
 	// buildEgressRequest constructs a RoomCompositeEgressRequest for the
 	// given target. MP4 writes to RECORDINGS_DIR; YouTube streams RTMP.
-	// Returns the request and the filename (for MP4) used to build file_url.
-	buildEgressRequest := func(room, target string) (*livekit.RoomCompositeEgressRequest, string, error) {
+	// For the "youtube" target, non-empty overrideRTMP/overrideKey win over
+	// the world_options defaults (per-recording override from the host's
+	// confirm modal); empty falls back to defaults. Returns the request and
+	// the filename (for MP4) used to build file_url.
+	buildEgressRequest := func(room, target, overrideRTMP, overrideKey string) (*livekit.RoomCompositeEgressRequest, string, error) {
 		req := &livekit.RoomCompositeEgressRequest{
 			RoomName: room,
 			Layout:   "speaker",
@@ -452,13 +572,22 @@ func main() {
 				Filepath: filepath.Join(recordingsDir, filename),
 			}}
 		case "youtube":
-			if youtubeRTMPURL == "" || youtubeStreamKey == "" {
-				return nil, "", fmt.Errorf("YOUTUBE_RTMP_URL and YOUTUBE_STREAM_KEY must be set for youtube target")
+			opts := getOpts()
+			rtmpURL := overrideRTMP
+			streamKey := overrideKey
+			if rtmpURL == "" {
+				rtmpURL = opts.YoutubeRTMPURL
 			}
-			rtmpURL := strings.TrimRight(youtubeRTMPURL, "/") + "/" + youtubeStreamKey
+			if streamKey == "" {
+				streamKey = opts.YoutubeStreamKey
+			}
+			if rtmpURL == "" || streamKey == "" {
+				return nil, "", fmt.Errorf("YouTube RTMP URL and stream key must be set (configure them in Admin > World Options or override per recording)")
+			}
+			fullURL := strings.TrimRight(rtmpURL, "/") + "/" + streamKey
 			req.StreamOutputs = []*livekit.StreamOutput{{
 				Protocol: livekit.StreamProtocol_RTMP,
-				Urls:     []string{rtmpURL},
+				Urls:     []string{fullURL},
 			}}
 		default:
 			return nil, "", fmt.Errorf("invalid target %q", target)
@@ -481,11 +610,6 @@ func main() {
 		}
 	}
 
-	// audioSem caps concurrent ffmpeg extractions so a burst of stop
-	// events doesn't saturate CPU. Capacity 2 for now; make it an env
-	// var later if tunability is needed.
-	audioSem := make(chan struct{}, 2)
-
 	// extractAudioAndUpdatePB polls for the MP4 file to appear on disk
 	// (Egress writes it asynchronously after StopEgress), then runs ffmpeg
 	// to extract the audio track as MP3, and updates the PB row with the
@@ -493,8 +617,8 @@ func main() {
 	// with audio_error and emits a recording.audio_extraction_failed audit
 	// event (SeverityError) so it shows up on the audit dashboard.
 	extractAudioAndUpdatePB := func(meetingID, room, mp4Filename string) {
-		audioSem <- struct{}{}
-		defer func() { <-audioSem }()
+		audioSem.Acquire()
+		defer audioSem.Release()
 
 		fail := func(reason, errMsg string) {
 			logger.Warn("audio extraction failed", "meeting", meetingID, "reason", reason, "err", errMsg)
@@ -547,12 +671,14 @@ func main() {
 		mp3Path := filepath.Join(recordingsDir, mp3Filename)
 
 		// ffmpeg -i input.mp4 -vn -acodec libmp3lame -q:a 2 output.mp3
-		// 10min timeout: libmp3lame at q:a 2 is roughly real-time, so a
-		// 1h meeting extracts in ~1-2min. 10min covers long meetings
-		// with headroom; beyond that something is wrong (hung ffmpeg,
-		// disk full, etc.) and we'd rather fail and emit an audit event
-		// than hold a semaphore slot forever.
-		ffmpegCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Timeout from world_options (default 10m): libmp3lame at q:a 2 is
+		// roughly real-time, so a 1h meeting extracts in ~1-2min. The
+		// configured timeout covers long meetings with headroom; beyond
+		// that something is wrong (hung ffmpeg, disk full, etc.) and we'd
+		// rather fail and emit an audit event than hold a semaphore slot
+		// forever.
+		timeout := getOpts().FFmpegTimeout
+		ffmpegCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		cmd := exec.CommandContext(ffmpegCtx, "ffmpeg",
 			"-y",
@@ -571,7 +697,7 @@ func main() {
 			return
 		}
 
-		audioURL := fmt.Sprintf("https://%s/recordings/%s", publicHost, mp3Filename)
+		audioURL := fmt.Sprintf("https://%s/recordings/%s", getOpts().PublicHost, mp3Filename)
 		if err := updateRecordingRow(recordingUpdateMsg{
 			MeetingID:   meetingID,
 			AudioURL:    audioURL,
@@ -592,10 +718,10 @@ func main() {
 	// Failures are logged but don't set a status field — the thumbnail
 	// is a cosmetic enhancement, not a primary artifact like the MP3.
 	// Reuses audioSem so the total concurrent ffmpeg/ffprobe count is
-	// capped at 2.
+	// capped at the world_options limit.
 	extractThumbnailAndUpdatePB := func(meetingID, room, mp4Filename string) {
-		audioSem <- struct{}{}
-		defer func() { <-audioSem }()
+		audioSem.Acquire()
+		defer audioSem.Release()
 
 		mp4Path := filepath.Join(recordingsDir, mp4Filename)
 		// Poll up to 60s for the MP4 to appear and stop growing. The
@@ -671,7 +797,7 @@ func main() {
 			return
 		}
 
-		thumbURL := fmt.Sprintf("https://%s/recordings/%s", publicHost, jpgFilename)
+		thumbURL := fmt.Sprintf("https://%s/recordings/%s", getOpts().PublicHost, jpgFilename)
 		if err := updateRecordingRow(recordingUpdateMsg{
 			MeetingID:    meetingID,
 			ThumbnailURL: thumbURL,
@@ -757,8 +883,10 @@ func main() {
 		}
 		mu.Unlock()
 
-		// Build and start the Egress.
-		egressReq, filename, err := buildEgressRequest(req.Room, req.Target)
+		// Build and start the Egress. Pass the per-recording YouTube
+		// override fields from the start message (empty → fall back to
+		// world_options defaults inside buildEgressRequest).
+		egressReq, filename, err := buildEgressRequest(req.Room, req.Target, req.YoutubeRTMPURL, req.YoutubeStreamKey)
 		if err != nil {
 			logger.Warn("build egress request", "err", err)
 			publishRecordingState(req.ClientID, recordingStateMsg{
@@ -781,7 +909,7 @@ func main() {
 		// Build the download URL for MP4 target. YouTube has no file URL.
 		fileURL := ""
 		if filename != "" {
-			fileURL = fmt.Sprintf("https://%s/recordings/%s", publicHost, filename)
+			fileURL = fmt.Sprintf("https://%s/recordings/%s", getOpts().PublicHost, filename)
 		}
 
 		meetingID := uuid.NewString()
@@ -1124,4 +1252,56 @@ func publishHealth(nc *nats.Conn, service string, startTime time.Time) {
 	}
 	data, _ := json.Marshal(health)
 	nc.Publish("healthz", data)
+}
+
+// dynamicSemaphore is a counting semaphore whose limit can be changed at
+// runtime via SetLimit. Acquire blocks until the current count is below the
+// current limit; Release decrements the count and wakes one waiter. Used to
+// cap concurrent ffmpeg/ffprobe extractions, with the limit hot-reloaded from
+// world_options. In-flight Acquire calls honor the limit at the moment they
+// proceed; lowering the limit does not preempt running extractions, it only
+// gates new ones until count drops below the new limit.
+type dynamicSemaphore struct {
+	mu     sync.Mutex
+	cond   *sync.Cond
+	count  int
+	limit  int
+}
+
+func newDynamicSemaphore(limit int) *dynamicSemaphore {
+	if limit < 1 {
+		limit = 1
+	}
+	s := &dynamicSemaphore{limit: limit}
+	s.cond = sync.NewCond(&s.mu)
+	return s
+}
+
+func (s *dynamicSemaphore) Acquire() {
+	s.mu.Lock()
+	for s.count >= s.limit {
+		s.cond.Wait()
+	}
+	s.count++
+	s.mu.Unlock()
+}
+
+func (s *dynamicSemaphore) Release() {
+	s.mu.Lock()
+	s.count--
+	if s.count < 0 {
+		s.count = 0
+	}
+	s.cond.Signal()
+	s.mu.Unlock()
+}
+
+func (s *dynamicSemaphore) SetLimit(limit int) {
+	if limit < 1 {
+		limit = 1
+	}
+	s.mu.Lock()
+	s.limit = limit
+	s.cond.Broadcast()
+	s.mu.Unlock()
 }

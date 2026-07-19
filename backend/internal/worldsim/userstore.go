@@ -184,6 +184,21 @@ func (s *UserStore) findByUserID(userID string) (*UserRecord, error) {
 	return recordToUser(record), nil
 }
 
+// IsAdmin returns true if the player linked to the given users-collection
+// record ID has is_admin=true. Returns false if the player record is missing
+// or on error. Used by the /api/world-options HTTP handler to gate access
+// to the YouTube RTMP defaults.
+func (s *UserStore) IsAdmin(userID string) (bool, error) {
+	user, err := s.findByUserID(userID)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, nil
+	}
+	return user.IsAdmin, nil
+}
+
 // findByEntityIDRecord returns the raw *core.Record for update operations.
 func (s *UserStore) findByEntityIDRecord(entityID string) (*core.Record, error) {
 	record, err := s.app.FindFirstRecordByData("players", "entity_id", entityID)

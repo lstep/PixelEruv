@@ -65,10 +65,6 @@ func main() {
 		log.Fatalf("pocketbase migrations: %v", err)
 	}
 
-	// Configure SMTP settings from env vars so PocketBase can send
-	// verification emails. In dev, point SMTP_HOST at MailHog.
-	configureSMTP(app)
-
 	// Configure OAuth2 providers from env vars. Only providers with both
 	// client ID and secret set are enabled.
 	configureOAuth2(app)
@@ -85,6 +81,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("worldsim init: %v", err)
 	}
+
+	// Apply SMTP + APP_URL from world_options (NATS KV bucket). worldsim
+	// owns the bucket; the admin portal edits it via NATS and worldsim
+	// hot-reloads on world_options.update. Replaces the old env-var-driven
+	// configureSMTP.
+	applySMTPFromOptions(app, sim.WorldOptions())
+	sim.OnWorldOptionsUpdate(func(opts worldsim.WorldOptions) {
+		applySMTPFromOptions(app, opts)
+	})
 
 	logger.Info("worldsim starting", "nats", natsURL, "tick_hz", tickHz)
 	if err := sim.Run(ctx); err != nil {
@@ -108,34 +113,29 @@ func envInt(key string, fallback int) int {
 	return fallback
 }
 
-// configureSMTP sets PocketBase SMTP settings from env vars. In dev,
-// SMTP_HOST=mailhog + SMTP_PORT=1025 routes emails to MailHog's web UI.
-func configureSMTP(app core.App) {
-	host := os.Getenv("SMTP_HOST")
-	if host == "" {
-		return
-	}
-	port := envInt("SMTP_PORT", 587)
+// applySMTPFromOptions applies SMTP + APP_URL settings from a WorldOptions
+// snapshot to PocketBase. Called once at startup (after worldsim.New creates
+// the WorldOptionsManager) and again on every world_options.update so the
+// admin can hot-reload SMTP without restarting worldsim.
+func applySMTPFromOptions(app core.App, opts worldsim.WorldOptions) {
 	s := app.Settings()
-	s.SMTP.Enabled = true
-	s.SMTP.Host = host
-	s.SMTP.Port = port
-	s.SMTP.Username = os.Getenv("SMTP_USERNAME")
-	s.SMTP.Password = os.Getenv("SMTP_PASSWORD")
-	s.SMTP.TLS = os.Getenv("SMTP_TLS") == "true"
-	if from := os.Getenv("SMTP_FROM"); from != "" {
-		s.Meta.SenderAddress = from
+	s.SMTP.Enabled = opts.SMTPHost != ""
+	s.SMTP.Host = opts.SMTPHost
+	s.SMTP.Port = opts.SMTPPort
+	s.SMTP.Username = opts.SMTPUsername
+	s.SMTP.Password = opts.SMTPPassword
+	s.SMTP.TLS = opts.SMTPTLS
+	if opts.SMTPFrom != "" {
+		s.Meta.SenderAddress = opts.SMTPFrom
 	}
-	if name := os.Getenv("SMTP_SENDER_NAME"); name != "" {
-		s.Meta.SenderName = name
+	if opts.SMTPSender != "" {
+		s.Meta.SenderName = opts.SMTPSender
 	}
-	// Set the public app URL used in email templates (verification,
-	// password reset, email change). Falls back to the PB HTTP address.
-	if appURL := os.Getenv("APP_URL"); appURL != "" {
-		s.Meta.AppURL = appURL
+	if opts.AppURL != "" {
+		s.Meta.AppURL = opts.AppURL
 	}
 	if err := app.Save(s); err != nil {
-		log.Printf("configure SMTP: %v", err)
+		log.Printf("apply SMTP from world_options: %v", err)
 	}
 }
 
