@@ -10,3 +10,6 @@ var recordingsHTML string
 
 //go:embed templates/world_options.html
 var worldOptionsHTML string
+
+//go:embed templates/docker.html
+var dockerHTML string

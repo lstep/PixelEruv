@@ -30,6 +30,7 @@ func main() {
 		PBAdminPassword: os.Getenv("PB_ADMIN_PASSWORD"),
 		RecordingsDir:   envOr("RECORDINGS_DIR", "/recordings"),
 		NATSURL:         envOr("NATS_URL", ""),
+		DockerProxyURL:  envOr("DOCKER_PROXY_URL", ""),
 	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{

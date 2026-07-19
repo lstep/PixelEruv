@@ -25,6 +25,7 @@ RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Ve
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/audit ./cmd/audit
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/mcp ./cmd/mcp
 RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/admin ./cmd/admin
+RUN go build -ldflags="-X github.com/lstep/pixeleruv/backend/internal/version.Version=${VERSION}" -o /out/docker-readonly-proxy ./cmd/docker-readonly-proxy
 
 # --- Pusher image ---
 FROM alpine:3.20 AS pusher
@@ -103,3 +104,15 @@ FROM alpine:3.20 AS mcp
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /out/mcp /usr/local/bin/mcp
 ENTRYPOINT ["mcp"]
+
+# --- docker-readonly-proxy image ---
+# Tiny filtering proxy in front of /var/run/docker.sock. Allowlist:
+#   GET /containers/json
+#   GET /info
+# Everything else returns 403. No host port published — the admin service
+# reaches it at http://docker-proxy:2375 on the internal docker network.
+# Mounts the socket read-only; the proxy never mutates Docker state.
+FROM alpine:3.20 AS docker-readonly-proxy
+RUN apk add --no-cache ca-certificates
+COPY --from=builder /out/docker-readonly-proxy /usr/local/bin/docker-readonly-proxy
+ENTRYPOINT ["docker-readonly-proxy"]
