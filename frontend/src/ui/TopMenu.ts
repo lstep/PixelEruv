@@ -519,18 +519,13 @@ export class TopMenu {
   updateRecVisibility(): void {
     const admin = this.recIsAdmin?.() ?? false;
     const room = this.recGetRoom?.() ?? null;
-    const shouldShow = admin && room !== null;
+    const shouldShow = admin && room !== null && this.recRecordingEnabled;
     this.recBtn.style.display = shouldShow ? "block" : "none";
     if (!shouldShow) {
       this.closeRecMenu();
       return;
     }
-    // Dim the button when recording is globally disabled; the dropdown is
-    // also suppressed in toggleRecMenu so clicks do nothing.
-    if (!this.recRecordingEnabled) {
-      this.recBtn.style.opacity = "0.5";
-      this.recBtn.title = "Recording is disabled globally";
-    } else if (!this.recActive) {
+    if (!this.recActive) {
       this.recBtn.style.opacity = "";
       this.recBtn.title = "Record this A/V meeting (admin only)";
     }
@@ -586,7 +581,7 @@ export class TopMenu {
     }
     const room = this.recGetRoom?.() ?? null;
     if (!room || !this.recWs) return;
-    if (!this.recRecordingEnabled) return; // globally disabled; tooltip explains
+    if (!this.recRecordingEnabled) return; // globally disabled; button is hidden by updateRecVisibility
 
     const menu = document.createElement("div");
     menu.style.cssText =
