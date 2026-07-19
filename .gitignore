@@ -32,6 +32,8 @@ backend/ext-av
 backend/ext-rec
 backend/audit
 backend/admin
+backend/mcp
+backend/docker-readonly-proxy
 
 # Node
 node_modules/

@@ -9,9 +9,10 @@ import (
 )
 
 // registerTools wires all MCP tools onto the server. Tools are grouped:
-//   - Read tools: world state, entities, audit, PocketBase
+//   - Read tools: world state, entities, audit, PocketBase, world options
 //   - Control tools: teleport, kick, ban
-//   - Admin override tools: send_chat_as, set_player_*, dispatch_extension_action
+//   - Admin override tools: send_chat_as, set_player_*, set_world_options,
+//     dispatch_extension_action
 //
 // Each tool uses the typed ToolHandlerFor pattern so the SDK validates input
 // against the In struct's JSON schema automatically.
@@ -175,6 +176,17 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 		}
 		return rawJSONResult(data)
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_world_options",
+		Description: "Get the current server-wide runtime config (world_options KV bucket): SMTP, AppURL, YouTube RTMP defaults, ffmpeg limits, world king, error-email recipients, recording gate, and readOnly env mirrors (public_host, livekit_public_url). No arguments.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		opts, err := w.GetWorldOptions(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return jsonResult(opts)
+	})
 }
 
 // --- Control tools ---
@@ -321,6 +333,55 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 			return nil, nil, err
 		}
 		return jsonResult(map[string]any{"ok": true, "extension": args.ExtensionID})
+	})
+
+	type SetWorldOptionsArgs struct {
+		SMTPHost                  string `json:"smtp_host" jsonschema:"SMTP server hostname (required)"`
+		SMTPPort                  int    `json:"smtp_port" jsonschema:"SMTP server port (1-65535)"`
+		SMTPUsername              string `json:"smtp_username,omitempty" jsonschema:"SMTP auth username (empty = no auth)"`
+		SMTPPassword              string `json:"smtp_password,omitempty" jsonschema:"SMTP auth password"`
+		SMTPFrom                  string `json:"smtp_from,omitempty" jsonschema:"From: address for outgoing email"`
+		SMTPSender                string `json:"smtp_sender_name,omitempty" jsonschema:"Display name for the From: address"`
+		SMTPTLS                   bool   `json:"smtp_tls,omitempty" jsonschema:"Enable TLS for SMTP"`
+		AppURL                    string `json:"app_url,omitempty" jsonschema:"Public app URL used in email templates (verification, reset)"`
+		YoutubeRTMPURL            string `json:"youtube_rtmp_url,omitempty" jsonschema:"Default YouTube RTMP URL for the Stream to YouTube recording target (empty = YouTube disabled, MP4 still works)"`
+		YoutubeStreamKey          string `json:"youtube_stream_key,omitempty" jsonschema:"Default YouTube stream key"`
+		FFmpegConcurrency         int    `json:"ffmpeg_concurrency,omitempty" jsonschema:"Max simultaneous ffmpeg audio extractions (>= 1, default 2)"`
+		FFmpegTimeout             int64  `json:"ffmpeg_timeout,omitempty" jsonschema:"Per-run ffmpeg deadline in nanoseconds (1 minute = 60000000000; default 10m = 600000000000)"`
+		KingName                  string `json:"king_name,omitempty" jsonschema:"Display name shown on the welcome page footer"`
+		KingEmail                 string `json:"king_email,omitempty" jsonschema:"World king contact email; also the default error-email recipient when error_email_recipients_mode=king"`
+		ErrorEmailRecipientsMode  string `json:"error_email_recipients_mode,omitempty" jsonschema:"Error-email recipients: none | king | all_admins | custom"`
+		ErrorEmailCustomAddresses string `json:"error_email_custom_addresses,omitempty" jsonschema:"Comma-separated emails, used only when error_email_recipients_mode=custom"`
+		RecordingEnabled          bool   `json:"recording_enabled,omitempty" jsonschema:"Gates meeting recording globally (false = ext-rec refuses recording.start, frontend disables Record button)"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "set_world_options",
+		Description: "Replace the server-wide runtime config (world_options KV bucket). Full replace (not partial merge): call get_world_options first, modify the fields you want to change, then pass the full object back. worldsim validates, writes KV, and broadcasts world_options.update so consumers (SMTP client, ext-rec ffmpeg/YouTube, frontend recording gate) hot-reload without restart. readOnly fields (public_host, livekit_public_url) are preserved by worldsim and ignored in the input. Validation: smtp_host required, smtp_port 1-65535, ffmpeg_concurrency >= 1, ffmpeg_timeout >= 1s, error_email_recipients_mode must be one of none|king|all_admins|custom (king requires king_email, custom requires error_email_custom_addresses). Emits world_options.updated audit event tagged actor.extension=mcp (configurable via MCP_ACTOR).",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args SetWorldOptionsArgs) (*mcp.CallToolResult, any, error) {
+		opts := WorldOptions{
+			SMTPHost:                  args.SMTPHost,
+			SMTPPort:                  args.SMTPPort,
+			SMTPUsername:              args.SMTPUsername,
+			SMTPPassword:              args.SMTPPassword,
+			SMTPFrom:                  args.SMTPFrom,
+			SMTPSender:                args.SMTPSender,
+			SMTPTLS:                   args.SMTPTLS,
+			AppURL:                    args.AppURL,
+			YoutubeRTMPURL:            args.YoutubeRTMPURL,
+			YoutubeStreamKey:          args.YoutubeStreamKey,
+			FFmpegConcurrency:         args.FFmpegConcurrency,
+			FFmpegTimeout:             args.FFmpegTimeout,
+			KingName:                  args.KingName,
+			KingEmail:                 args.KingEmail,
+			ErrorEmailRecipientsMode:  args.ErrorEmailRecipientsMode,
+			ErrorEmailCustomAddresses: args.ErrorEmailCustomAddresses,
+			RecordingEnabled:          args.RecordingEnabled,
+		}
+		updated, err := w.SetWorldOptions(ctx, opts)
+		if err != nil {
+			return nil, nil, err
+		}
+		return jsonResult(updated)
 	})
 }
 

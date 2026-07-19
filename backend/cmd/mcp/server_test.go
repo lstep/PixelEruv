@@ -103,6 +103,56 @@ func TestWorldsimClient_AdminActions(t *testing.T) {
 	}
 }
 
+// TestWorldsimClient_WorldOptions verifies GetWorldOptions and
+// SetWorldOptions round-trip through the mock worldsim, including the
+// validation-error path.
+func TestWorldsimClient_WorldOptions(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+	registerMockWorldsim(t, nc)
+	w := NewWorldsimClient(nc, "mcp-test")
+
+	opts, err := w.GetWorldOptions(context.Background())
+	if err != nil {
+		t.Fatalf("GetWorldOptions: %v", err)
+	}
+	if opts.SMTPHost != "mailhog" || opts.SMTPPort != 1025 || !opts.RecordingEnabled {
+		t.Errorf("GetWorldOptions: %+v", opts)
+	}
+	if opts.FFmpegTimeout != int64(10*60*1e9) {
+		t.Errorf("FFmpegTimeout: %d, want %d", opts.FFmpegTimeout, int64(10*60*1e9))
+	}
+
+	// Set with valid input — echo mock returns the same options.
+	updated, err := w.SetWorldOptions(context.Background(), WorldOptions{
+		SMTPHost:          "smtp.example.com",
+		SMTPPort:          587,
+		FFmpegConcurrency: 4,
+		FFmpegTimeout:     int64(30 * 60 * 1e9),
+		RecordingEnabled:  false,
+	})
+	if err != nil {
+		t.Fatalf("SetWorldOptions: %v", err)
+	}
+	if updated.SMTPHost != "smtp.example.com" || updated.FFmpegConcurrency != 4 {
+		t.Errorf("SetWorldOptions response: %+v", updated)
+	}
+
+	// Set with invalid input (ffmpeg_concurrency < 1) — worldsim returns an
+	// error payload which requestReply surfaces as a Go error.
+	if _, err := w.SetWorldOptions(context.Background(), WorldOptions{
+		SMTPHost:          "smtp.example.com",
+		SMTPPort:          587,
+		FFmpegConcurrency: 0,
+	}); err == nil {
+		t.Error("expected error for ffmpeg_concurrency < 1")
+	}
+}
+
 // TestAuditClient_HTTP verifies AuditClient.QueryEvents / GetEvent /
 // PlayerTimeline / Stats call the audit JSON API correctly.
 func TestAuditClient_HTTP(t *testing.T) {
@@ -270,7 +320,7 @@ func TestNewMCPServer(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(&discardWriter{}, nil))
 
-	// Must not panic. All 16 tools, 11 resources, 3 prompts register.
+	// Must not panic. All 18 tools, 11 resources, 3 prompts register.
 	s := NewMCPServer(deps, logger)
 	if s == nil {
 		t.Fatal("NewMCPServer returned nil")
@@ -411,6 +461,50 @@ func registerMockWorldsim(t *testing.T, nc *nats.Conn) {
 	// worldsim.client.ban — return OK with kicked=true.
 	nc.Subscribe("worldsim.client.ban", func(m *nats.Msg) {
 		data, _ := json.Marshal(map[string]any{"ok": true, "kicked": true})
+		m.Respond(data)
+	})
+
+	// worldsim.world_options.get — return a canned options object.
+	nc.Subscribe("worldsim.world_options.get", func(m *nats.Msg) {
+		opts := map[string]any{
+			"ok": true,
+			"options": map[string]any{
+				"smtp_host":                   "mailhog",
+				"smtp_port":                   1025,
+				"smtp_from":                   "noreply@pixeleruv.local",
+				"smtp_sender_name":            "PixelEruv",
+				"app_url":                     "https://example.com:4043",
+				"ffmpeg_concurrency":          2,
+				"ffmpeg_timeout":              int64(10 * 60 * 1e9),
+				"error_email_recipients_mode": "king",
+				"recording_enabled":           true,
+				"public_host":                 "example.com",
+				"livekit_public_url":          "wss://livekit.example.com",
+			},
+		}
+		data, _ := json.Marshal(opts)
+		m.Respond(data)
+	})
+
+	// worldsim.world_options.set — echo back the input options with OK=true.
+	// Reject ffmpeg_concurrency < 1 to exercise the error path. Expects the
+	// {options, actor} wrapper used by the real worldsim handler.
+	nc.Subscribe("worldsim.world_options.set", func(m *nats.Msg) {
+		var req struct {
+			Options WorldOptions   `json:"options"`
+			Actor   map[string]any `json:"actor"`
+		}
+		if err := json.Unmarshal(m.Data, &req); err != nil {
+			data, _ := json.Marshal(map[string]any{"ok": false, "error": "unmarshal: " + err.Error()})
+			m.Respond(data)
+			return
+		}
+		if req.Options.FFmpegConcurrency < 1 {
+			data, _ := json.Marshal(map[string]any{"ok": false, "error": "ffmpeg_concurrency must be >= 1"})
+			m.Respond(data)
+			return
+		}
+		data, _ := json.Marshal(map[string]any{"ok": true, "options": req.Options})
 		m.Respond(data)
 	})
 

@@ -53,15 +53,15 @@ A new `backend/cmd/mcp` binary exposes PixelEruv internals to MCP clients (Claud
   - Admin overrides (bypass client-ID validation, use entity_id): `worldsim.admin.chat`, `worldsim.admin.set_name`, `worldsim.admin.set_status`, `worldsim.admin.set_sprite`, `worldsim.admin.set_player_options`. All reply `{"ok":bool,"error":"..."}`. `backend/internal/worldsim/admin_actions.go`.
 - **BanStore.Add** method (`backend/internal/worldsim/banstore.go`) — inserts a ban record into the `bans` PocketBase collection with target_type / target_value / reason / banned_until / banned_by.
 - **Audit JSON API** (`backend/cmd/audit/server.go`) — new endpoints `GET /audit/api/events`, `/audit/api/events/{id}`, `/audit/api/players/{sub}`, `/audit/api/stats` for historical queries (previously HTML-only).
-- **MCP binary** (`backend/cmd/mcp/`): `main.go` (env config + NATS connect), `server.go` (HTTP/SSE + bearer auth), `worldsim_client.go` / `audit_client.go` / `pb_client.go` (NATS + HTTP wrappers), `tools.go` (16 tools), `resources.go` (5 static + 6 templated resources), `prompts.go` (3 prompts: summarize_recent_audit, investigate_player, world_health_report).
+- **MCP binary** (`backend/cmd/mcp/`): `main.go` (env config + NATS connect), `server.go` (HTTP/SSE + bearer auth), `worldsim_client.go` / `audit_client.go` / `pb_client.go` (NATS + HTTP wrappers), `tools.go` (18 tools — 16 original + `get_world_options` / `set_world_options`), `resources.go` (5 static + 6 templated resources), `prompts.go` (3 prompts: summarize_recent_audit, investigate_player, world_health_report).
 - **Docker**: `mcp` service in both `docker/docker-compose.yml` (builds from source) and `dist/docker-compose.yml` (uses pre-built binary). `backend.Dockerfile` `mcp` target. nginx proxies `/mcp` to `http://mcp:8085` with `proxy_buffering off` + 1h read timeout (SSE). NOT behind admin cookie auth_request — bearer-token auth at the app layer.
 - **Makefile**: `make build` now produces `dist/bin/mcp`.
 
 ### Tools exposed
 
-- Read: `get_world_stats`, `get_zones`, `query_entities`, `get_entity`, `query_audit_events`, `get_audit_event`, `player_timeline`, `list_pb_records`, `get_pb_record`.
+- Read: `get_world_stats`, `get_zones`, `query_entities`, `get_entity`, `query_audit_events`, `get_audit_event`, `player_timeline`, `list_pb_records`, `get_pb_record`, `get_world_options`.
 - Control: `teleport_entity`, `kick_player`, `ban_player`.
-- Admin overrides: `send_chat_as`, `set_player_name`, `set_player_status`, `set_player_sprite`, `set_player_options`, `dispatch_extension_action`.
+- Admin overrides: `send_chat_as`, `set_player_name`, `set_player_status`, `set_player_sprite`, `set_player_options`, `set_world_options`, `dispatch_extension_action`.
 
 ### PII
 

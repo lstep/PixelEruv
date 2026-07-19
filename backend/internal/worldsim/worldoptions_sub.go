@@ -19,6 +19,17 @@ type worldOptionsReply struct {
 	Options WorldOptions `json:"options,omitempty"`
 }
 
+// worldOptionsSetRequest is the request payload for worldsim.world_options.set.
+// Options is the full replacement value; Actor attributes the audit event so
+// consumers can distinguish admin-portal-initiated sets (actor.extension="admin",
+// actor.sub=<admin email>) from MCP-initiated sets (actor.extension="mcp"). If
+// Actor is zero-valued, the handler defaults to actor.extension="admin" for
+// backward compatibility with callers that omit it.
+type worldOptionsSetRequest struct {
+	Options WorldOptions  `json:"options"`
+	Actor   audit.Actor   `json:"actor,omitempty"`
+}
+
 // subscribeWorldOptions sets up the worldsim.world_options.get and
 // worldsim.world_options.set request-reply handlers. The admin portal calls
 // these to read and write the server-wide runtime config; worldsim owns the
@@ -39,20 +50,25 @@ func (s *Simulator) subscribeWorldOptions() error {
 	}
 
 	if _, err := s.nc.Subscribe("worldsim.world_options.set", func(msg *nats.Msg) {
-		var opts WorldOptions
-		if err := json.Unmarshal(msg.Data, &opts); err != nil {
+		var req worldOptionsSetRequest
+		if err := json.Unmarshal(msg.Data, &req); err != nil {
 			reply, _ := json.Marshal(worldOptionsReply{Error: "unmarshal: " + err.Error()})
 			msg.Respond(reply)
 			return
 		}
-		if err := s.worldOpts.Set(opts); err != nil {
+		if err := s.worldOpts.Set(req.Options); err != nil {
 			s.logger.Warn("world_options.set", "err", err)
 			reply, _ := json.Marshal(worldOptionsReply{Error: err.Error()})
 			msg.Respond(reply)
 			return
 		}
+		actor := req.Actor
+		if actor.Extension == "" {
+			actor.Extension = "admin"
+		}
+		opts := req.Options
 		audit.Emit(s.nc, "world_options.updated", audit.SeverityInfo,
-			audit.Actor{Extension: "admin"},
+			actor,
 			audit.Details{
 				"smtp_host":          opts.SMTPHost,
 				"app_url":            opts.AppURL,
