@@ -48,6 +48,7 @@ build: proto
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/audit ./cmd/audit
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/mcp ./cmd/mcp
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/admin ./cmd/admin
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/docker-readonly-proxy ./cmd/docker-readonly-proxy
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pb-collections ./cmd/pb-collections
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/validate-map ./cmd/validate-map
