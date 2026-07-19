@@ -973,6 +973,16 @@ type worldOptionsFormFields struct {
 	YoutubeStreamKey  string
 	FFmpegConcurrency int
 	FFmpegTimeoutMin  int
+	// World king (display-only; king_email is the default error-email
+	// recipient when ErrorEmailRecipientsMode == "king").
+	KingName  string
+	KingEmail string
+	// Error email notifications — audit service emails these recipients on
+	// SeverityError audit events. Mode: none|king|all_admins|custom.
+	ErrorEmailRecipientsMode  string
+	ErrorEmailCustomAddresses string
+	// RecordingEnabled gates meeting recording globally.
+	RecordingEnabled bool
 	// Read-only display fields (not editable in the form).
 	PublicHost       string
 	LivekitPublicURL string
@@ -983,20 +993,25 @@ type worldOptionsReply struct {
 	OK      bool   `json:"ok"`
 	Error   string `json:"error,omitempty"`
 	Options struct {
-		SMTPHost          string `json:"smtp_host"`
-		SMTPPort          int    `json:"smtp_port"`
-		SMTPUsername      string `json:"smtp_username"`
-		SMTPPassword      string `json:"smtp_password"`
-		SMTPFrom          string `json:"smtp_from"`
-		SMTPSender        string `json:"smtp_sender_name"`
-		SMTPTLS           bool   `json:"smtp_tls"`
-		AppURL            string `json:"app_url"`
-		YoutubeRTMPURL    string `json:"youtube_rtmp_url"`
-		YoutubeStreamKey  string `json:"youtube_stream_key"`
-		FFmpegConcurrency int    `json:"ffmpeg_concurrency"`
-		FFmpegTimeout     int64  `json:"ffmpeg_timeout"` // nanoseconds
-		PublicHost        string `json:"public_host"`
-		LivekitPublicURL  string `json:"livekit_public_url"`
+		SMTPHost                  string `json:"smtp_host"`
+		SMTPPort                  int    `json:"smtp_port"`
+		SMTPUsername              string `json:"smtp_username"`
+		SMTPPassword              string `json:"smtp_password"`
+		SMTPFrom                  string `json:"smtp_from"`
+		SMTPSender                string `json:"smtp_sender_name"`
+		SMTPTLS                   bool   `json:"smtp_tls"`
+		AppURL                    string `json:"app_url"`
+		YoutubeRTMPURL            string `json:"youtube_rtmp_url"`
+		YoutubeStreamKey          string `json:"youtube_stream_key"`
+		FFmpegConcurrency         int    `json:"ffmpeg_concurrency"`
+		FFmpegTimeout             int64  `json:"ffmpeg_timeout"` // nanoseconds
+		KingName                  string `json:"king_name"`
+		KingEmail                 string `json:"king_email"`
+		ErrorEmailRecipientsMode  string `json:"error_email_recipients_mode"`
+		ErrorEmailCustomAddresses string `json:"error_email_custom_addresses"`
+		RecordingEnabled          bool   `json:"recording_enabled"`
+		PublicHost                string `json:"public_host"`
+		LivekitPublicURL          string `json:"livekit_public_url"`
 	} `json:"options"`
 }
 
@@ -1028,20 +1043,25 @@ func (s *Server) handleWorldOptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fields := worldOptionsFormFields{
-		SMTPHost:          opts.Options.SMTPHost,
-		SMTPPort:          opts.Options.SMTPPort,
-		SMTPUsername:      opts.Options.SMTPUsername,
-		SMTPPassword:      opts.Options.SMTPPassword,
-		SMTPFrom:          opts.Options.SMTPFrom,
-		SMTPSender:        opts.Options.SMTPSender,
-		SMTPTLS:           opts.Options.SMTPTLS,
-		AppURL:            opts.Options.AppURL,
-		YoutubeRTMPURL:    opts.Options.YoutubeRTMPURL,
-		YoutubeStreamKey:  opts.Options.YoutubeStreamKey,
-		FFmpegConcurrency: opts.Options.FFmpegConcurrency,
-		FFmpegTimeoutMin:  int(opts.Options.FFmpegTimeout / 1e9 / 60),
-		PublicHost:        opts.Options.PublicHost,
-		LivekitPublicURL:  opts.Options.LivekitPublicURL,
+		SMTPHost:                  opts.Options.SMTPHost,
+		SMTPPort:                  opts.Options.SMTPPort,
+		SMTPUsername:              opts.Options.SMTPUsername,
+		SMTPPassword:              opts.Options.SMTPPassword,
+		SMTPFrom:                  opts.Options.SMTPFrom,
+		SMTPSender:                opts.Options.SMTPSender,
+		SMTPTLS:                   opts.Options.SMTPTLS,
+		AppURL:                    opts.Options.AppURL,
+		YoutubeRTMPURL:            opts.Options.YoutubeRTMPURL,
+		YoutubeStreamKey:          opts.Options.YoutubeStreamKey,
+		FFmpegConcurrency:         opts.Options.FFmpegConcurrency,
+		FFmpegTimeoutMin:          int(opts.Options.FFmpegTimeout / 1e9 / 60),
+		KingName:                  opts.Options.KingName,
+		KingEmail:                 opts.Options.KingEmail,
+		ErrorEmailRecipientsMode:  opts.Options.ErrorEmailRecipientsMode,
+		ErrorEmailCustomAddresses: opts.Options.ErrorEmailCustomAddresses,
+		RecordingEnabled:          opts.Options.RecordingEnabled,
+		PublicHost:                opts.Options.PublicHost,
+		LivekitPublicURL:          opts.Options.LivekitPublicURL,
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	s.tmpl.ExecuteTemplate(w, "world_options", map[string]any{
@@ -1079,18 +1099,23 @@ func (s *Server) handleWorldOptionsPost(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	payload := map[string]any{
-		"smtp_host":          r.FormValue("smtp_host"),
-		"smtp_port":          port,
-		"smtp_username":      r.FormValue("smtp_username"),
-		"smtp_password":      r.FormValue("smtp_password"),
-		"smtp_from":          r.FormValue("smtp_from"),
-		"smtp_sender_name":   r.FormValue("smtp_sender_name"),
-		"smtp_tls":           r.FormValue("smtp_tls") == "on",
-		"app_url":            r.FormValue("app_url"),
-		"youtube_rtmp_url":   r.FormValue("youtube_rtmp_url"),
-		"youtube_stream_key": r.FormValue("youtube_stream_key"),
-		"ffmpeg_concurrency": concurrency,
-		"ffmpeg_timeout":     int64(timeoutMin) * 60 * 1e9, // nanoseconds
+		"smtp_host":                   r.FormValue("smtp_host"),
+		"smtp_port":                   port,
+		"smtp_username":               r.FormValue("smtp_username"),
+		"smtp_password":               r.FormValue("smtp_password"),
+		"smtp_from":                   r.FormValue("smtp_from"),
+		"smtp_sender_name":            r.FormValue("smtp_sender_name"),
+		"smtp_tls":                    r.FormValue("smtp_tls") == "on",
+		"app_url":                     r.FormValue("app_url"),
+		"youtube_rtmp_url":            r.FormValue("youtube_rtmp_url"),
+		"youtube_stream_key":          r.FormValue("youtube_stream_key"),
+		"ffmpeg_concurrency":          concurrency,
+		"ffmpeg_timeout":              int64(timeoutMin) * 60 * 1e9, // nanoseconds
+		"king_name":                   r.FormValue("king_name"),
+		"king_email":                  r.FormValue("king_email"),
+		"error_email_recipients_mode": r.FormValue("error_email_recipients_mode"),
+		"error_email_custom_addresses": r.FormValue("error_email_custom_addresses"),
+		"recording_enabled":           r.FormValue("recording_enabled") == "on",
 	}
 	data, _ := json.Marshal(payload)
 	reply, err := s.nc.Request("worldsim.world_options.set", data, 5*time.Second)

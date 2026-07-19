@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +43,29 @@ type WorldOptions struct {
 	FFmpegConcurrency int           `json:"ffmpeg_concurrency"` // max simultaneous extractions (default 2)
 	FFmpegTimeout     time.Duration `json:"ffmpeg_timeout"`     // per-run deadline (default 10m)
 
+	// World king — display-only metadata (name shown on the welcome page
+	// footer, name+email shown on the admin World Options page). KingEmail
+	// is also the default recipient for error emails when
+	// ErrorEmailRecipientsMode == "king".
+	KingName  string `json:"king_name"`
+	KingEmail string `json:"king_email"`
+
+	// Error email notifications. The audit service subscribes to audit.event
+	// and emails recipients on SeverityError events. Mode is one of:
+	//   "king"       -> [KingEmail]
+	//   "all_admins" -> every user linked to a players row with is_admin=true
+	//   "custom"     -> addresses parsed from ErrorEmailCustomAddresses
+	// "none" disables notifications entirely. CustomAddresses is a
+	// comma-separated list of emails, used only when mode == "custom".
+	ErrorEmailRecipientsMode  string `json:"error_email_recipients_mode"`
+	ErrorEmailCustomAddresses string `json:"error_email_custom_addresses"`
+
+	// RecordingEnabled gates meeting recording globally. When false, ext-rec
+	// refuses recording.start (returns an error to the admin via
+	// recording_state) and the frontend disables the Record button with a
+	// tooltip. Hot-reloaded on world_options.update.
+	RecordingEnabled bool `json:"recording_enabled"`
+
 	// readOnly fields mirrored from env. Not editable from the admin UI.
 	PublicHost       string `json:"public_host"`        // readOnly
 	LivekitPublicURL string `json:"livekit_public_url"` // readOnly
@@ -52,15 +76,17 @@ type WorldOptions struct {
 // env (read-only in the admin UI).
 func defaultWorldOptions(publicHost, livekitPublicURL string) WorldOptions {
 	return WorldOptions{
-		SMTPHost:          "mailhog",
-		SMTPPort:          1025,
-		SMTPFrom:          "noreply@pixeleruv.local",
-		SMTPSender:        "PixelEruv",
-		AppURL:            fmt.Sprintf("https://%s:4043", publicHost),
-		FFmpegConcurrency: 2,
-		FFmpegTimeout:     10 * time.Minute,
-		PublicHost:        publicHost,
-		LivekitPublicURL:  livekitPublicURL,
+		SMTPHost:                 "mailhog",
+		SMTPPort:                 1025,
+		SMTPFrom:                 "noreply@pixeleruv.local",
+		SMTPSender:               "PixelEruv",
+		AppURL:                   fmt.Sprintf("https://%s:4043", publicHost),
+		FFmpegConcurrency:        2,
+		FFmpegTimeout:            10 * time.Minute,
+		ErrorEmailRecipientsMode: "king",
+		RecordingEnabled:         true,
+		PublicHost:               publicHost,
+		LivekitPublicURL:         livekitPublicURL,
 	}
 }
 
@@ -229,7 +255,57 @@ func validateWorldOptions(opts WorldOptions) error {
 	if opts.SMTPPort < 1 || opts.SMTPPort > 65535 {
 		return fmt.Errorf("smtp_port must be in 1..65535")
 	}
+	// King email is optional unless error_email_recipients_mode == "king".
+	if opts.KingEmail != "" && !looksLikeEmail(opts.KingEmail) {
+		return fmt.Errorf("king_email is not a valid email address")
+	}
+	switch opts.ErrorEmailRecipientsMode {
+	case "none":
+		// no recipient checks
+	case "king":
+		if opts.KingEmail == "" {
+			return fmt.Errorf("error_email_recipients_mode=king requires king_email")
+		}
+	case "all_admins":
+		// no static checks; resolved at send time
+	case "custom":
+		addrs := splitEmails(opts.ErrorEmailCustomAddresses)
+		if len(addrs) == 0 {
+			return fmt.Errorf("error_email_recipients_mode=custom requires at least one address in error_email_custom_addresses")
+		}
+		for _, a := range addrs {
+			if !looksLikeEmail(a) {
+				return fmt.Errorf("error_email_custom_addresses: %q is not a valid email", a)
+			}
+		}
+	default:
+		return fmt.Errorf("error_email_recipients_mode must be one of none|king|all_admins|custom, got %q", opts.ErrorEmailRecipientsMode)
+	}
 	return nil
+}
+
+// splitEmails parses a comma-separated list of emails, trimming whitespace
+// and dropping empties.
+func splitEmails(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// looksLikeEmail is a minimal email sanity check (not RFC-perfect). Good
+// enough to catch typos in the admin form.
+func looksLikeEmail(s string) bool {
+	at := strings.IndexByte(s, '@')
+	if at <= 0 || at == len(s)-1 {
+		return false
+	}
+	dot := strings.IndexByte(s[at+1:], '.')
+	return dot > 0
 }
 
 func mustJSONOpts(v any) []byte {

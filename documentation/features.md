@@ -1328,6 +1328,128 @@ Narrate: "your LLM has the same tools a human admin has. It reads the
 world, queries the audit log, takes an action, and verifies its own
 work — all through one authenticated endpoint."
 
+### 5.10 World Options — Runtime Server Config (No Restart)
+
+Server-wide runtime configuration — SMTP, the public app URL, YouTube
+RTMP defaults, ffmpeg audio-extraction limits, the world king, error
+email recipients, and a global recording gate — lives in a NATS KV
+bucket (`world_options`, key `current`) owned by worldsim, not in env
+vars. worldsim seeds hardcoded defaults on first boot; the admin edits
+them at runtime via **Admin > World Options** in the admin portal.
+Saves write to the KV bucket and broadcast `world_options.update` on
+NATS; worldsim hot-reloads its SMTP client and `APP_URL`, ext-rec
+hot-reloads the YouTube defaults and ffmpeg limits, and the frontend
+picks up the recording gate — all without restarting any service.
+
+`PUBLIC_HOST` and `LIVEKIT_PUBLIC_URL` stay as env vars (they drive
+the frontend's TLS cert SAN and ext-av's token URLs at startup — not
+safely hot-reloadable). They are mirrored into world_options as
+read-only display fields so the admin can see the full picture in one
+place.
+
+This is the first use of NATS KV in the codebase (previously NATS Core
+pub/sub only). The `nats:2.10-alpine` image already runs with `-js`, so
+KV works without config changes. KV is semi-persistent — survives NATS
+restarts, lost on volume wipe — and worldsim re-seeds defaults if the
+bucket is empty.
+
+**Storyboard:** Open `/admin/world-options` in a browser. Show the
+grouped form: SMTP, APP_URL, YouTube, ffmpeg limits, world king, error
+emails, recording gate, read-only PUBLIC_HOST / LIVEKIT_PUBLIC_URL.
+Change the SMTP host from `mailhog` to a real provider. Click Save.
+Show the worldsim log: "world_options hot-reloaded". Trigger a
+verification email — it arrives through the new SMTP server. Narrate:
+"change server config at runtime. No SSH, no `.env` edit, no restart.
+The admin portal is the control plane."
+
+### 5.11 World King — Display-Only World Identity
+
+The admin can name a "king of this world" — a display-only identity
+that personalizes the instance. The king's name is shown on the welcome
+page footer (`/welcome`) via a public `GET /api/world-king` endpoint
+(no auth, returns only the name). The king's email is stored but
+visible only on the admin World Options page (spam safety); it doubles
+as the default recipient for error email notifications when the
+recipient mode is set to "king".
+
+The king has no special permissions — it's metadata, not a role. The
+name field is free text; the email field is validated. Both are
+hot-reloaded on save.
+
+**Storyboard:** Open `/admin/world-options`. Scroll to "World king".
+Type "Lord Pixel" and `king@example.com`. Save. Open `/welcome` in
+another tab — the footer now reads "King of this world: Lord Pixel".
+Narrate: "your world, your ruler. A small touch that makes the
+instance yours."
+
+### 5.12 Error Email Notifications
+
+The audit service can email recipients when an audit event with
+severity `error` is emitted — for example, when ffmpeg fails to extract
+audio from a recording (`recording.audio_extraction_failed`). Four
+recipient modes, all configurable via **Admin > World Options**:
+
+- **none** — disable error emails.
+- **king** — send to the world king's email.
+- **all_admins** — send to every user linked to a `players` row with
+  `is_admin=true`. The audit service resolves the list at send time via
+  the `worldsim.admin_emails.get` NATS request-reply (worldsim owns
+  PocketBase; the audit service has no PB access).
+- **custom** — send to a comma-separated list of addresses.
+
+SMTP config (host, port, credentials, from, sender) comes from the same
+World Options page — the same config worldsim uses for verification and
+password-reset emails. Hot-reloaded on save. Emails are sent in a
+goroutine so audit persistence is never blocked on SMTP; failures are
+logged and dropped (best-effort, like audit itself).
+
+**Storyboard:** Open `/admin/world-options`. Set "Error email
+notifications" → "King only". Confirm `king_email` is set. Save. In a
+terminal, trigger an error audit event (e.g. stop a recording mid-
+extraction). Within seconds an email arrives at the king's address with
+the event type, severity, timestamp, actor, and details. Open MailHog
+to show it. Narrate: "the world tells you when something breaks. The
+king gets the email; the audit log has the rest."
+
+### 5.13 Meeting Recording (MP4 + YouTube) with Global Gate
+
+Admins can record A/V meetings from the top-menu Record button (only
+visible to admins inside an A/V room). Two targets:
+
+- **MP4** — LiveKit Room Composite Egress writes an MP4 to disk, served
+  from `/recordings/<file>.mp4`. A follow-up ffmpeg pass extracts the
+  audio track as MP3 so recordings can be listened to without video.
+  Thumbnails are extracted for the admin UI grid.
+- **YouTube** — streams the meeting to a YouTube RTMP endpoint. A
+  confirm modal pre-fills the RTMP URL and stream key from World
+  Options; the host can override them per-recording without editing the
+  global defaults.
+
+Recordings are listed and managed at **Admin > Recordings**
+(`/admin/recordings`): browse, search, download, delete, backfill
+thumbnails, stop an active recording. Active recording state is
+replicated to all participants in the room — a REC indicator appears
+in the corner so everyone knows they're being recorded.
+
+A **global recording gate** (`recording_enabled`, default true) lets
+the admin disable recording for the whole instance without code
+changes. When unchecked: ext-rec refuses `recording.start` and emits a
+`recording.start_denied` audit event (reason=`globally_disabled`); the
+frontend dims the Record button and shows a "Recording is disabled
+globally" tooltip. Hot-reloaded on save.
+
+**Storyboard:** Enter an A/V room as admin. Click the Record button.
+Show the dropdown: "Record to MP4" and "Stream to YouTube". Click
+"Stream to YouTube" — a confirm modal appears pre-filled with the RTMP
+URL and stream key from World Options. Edit the stream key for this
+recording only. Click "Start streaming". A REC indicator appears for
+all participants. Open the YouTube studio in another tab — the stream
+is live. Back in the world, click "Stop REC". Open **Admin >
+Recordings** — the recording appears with a thumbnail, MP4 + MP3
+download links, and the duration. Narrate: "record meetings for
+posterity, stream them to YouTube, manage them from one admin page.
+One toggle turns it all off if you need to."
+
 ---
 
 ## Part 6 — Roadmap (Post-MVP)

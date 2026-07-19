@@ -218,11 +218,12 @@ func main() {
 	// world_options.update broadcast. Replaces the old YOUTUBE_RTMP_URL /
 	// YOUTUBE_STREAM_KEY / PUBLIC_HOST env vars.
 	type worldOptions struct {
-		YoutubeRTMPURL   string
-		YoutubeStreamKey string
-		PublicHost       string
+		YoutubeRTMPURL    string
+		YoutubeStreamKey  string
+		PublicHost        string
 		FFmpegConcurrency int
 		FFmpegTimeout     time.Duration
+		RecordingEnabled  bool
 	}
 	fetchWorldOptions := func() (worldOptions, error) {
 		msg, err := nc.Request("worldsim.world_options.get", nil, 3*time.Second)
@@ -238,6 +239,7 @@ func main() {
 				PublicHost        string        `json:"public_host"`
 				FFmpegConcurrency int           `json:"ffmpeg_concurrency"`
 				FFmpegTimeout     time.Duration `json:"ffmpeg_timeout"`
+				RecordingEnabled  bool          `json:"recording_enabled"`
 			} `json:"options"`
 		}
 		if err := json.Unmarshal(msg.Data, &resp); err != nil {
@@ -252,6 +254,7 @@ func main() {
 			PublicHost:        resp.Options.PublicHost,
 			FFmpegConcurrency: resp.Options.FFmpegConcurrency,
 			FFmpegTimeout:     resp.Options.FFmpegTimeout,
+			RecordingEnabled:  resp.Options.RecordingEnabled,
 		}
 		if o.PublicHost == "" {
 			o.PublicHost = "localhost"
@@ -295,6 +298,7 @@ func main() {
 			PublicHost        string        `json:"public_host"`
 			FFmpegConcurrency int           `json:"ffmpeg_concurrency"`
 			FFmpegTimeout     time.Duration `json:"ffmpeg_timeout"`
+			RecordingEnabled  bool          `json:"recording_enabled"`
 		}
 		if err := json.Unmarshal(msg.Data, &o); err != nil {
 			logger.Warn("world_options.update unmarshal", "err", err)
@@ -316,6 +320,7 @@ func main() {
 			PublicHost:        o.PublicHost,
 			FFmpegConcurrency: o.FFmpegConcurrency,
 			FFmpegTimeout:     o.FFmpegTimeout,
+			RecordingEnabled:  o.RecordingEnabled,
 		}
 		optsMu.Unlock()
 		audioSem.SetLimit(currentOpts.FFmpegConcurrency)
@@ -847,6 +852,23 @@ func main() {
 				Room: req.Room, Status: "error", Target: req.Target,
 				Error: "invalid target (want mp4 or youtube)",
 			})
+			return
+		}
+
+		// Global recording gate (world_options.recording_enabled). Hot-
+		// reloaded on world_options.update. When false, refuse all starts
+		// regardless of target; the frontend also disables the Record button
+		// so this path is mostly a defense-in-depth + audit trail.
+		if !getOpts().RecordingEnabled {
+			logger.Warn("recording.start denied (globally disabled)", "room", req.Room)
+			publishRecordingState(req.ClientID, recordingStateMsg{
+				Room: req.Room, Status: "error", Target: req.Target,
+				Error: "recording is disabled globally",
+			})
+			audit.Emit(nc, "recording.start_denied", audit.SeverityWarn,
+				audit.Actor{EntityID: req.EntityID, ClientID: req.ClientID, Extension: extID},
+				audit.Details{"room": req.Room, "target": req.Target, "reason": "globally_disabled"},
+				"")
 			return
 		}
 

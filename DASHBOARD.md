@@ -29,6 +29,16 @@ A new `world_options` NATS KV bucket (key `current`) is the single source of tru
 - **NATS KV is a new pattern in this repo** — the codebase previously used only NATS Core pub/sub. The `nats:2.10-alpine` image already runs with `-js`, so KV works without config changes. KV is semi-persistent (survives NATS restart, lost on volume wipe); worldsim re-seeds defaults if the bucket is empty.
 - **Secrets in NATS KV** — SMTP password and YouTube stream key stored in the KV bucket. NATS is inside the stack; the write endpoint is admin-gated. Acceptable for this deployment.
 
+### Additions: world king, error emails, recording gate
+
+Three new world_options fields added after the initial world_options PR:
+
+- **World king** (`king_name`, `king_email`) — display-only metadata. The king's name is shown on the welcome page footer (public `GET /api/world-king` endpoint, no auth); the email is visible only on the admin World Options page and is the default recipient for error emails when mode = "king". No special permissions.
+- **Error email notifications** (`error_email_recipients_mode` ∈ {none, king, all_admins, custom}, `error_email_custom_addresses`) — the audit service emails recipients on `SeverityError` audit events. SMTP config + recipient mode are fetched from worldsim via `worldsim.world_options.get` at startup and hot-reloaded on `world_options.update`. For `all_admins` mode, admin emails are resolved via a new `worldsim.admin_emails.get` NATS request-reply (worldsim owns PocketBase; the audit service has no PB access). Emails sent in a goroutine so audit persistence is never blocked on SMTP. New `backend/cmd/audit/notifier.go`.
+- **Recording gate** (`recording_enabled` bool, default true) — when false, ext-rec refuses `recording.start` (emits `recording.start_denied` audit event with reason `globally_disabled`) and the frontend disables the Record button with a "Recording is disabled globally" tooltip. Hot-reloaded on `world_options.update`.
+
+**Deviation from the option label:** the king's email is shown only on the admin World Options page, not on the public welcome page footer (spam risk). The welcome footer shows the king's name only. The email is still stored and used for error emails.
+
 ## MCP server (admin LLM tooling)
 
 **Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, and `go test ./cmd/mcp/` all pass. Not yet exercised end-to-end with a real MCP client (Claude Desktop / Devin / Cursor).
