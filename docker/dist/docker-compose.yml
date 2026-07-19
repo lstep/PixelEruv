@@ -311,6 +311,7 @@ services:
         BINARY: admin
     depends_on:
       - worldsim
+      - docker-proxy
     environment:
       ADMIN_HTTP_ADDR: ":8083"
       ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:-changeme}"
@@ -319,9 +320,31 @@ services:
       PB_ADMIN_PASSWORD: "password123"
       RECORDINGS_DIR: "/recordings"
       NATS_URL: "nats://nats:4222"
+      # Read-only HTTP endpoint in front of the host docker socket. The
+      # admin container never mounts /var/run/docker.sock directly — that
+      # would be root-equivalent on the host. docker-proxy allowlists
+      # GET /containers/json and GET /info; everything else 403s.
+      DOCKER_PROXY_URL: "http://docker-proxy:2375"
     volumes:
       # Read-write access to recordings for file deletion from the management UI.
       - ./recordings:/recordings
+    restart: unless-stopped
+
+  # docker-readonly-proxy — minimal filtering proxy in front of the host
+  # Docker engine socket. Mounts /var/run/docker.sock read-only. Allowlist:
+  #   GET /containers/json
+  #   GET /info
+  # Anything else returns 403. No host port published — only containers on
+  # this docker network can reach it. The admin service uses it for the
+  # /admin/docker status page; admin itself never sees the socket.
+  docker-proxy:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      args:
+        BINARY: docker-readonly-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
 
 volumes:

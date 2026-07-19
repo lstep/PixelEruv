@@ -33,6 +33,7 @@ type Config struct {
 	PBAdminPassword string
 	RecordingsDir   string
 	NATSURL         string
+	DockerProxyURL  string
 }
 
 // Server is the admin portal HTTP service.
@@ -53,6 +54,9 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	}
 	if _, err := tmpl.New("world_options").Parse(worldOptionsHTML); err != nil {
 		return nil, fmt.Errorf("parse world_options template: %w", err)
+	}
+	if _, err := tmpl.New("docker").Parse(dockerHTML); err != nil {
+		return nil, fmt.Errorf("parse docker template: %w", err)
 	}
 	// NATS is optional: the stop button is disabled if not connected,
 	// but other admin features (list, delete, delete-all) still work.
@@ -86,6 +90,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/admin/recordings/stop", s.handleRecordingsStop)
 	mux.HandleFunc("/admin/recordings/backfill-thumbnails", s.handleRecordingsBackfillThumbnails)
 	mux.HandleFunc("/admin/world-options", s.handleWorldOptions)
+	mux.HandleFunc("/admin/docker", s.handleDocker)
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
@@ -1099,23 +1104,29 @@ func (s *Server) handleWorldOptionsPost(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	payload := map[string]any{
-		"smtp_host":                   r.FormValue("smtp_host"),
-		"smtp_port":                   port,
-		"smtp_username":               r.FormValue("smtp_username"),
-		"smtp_password":               r.FormValue("smtp_password"),
-		"smtp_from":                   r.FormValue("smtp_from"),
-		"smtp_sender_name":            r.FormValue("smtp_sender_name"),
-		"smtp_tls":                    r.FormValue("smtp_tls") == "on",
-		"app_url":                     r.FormValue("app_url"),
-		"youtube_rtmp_url":            r.FormValue("youtube_rtmp_url"),
-		"youtube_stream_key":          r.FormValue("youtube_stream_key"),
-		"ffmpeg_concurrency":          concurrency,
-		"ffmpeg_timeout":              int64(timeoutMin) * 60 * 1e9, // nanoseconds
-		"king_name":                   r.FormValue("king_name"),
-		"king_email":                  r.FormValue("king_email"),
-		"error_email_recipients_mode": r.FormValue("error_email_recipients_mode"),
-		"error_email_custom_addresses": r.FormValue("error_email_custom_addresses"),
-		"recording_enabled":           r.FormValue("recording_enabled") == "on",
+		"options": map[string]any{
+			"smtp_host":                   r.FormValue("smtp_host"),
+			"smtp_port":                   port,
+			"smtp_username":               r.FormValue("smtp_username"),
+			"smtp_password":               r.FormValue("smtp_password"),
+			"smtp_from":                   r.FormValue("smtp_from"),
+			"smtp_sender_name":            r.FormValue("smtp_sender_name"),
+			"smtp_tls":                    r.FormValue("smtp_tls") == "on",
+			"app_url":                     r.FormValue("app_url"),
+			"youtube_rtmp_url":            r.FormValue("youtube_rtmp_url"),
+			"youtube_stream_key":          r.FormValue("youtube_stream_key"),
+			"ffmpeg_concurrency":          concurrency,
+			"ffmpeg_timeout":              int64(timeoutMin) * 60 * 1e9, // nanoseconds
+			"king_name":                   r.FormValue("king_name"),
+			"king_email":                  r.FormValue("king_email"),
+			"error_email_recipients_mode": r.FormValue("error_email_recipients_mode"),
+			"error_email_custom_addresses": r.FormValue("error_email_custom_addresses"),
+			"recording_enabled":           r.FormValue("recording_enabled") == "on",
+		},
+		"actor": map[string]any{
+			"extension": "admin",
+			"sub":       sess.Email,
+		},
 	}
 	data, _ := json.Marshal(payload)
 	reply, err := s.nc.Request("worldsim.world_options.set", data, 5*time.Second)
@@ -1153,6 +1164,110 @@ func (s *Server) fetchWorldOptions() (*worldOptionsReply, error) {
 		return nil, fmt.Errorf("worldsim: %s", opts.Error)
 	}
 	return &opts, nil
+}
+
+// dockerContainerRow is one card on the /admin/docker page.
+type dockerContainerRow struct {
+	Name      string // first name without leading "/"
+	Image     string
+	State     string // running|created|exited|paused|restarting|...
+	Status    string // Docker's human string: "Up 5 minutes", "Exited (0) ..."
+	Created   string // human-readable created time
+	StateKind string // running|exited|warn|other — drives card color
+}
+
+// handleDocker renders the docker status page. It queries the
+// docker-readonly-proxy (which fronts the host docker socket with a strict
+// GET /containers/json + GET /info allowlist) and shows one card per
+// container in the pixeleruv compose project.
+func (s *Server) handleDocker(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if s.cfg.DockerProxyURL == "" {
+		http.Error(w, "DOCKER_PROXY_URL not configured; docker-proxy service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Filter to this compose project only. Docker's filters param is a
+	// JSON object: {"label":{"com.docker.compose.project":["pixeleruv"]}}.
+	filters := `{"label":{"com.docker.compose.project":["pixeleruv"]}}`
+	u := s.cfg.DockerProxyURL + "/containers/json?all=true&filters=" + url.QueryEscape(filters)
+	resp, err := http.Get(u)
+	if err != nil {
+		s.logger.Warn("docker proxy call", "err", err)
+		http.Error(w, "failed to reach docker-proxy: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		s.logger.Warn("docker proxy status", "status", resp.StatusCode)
+		http.Error(w, "docker-proxy returned "+resp.Status, http.StatusBadGateway)
+		return
+	}
+
+	var containers []struct {
+		ID      string   `json:"Id"`
+		Names   []string `json:"Names"`
+		Image   string   `json:"Image"`
+		State   string   `json:"State"`
+		Status  string   `json:"Status"`
+		Created int64    `json:"Created"` // unix seconds
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
+		s.logger.Warn("docker containers decode", "err", err)
+		http.Error(w, "failed to parse docker response", http.StatusBadGateway)
+		return
+	}
+
+	rows := make([]dockerContainerRow, 0, len(containers))
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		rows = append(rows, dockerContainerRow{
+			Name:      name,
+			Image:     c.Image,
+			State:     c.State,
+			Status:    c.Status,
+			Created:   humanCreatedTime(c.Created),
+			StateKind: dockerStateKind(c.State),
+		})
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.tmpl.ExecuteTemplate(w, "docker", map[string]any{
+		"Email":   sess.Email,
+		"Version": version.Version,
+		"Rows":    rows,
+		"Total":   len(rows),
+	})
+}
+
+// dockerStateKind maps Docker's State field to a CSS color bucket.
+func dockerStateKind(state string) string {
+	switch state {
+	case "running":
+		return "running"
+	case "exited", "dead":
+		return "exited"
+	case "created", "restarting", "paused", "removing":
+		return "warn"
+	default:
+		return "other"
+	}
+}
+
+// humanCreatedTime formats a unix-seconds Created timestamp as a
+// human-readable "2006-01-02 15:04:05" in the local zone. Returns "" for 0.
+func humanCreatedTime(created int64) string {
+	if created == 0 {
+		return ""
+	}
+	return time.Unix(created, 0).Format("2006-01-02 15:04:05")
 }
 
 // extractFilename pulls the filename out of a file_url like
