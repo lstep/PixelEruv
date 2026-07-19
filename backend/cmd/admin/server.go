@@ -1192,8 +1192,10 @@ func (s *Server) handleDocker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Filter to this compose project only. Docker's filters param is a
-	// JSON object: {"label":{"com.docker.compose.project":["pixeleruv"]}}.
-	filters := `{"label":{"com.docker.compose.project":["pixeleruv"]}}`
+	// JSON object. The label filter accepts a list of "key=value" strings
+	// (or a map of "key=value" -> bool); a map of key -> [values] is
+	// rejected with HTTP 400.
+	filters := `{"label":["com.docker.compose.project=pixeleruv"]}`
 	u := s.cfg.DockerProxyURL + "/containers/json?all=true&filters=" + url.QueryEscape(filters)
 	resp, err := http.Get(u)
 	if err != nil {
