@@ -321,8 +321,10 @@ exposes full PII (IP, device_id, client_id) — necessary for moderation.
 Do NOT expose on the public internet without a strong token and
 network-level restrictions.
 
-See `documentation/plans/2026-07-19-mcp-server-design.md` for the full
-design and `features.md` §5.9 for the storyboard.
+See `documentation/25-mcp-server.md` for the full reference (surface,
+configuration, client connection examples) and
+`documentation/plans/2026-07-19-mcp-server-design.md` for the design.
+`features.md` §5.9 has the storyboard.
 
 ---
 

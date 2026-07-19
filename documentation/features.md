@@ -1265,12 +1265,12 @@ A Model Context Protocol (MCP) server exposes Pixel Eruv's internals to
 LLM-powered clients — Claude Desktop, Devin, Cursor, any tool that
 speaks MCP. Connect a client to `https://<host>/mcp` with a bearer
 token, and the LLM can inspect the live world, query audit history,
-read PocketBase records, and take administrative actions: kick a
-player, ban by user ID / IP / device ID, teleport, send chat as a
-specific entity, rename a player, set presence status, swap a
-character sheet, replace player options, or dispatch an action to any
-extension. The LLM sees the same audit trail it just wrote to, so it
-can verify its own actions.
+read PocketBase records, edit server-wide runtime config, and take
+administrative actions: kick a player, ban by user ID / IP / device ID,
+teleport, send chat as a specific entity, rename a player, set presence
+status, swap a character sheet, replace player options, edit world
+options, or dispatch an action to any extension. The LLM sees the same
+audit trail it just wrote to, so it can verify its own actions.
 
 The server is a separate binary (`backend/cmd/mcp`), not loaded into
 worldsim. This is deliberate: MCP request handling can be slow, can
@@ -1282,13 +1282,13 @@ redeploy the MCP surface without dropping a single player.
 
 The surface is three layers:
 
-- **16 tools** (callable, take arguments). Read: `get_world_stats`,
+- **18 tools** (callable, take arguments). Read: `get_world_stats`,
   `get_zones`, `query_entities`, `get_entity`, `query_audit_events`,
   `get_audit_event`, `player_timeline`, `list_pb_records`,
-  `get_pb_record`. Control: `teleport_entity`, `kick_player`,
-  `ban_player`. Admin overrides: `send_chat_as`, `set_player_name`,
-  `set_player_status`, `set_player_sprite`, `set_player_options`,
-  `dispatch_extension_action`.
+  `get_pb_record`, `get_world_options`. Control: `teleport_entity`,
+  `kick_player`, `ban_player`. Admin overrides: `send_chat_as`,
+  `set_player_name`, `set_player_status`, `set_player_sprite`,
+  `set_player_options`, `set_world_options`, `dispatch_extension_action`.
 - **11 resources** (URI-addressable, read-only). Static:
   `pixeleruv://world/stats`, `…/world/zones`, `…/world/players`,
   `…/world/extensions`, `…/audit/stats`. Templated:
@@ -1304,14 +1304,21 @@ The surface is three layers:
   assessment.
 
 Admin actions emit audit events stamped with `actor.extension="mcp"`
-so audit consumers can filter LLM-initiated actions from
-client-initiated ones. The MCP server exposes full PII (IP,
-device_id, client_id) — this is intentional, since moderation needs
-those fields (ban by IP, correlate by device_id). Access control is
-the bearer token (`MCP_AUTH_TOKEN`, required — the server refuses to
-start without it). Do NOT expose the MCP server on the public internet
-without a strong token and network-level restrictions (firewall, VPN,
-or Tailscale).
+(configurable via `MCP_ACTOR`) so audit consumers can filter
+LLM-initiated actions from client-initiated ones. `set_world_options`
+sends `actor={extension:<MCP_ACTOR>}` in its request payload so the
+worldsim handler can attribute the audit event correctly; the admin
+portal sends `actor={extension:"admin", sub:<admin email>}`. The MCP
+server exposes full PII (IP, device_id, client_id) — this is
+intentional, since moderation needs those fields (ban by IP, correlate
+by device_id). Access control is the bearer token (`MCP_AUTH_TOKEN`,
+required — the server refuses to start without it). Do NOT expose the
+MCP server on the public internet without a strong token and
+network-level restrictions (firewall, VPN, or Tailscale).
+
+See `documentation/25-mcp-server.md` for the full reference (surface,
+configuration, client connection examples) and
+`documentation/plans/2026-07-19-mcp-server-design.md` for the design.
 
 **Storyboard:** Open Claude Desktop (or Devin, or Cursor) configured
 with the Pixel Eruv MCP server URL and bearer token. Ask the LLM:

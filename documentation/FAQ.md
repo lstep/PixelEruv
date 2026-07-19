@@ -261,10 +261,11 @@ For direct access without the admin portal (e.g. localhost dev):
 
 Use the MCP server at `https://<host>/mcp` (or `http://localhost:8085/mcp`
 in dev). It speaks the Model Context Protocol over HTTP/SSE and exposes
-16 tools (read world state, query audit, kick/ban/teleport, send chat as
-a player, set name/status/sprite/options, dispatch extension actions),
-11 resources (`pixeleruv://...` URIs), and 3 prompts
-(`summarize_recent_audit`, `investigate_player`, `world_health_report`).
+18 tools (read world state, query audit, read/edit world options,
+kick/ban/teleport, send chat as a player, set name/status/sprite/options,
+set world options, dispatch extension actions), 11 resources
+(`pixeleruv://...` URIs), and 3 prompts (`summarize_recent_audit`,
+`investigate_player`, `world_health_report`).
 
 Auth is a bearer token, NOT the admin portal cookie. Set `MCP_AUTH_TOKEN`
 in your `.env` before starting the stack — the MCP server refuses to
@@ -277,8 +278,10 @@ server exposes full PII (IP, device_id, client_id) for moderation, so
 do NOT expose it on the public internet without a strong token and
 network-level restrictions (firewall / VPN / Tailscale).
 
-See `documentation/plans/2026-07-19-mcp-server-design.md` for the full
-surface and `features.md` §5.9 for the storyboard.
+See `documentation/25-mcp-server.md` for the full reference (surface,
+configuration, client connection examples for Claude Desktop, Devin,
+Cursor) and `documentation/plans/2026-07-19-mcp-server-design.md` for
+the design. `features.md` §5.9 has the storyboard.
 
 ### How do I access the audit UI?
 

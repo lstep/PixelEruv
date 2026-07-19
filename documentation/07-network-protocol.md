@@ -267,7 +267,8 @@ reply with `{"ok":bool,"error":"..."}` so the MCP client can confirm the
 action landed. Audit events emitted by admin actions are stamped with
 `actor.extension="mcp"` (configurable via `MCP_ACTOR`) so audit consumers
 can filter LLM-initiated actions from client-initiated ones. See
-`documentation/plans/2026-07-19-mcp-server-design.md` for the full design.
+`documentation/25-mcp-server.md` for the full reference and
+`documentation/plans/2026-07-19-mcp-server-design.md` for the design.
 
 | Subject | Payload (request) | Reply |
 |---|---|---|
