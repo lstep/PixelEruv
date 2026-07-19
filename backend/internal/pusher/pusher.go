@@ -778,10 +778,12 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				attribute.String("recording.target", p.Recording.GetTarget()),
 			)
 			payload := map[string]string{
-				"client_id": clientID,
-				"entity_id": entityID,
-				"room":      p.Recording.GetRoom(),
-				"target":    p.Recording.GetTarget(),
+				"client_id":         clientID,
+				"entity_id":         entityID,
+				"room":              p.Recording.GetRoom(),
+				"target":            p.Recording.GetTarget(),
+				"youtube_rtmp_url":  p.Recording.GetYoutubeRtmpUrl(),
+				"youtube_stream_key": p.Recording.GetYoutubeStreamKey(),
 			}
 			payloadBytes, _ := json.Marshal(payload)
 			subject := "recording." + action

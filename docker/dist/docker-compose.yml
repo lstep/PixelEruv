@@ -58,11 +58,9 @@ services:
       PB_HTTP_ADDR: "0.0.0.0:8090"
       PB_ADMIN_EMAIL: "admin@pixeleruv.local"
       PB_ADMIN_PASSWORD: "password123"
-      SMTP_HOST: "mailhog"
-      SMTP_PORT: "1025"
-      SMTP_FROM: "noreply@pixeleruv.local"
-      SMTP_SENDER_NAME: "PixelEruv"
-      APP_URL: "${APP_URL:-https://${PUBLIC_HOST:-localhost}:4043}"
+      # SMTP, APP_URL, and YouTube RTMP defaults are now configured at runtime
+      # via Admin > World Options (NATS KV bucket "world_options").
+      PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
       OAUTH2_GOOGLE_CLIENT_ID: "${OAUTH2_GOOGLE_CLIENT_ID:-}"
       OAUTH2_GOOGLE_SECRET: "${OAUTH2_GOOGLE_SECRET:-}"
       OAUTH2_GITHUB_CLIENT_ID: "${OAUTH2_GITHUB_CLIENT_ID:-}"
@@ -238,9 +236,8 @@ services:
       LIVEKIT_API_KEY: "devkey"
       LIVEKIT_API_SECRET: "devsecretdevsecretdevsecretdevsecret123"
       RECORDINGS_DIR: "/recordings"
+      # YouTube RTMP defaults + ffmpeg limits come from world_options now.
       PUBLIC_HOST: "${PUBLIC_HOST:-localhost}"
-      YOUTUBE_RTMP_URL: "${YOUTUBE_RTMP_URL:-}"
-      YOUTUBE_STREAM_KEY: "${YOUTUBE_STREAM_KEY:-}"
     volumes:
       - ./recordings:/recordings
     restart: unless-stopped

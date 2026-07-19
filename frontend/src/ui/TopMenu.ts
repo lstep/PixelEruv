@@ -9,6 +9,7 @@ import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
 import type { WsClient } from "../net/WsClient";
 import type { ChatPanel } from "./ChatPanel";
+import { fetchWorldOptions } from "../net/WorldOptions";
 
 const PILL_STYLE =
   "padding:8px 16px;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
@@ -583,8 +584,16 @@ export class TopMenu {
       item.addEventListener("mouseleave", () => (item.style.background = "transparent"));
       item.addEventListener("click", (e) => {
         e.stopPropagation();
-        this.recWs?.sendRecording("start", room, target);
-        this.closeRecMenu();
+        if (target === "youtube") {
+          // Show a confirm modal pre-filled with the world_options defaults;
+          // the host can override the RTMP URL / stream key for this recording
+          // only without editing the global defaults.
+          this.closeRecMenu();
+          this.showYouTubeConfirmModal(room);
+        } else {
+          this.recWs?.sendRecording("start", room, target);
+          this.closeRecMenu();
+        }
       });
       return item;
     };
@@ -593,6 +602,84 @@ export class TopMenu {
     menu.appendChild(makeItem("Stream to YouTube", "youtube"));
     document.body.appendChild(menu);
     this.recMenu = menu;
+  }
+
+  // showYouTubeConfirmModal opens a centered modal with the RTMP URL and
+  // stream key pre-filled from world_options (admin-configured defaults).
+  // The host can edit them for this recording only; on confirm, the override
+  // values are sent in the RecordingRequestFrame. On cancel, nothing is sent.
+  private async showYouTubeConfirmModal(room: string): Promise<void> {
+    if (!this.recWs) return;
+    const opts = await fetchWorldOptions();
+    const defaultRTMP = opts?.youtube_rtmp_url ?? "";
+    const defaultKey = opts?.youtube_stream_key ?? "";
+
+    const overlay = document.createElement("div");
+    overlay.style.cssText =
+      "position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:100;";
+
+    const modal = document.createElement("div");
+    modal.style.cssText =
+      "background:#2d2d3a;color:#fff;border-radius:12px;padding:24px;min-width:420px;max-width:90vw;font-family:sans-serif;";
+    overlay.appendChild(modal);
+
+    const title = document.createElement("h3");
+    title.textContent = "Stream to YouTube";
+    title.style.cssText = "margin:0 0 16px 0;font-size:18px;";
+    modal.appendChild(title);
+
+    const desc = document.createElement("p");
+    desc.textContent = "Confirm the YouTube RTMP target for this recording. Edit only for this recording; defaults come from Admin > World Options.";
+    desc.style.cssText = "margin:0 0 16px 0;font-size:13px;color:#aaa;line-height:1.4;";
+    modal.appendChild(desc);
+
+    const makeField = (labelText: string, defaultValue: string, type: string = "text") => {
+      const label = document.createElement("label");
+      label.style.cssText = "display:block;margin-bottom:12px;font-size:13px;";
+      label.textContent = labelText;
+      const input = document.createElement("input");
+      input.type = type;
+      input.value = defaultValue;
+      input.style.cssText =
+        "display:block;width:100%;margin-top:4px;padding:8px;background:#1d1d28;color:#fff;border:1px solid #444;border-radius:6px;font-size:14px;box-sizing:border-box;";
+      label.appendChild(input);
+      modal.appendChild(label);
+      return input;
+    };
+
+    const rtmpInput = makeField("RTMP URL", defaultRTMP);
+    const keyInput = makeField("Stream key", defaultKey, "password");
+
+    const btnRow = document.createElement("div");
+    btnRow.style.cssText = "display:flex;gap:8px;justify-content:flex-end;margin-top:8px;";
+    modal.appendChild(btnRow);
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.style.cssText = PILL_STYLE + "background:#444;";
+    btnRow.appendChild(cancelBtn);
+
+    const startBtn = document.createElement("button");
+    startBtn.textContent = "Start streaming";
+    startBtn.style.cssText = PILL_STYLE + "background:#c0392b;";
+    btnRow.appendChild(startBtn);
+
+    const close = () => overlay.remove();
+    cancelBtn.addEventListener("click", close);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+    startBtn.addEventListener("click", () => {
+      const rtmp = rtmpInput.value.trim();
+      const key = keyInput.value.trim();
+      if (!rtmp || !key) {
+        alert("RTMP URL and stream key are required.");
+        return;
+      }
+      this.recWs?.sendRecording("start", room, "youtube", rtmp, key);
+      close();
+    });
+
+    document.body.appendChild(overlay);
+    rtmpInput.focus();
   }
 
   private closeRecMenu(): void {

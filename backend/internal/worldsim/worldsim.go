@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -198,8 +199,10 @@ type Simulator struct {
 	userStore     *UserStore
 	banStore      *BanStore
 	recordingStore *RecordingStore
-	spriteStore   *SpriteStore
-	extMgr        *ExtensionManager
+	spriteStore    *SpriteStore
+	extMgr         *ExtensionManager
+	worldOpts      *WorldOptionsManager
+	worldOptsOnUpdate []func(WorldOptions)
 	tickHz        int
 	tickDur       time.Duration
 	tickCount     uint64
@@ -411,6 +414,30 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	// Wire up the extension options manager (PB + NATS).
 	optsMgr := NewExtensionOptionsManager(app, nc, logger)
 	s.extMgr.SetOptionsManager(optsMgr, nc)
+
+	// Wire up the world options manager (NATS KV bucket "world_options").
+	// PUBLIC_HOST and LIVEKIT_PUBLIC_URL are mirrored read-only from env.
+	publicHost := os.Getenv("PUBLIC_HOST")
+	if publicHost == "" {
+		publicHost = "localhost"
+	}
+	livekitPublicURL := os.Getenv("LIVEKIT_PUBLIC_URL")
+	worldOpts, err := NewWorldOptionsManager(nc, logger, publicHost, livekitPublicURL)
+	if err != nil {
+		nc.Close()
+		return nil, fmt.Errorf("world options: %w", err)
+	}
+	s.worldOpts = worldOpts
+
+	// Register a read-only HTTP endpoint on the embedded PocketBase for the
+	// frontend to fetch the YouTube RTMP defaults (used by the "Stream to
+	// YouTube" confirm modal). Admin-gated via the users JWT + players.is_admin
+	// check. Returns only the YouTube fields + public_host, not the full
+	// options (SMTP password etc. stay server-side).
+	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
+		e.Router.GET("/api/world-options", s.handleWorldOptionsHTTP).Bind(apis.RequireAuth("users"))
+		return nil
+	})
 
 	if err := s.subscribe(); err != nil {
 		return nil, fmt.Errorf("subscribe: %w", err)
@@ -809,6 +836,33 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe worldsim.recording: %w", err)
 	}
 
+	// World options request-reply handlers: the admin portal reads/writes the
+	// server-wide runtime config (SMTP, APP_URL, YouTube RTMP, ffmpeg limits)
+	// via these subjects. worldsim owns the NATS KV bucket "world_options".
+	// Skipped in tests that build a minimal Simulator without the manager.
+	if s.worldOpts != nil {
+		if err := s.subscribeWorldOptions(); err != nil {
+			return fmt.Errorf("subscribe worldsim.world_options: %w", err)
+		}
+
+		// world_options.update: hot-reload SMTP/APP_URL in PocketBase when the
+		// admin edits world_options. worldsim is the writer of the bucket, but
+		// it also subscribes to its own broadcast so registered callbacks
+		// (main.go's applySMTPFromOptions) fire on every change.
+		if _, err := s.nc.Subscribe(worldOptionsUpdateSub, func(msg *nats.Msg) {
+			var opts WorldOptions
+			if err := json.Unmarshal(msg.Data, &opts); err != nil {
+				s.logger.Warn("world_options.update unmarshal", "err", err)
+				return
+			}
+			for _, fn := range s.worldOptsOnUpdate {
+				fn(opts)
+			}
+		}); err != nil {
+			return fmt.Errorf("subscribe world_options.update: %w", err)
+		}
+	}
+
 	// Stats request-reply handler: the audit service queries this for the
 	// /world status page (per-map overview, players, extensions, zones).
 	if err := s.subscribeStats(); err != nil {
@@ -856,12 +910,32 @@ func (s *Simulator) subscribe() error {
 	if err := s.nc.Publish("worldsim.ready", []byte(s.defaultMap)); err != nil {
 		s.logger.Warn("publish worldsim.ready", "err", err)
 	}
+	// Re-broadcast current world_options so late subscribers (ext-rec, etc.)
+	// catch up after a worldsim restart without having to read KV. Guarded
+	// for tests that build a minimal Simulator without the manager.
+	if s.worldOpts != nil {
+		s.worldOpts.PublishUpdate()
+	}
 	if err := s.nc.Flush(); err != nil {
 		return fmt.Errorf("flush worldsim.ready: %w", err)
 	}
 	s.logger.Info("worldsim ready", "default_map", s.defaultMap, "maps", len(s.maps))
 
 	return nil
+}
+
+// WorldOptions returns the current server-wide runtime options. Used by
+// main.go to apply SMTP/APP_URL to PocketBase at startup.
+func (s *Simulator) WorldOptions() WorldOptions {
+	return s.worldOpts.Get()
+}
+
+// OnWorldOptionsUpdate registers a callback fired whenever world_options
+// changes (via the world_options.update NATS broadcast). Used by main.go to
+// hot-reload SMTP/APP_URL in PocketBase without restarting worldsim. Must be
+// called before Run(). The callback receives the new options snapshot.
+func (s *Simulator) OnWorldOptionsUpdate(fn func(WorldOptions)) {
+	s.worldOptsOnUpdate = append(s.worldOptsOnUpdate, fn)
 }
 
 func (s *Simulator) Run(ctx context.Context) error {

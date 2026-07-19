@@ -194,9 +194,10 @@ docker compose up --build -d
 | `PB_ADMIN_EMAIL` / `PB_ADMIN_PASSWORD` | `admin@pixeleruv.local` / `password123` | `worldsim` in compose | PocketBase superuser credentials (used by worldsim's initial-superuser migration, since PB is embedded). **Change before exposing to the internet.** |
 | `PB_DATA_DIR` | `/pb_data` | `worldsim` in compose | Directory worldsim mounts for PocketBase's SQLite data + uploaded files. Backed by the `pb_data` Docker volume. |
 | `PB_HTTP_ADDR` | `0.0.0.0:8090` | `worldsim` in compose | Address worldsim's embedded PocketBase listens on (admin UI + file API). |
-| `APP_URL` | `https://${PUBLIC_HOST:-localhost}:4043` | `worldsim` in compose | Public URL used in email verification and password-reset links. Override in `.env` if behind a reverse proxy on 443 (e.g. `APP_URL=https://example.com`). |
-| `SMTP_HOST` / `SMTP_PORT` | `mailhog` / `1025` | `worldsim` in compose | SMTP server for sending verification and password-reset emails. Defaults to the in-stack MailHog. For production, point at a real SMTP server. |
-| `SMTP_FROM` / `SMTP_SENDER_NAME` | `noreply@pixeleruv.local` / `PixelEruv` | `worldsim` in compose | From address and display name for outgoing emails. |
+| `APP_URL` | *(now in World Options)* | `worldsim` via Admin UI | Public URL used in email verification and password-reset links. **Moved to Admin > World Options** (NATS KV bucket `world_options`); worldsim seeds `https://${PUBLIC_HOST}:4043` on first boot. Edit at runtime; hot-reloaded. |
+| `SMTP_HOST` / `SMTP_PORT` | *(now in World Options)* | `worldsim` via Admin UI | SMTP server for verification and password-reset emails. **Moved to Admin > World Options**; worldsim seeds `mailhog` / `1025` on first boot. For production, edit in the admin UI. Hot-reloaded. |
+| `SMTP_FROM` / `SMTP_SENDER_NAME` | *(now in World Options)* | `worldsim` via Admin UI | From address and display name for outgoing emails. **Moved to Admin > World Options**; defaults `noreply@pixeleruv.local` / `PixelEruv`. |
+| `YOUTUBE_RTMP_URL` / `YOUTUBE_STREAM_KEY` | *(now in World Options)* | `worldsim` via Admin UI | Default YouTube RTMP target for the "Stream to YouTube" recording action. **Moved to Admin > World Options**; empty by default (MP4 still works). The host can override per-recording via the confirm modal. |
 | `OAUTH2_GOOGLE_CLIENT_ID` / `OAUTH2_GOOGLE_SECRET` | *(empty)* | `worldsim` in compose | Google OAuth2 credentials for social login. Leave empty to disable. |
 | `OAUTH2_GITHUB_CLIENT_ID` / `OAUTH2_GITHUB_SECRET` | *(empty)* | `worldsim` in compose | GitHub OAuth2 credentials for social login. Leave empty to disable. |
 | `OAUTH2_FACEBOOK_CLIENT_ID` / `OAUTH2_FACEBOOK_SECRET` | *(empty)* | `worldsim` in compose | Facebook OAuth2 credentials for social login. Leave empty to disable. |
@@ -215,6 +216,22 @@ docker compose up --build -d
 > hardening (secrets) or non-standard topologies (proxied LiveKit).
 > Set `OTEL_ENABLED=true` on all services to ship traces and logs to
 > a collector (motel for dev, or add OpenObserve to the stack — see section 11).
+
+### World Options (runtime server config)
+
+SMTP, `APP_URL`, YouTube RTMP defaults, and ffmpeg audio-extraction limits
+(concurrency, timeout) are **not** env vars anymore — they live in the
+`world_options` NATS KV bucket, owned by worldsim. worldsim seeds hardcoded
+defaults on first boot; edit them at runtime via **Admin > World Options**
+(signed-cookie admin auth, same as the other admin tiles). Saves are written
+to the KV bucket and broadcast on `world_options.update`; worldsim hot-reloads
+its SMTP client and `APP_URL`, and ext-rec hot-reloads the YouTube defaults
+and ffmpeg limits, without restarting.
+
+`PUBLIC_HOST` and `LIVEKIT_PUBLIC_URL` stay as env vars (they drive the
+frontend's TLS cert SAN and ext-av's token URLs at startup — not safely
+hot-reloadable). They are mirrored into world_options as read-only display
+fields.
 
 ---
 

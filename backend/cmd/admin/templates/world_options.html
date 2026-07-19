@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World Options - PixelEruv Admin</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem; }
+h1 { margin-bottom: 0.5rem; }
+.user { color: var(--muted); margin-bottom: 1.5rem; }
+.back { color: var(--muted); text-decoration: none; display: inline-block; margin-bottom: 1.5rem; font-size: 0.9rem; }
+.back:hover { color: var(--text); }
+.form { max-width: 640px; }
+section { background: var(--surface); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+section h2 { color: var(--accent); font-size: 1.1rem; margin-bottom: 1rem; }
+label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 0.3rem; margin-top: 0.8rem; }
+input[type="text"], input[type="password"], input[type="number"], input[type="url"] { width: 100%; padding: 0.5rem 0.7rem; font-size: 0.95rem; background: var(--bg); color: var(--text); border: 1px solid #444; border-radius: 6px; }
+input:focus { outline: none; border-color: var(--accent); }
+input[readonly] { opacity: 0.6; cursor: not-allowed; }
+.hint { color: var(--muted); font-size: 0.8rem; margin-top: 0.2rem; }
+.checkbox-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.8rem; }
+.checkbox-row input { width: auto; }
+.checkbox-row label { margin: 0; color: var(--text); }
+button { padding: 0.7rem 1.5rem; font-size: 1rem; font-weight: 600; background: var(--accent); color: white; border: none; border-radius: 6px; cursor: pointer; }
+button:hover { opacity: 0.9; }
+.version { color: var(--muted); font-size: 0.8rem; margin-top: 1.5rem; }
+</style>
+</head>
+<body>
+<a class="back" href="/admin/">&larr; Back to admin</a>
+<h1>World Options</h1>
+<p class="user">Logged in as {{.Email}}</p>
+
+<form class="form" method="POST" action="/admin/world-options">
+
+  <section>
+    <h2>SMTP (outgoing email)</h2>
+    <p class="hint">Used for verification and password-reset emails. In dev, point at MailHog (host=mailhog, port=1025).</p>
+    <label for="smtp_host">SMTP host</label>
+    <input type="text" id="smtp_host" name="smtp_host" value="{{.Fields.SMTPHost}}" required>
+    <label for="smtp_port">SMTP port</label>
+    <input type="number" id="smtp_port" name="smtp_port" value="{{.Fields.SMTPPort}}" min="1" max="65535" required>
+    <label for="smtp_username">SMTP username (optional)</label>
+    <input type="text" id="smtp_username" name="smtp_username" value="{{.Fields.SMTPUsername}}">
+    <label for="smtp_password">SMTP password (optional)</label>
+    <input type="password" id="smtp_password" name="smtp_password" value="{{.Fields.SMTPPassword}}">
+    <label for="smtp_from">From address</label>
+    <input type="text" id="smtp_from" name="smtp_from" value="{{.Fields.SMTPFrom}}">
+    <label for="smtp_sender_name">Sender display name</label>
+    <input type="text" id="smtp_sender_name" name="smtp_sender_name" value="{{.Fields.SMTPSender}}">
+    <div class="checkbox-row">
+      <input type="checkbox" id="smtp_tls" name="smtp_tls" {{if .Fields.SMTPTLS}}checked{{end}}>
+      <label for="smtp_tls">Use TLS</label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Public app URL</h2>
+    <p class="hint">Base URL used in email templates (verification, password reset). Override if behind a reverse proxy on 443.</p>
+    <label for="app_url">APP_URL</label>
+    <input type="url" id="app_url" name="app_url" value="{{.Fields.AppURL}}">
+  </section>
+
+  <section>
+    <h2>YouTube live streaming</h2>
+    <p class="hint">Default RTMP target for the "Stream to YouTube" recording action. Leave empty to disable YouTube streaming (MP4 still works). The host can override per-recording via the confirm modal.</p>
+    <label for="youtube_rtmp_url">RTMP base URL</label>
+    <input type="text" id="youtube_rtmp_url" name="youtube_rtmp_url" value="{{.Fields.YoutubeRTMPURL}}" placeholder="rtmp://a.rtmp.youtube.com/live2">
+    <label for="youtube_stream_key">Stream key</label>
+    <input type="password" id="youtube_stream_key" name="youtube_stream_key" value="{{.Fields.YoutubeStreamKey}}">
+  </section>
+
+  <section>
+    <h2>ffmpeg audio extraction</h2>
+    <p class="hint">Limits applied to ffmpeg when extracting MP3 audio from recorded MP4 meetings. Hot-reloaded on save.</p>
+    <label for="ffmpeg_concurrency">Max simultaneous extractions</label>
+    <input type="number" id="ffmpeg_concurrency" name="ffmpeg_concurrency" value="{{.Fields.FFmpegConcurrency}}" min="1" max="16" required>
+    <label for="ffmpeg_timeout_min">Per-run timeout (minutes)</label>
+    <input type="number" id="ffmpeg_timeout_min" name="ffmpeg_timeout_min" value="{{.Fields.FFmpegTimeoutMin}}" min="1" max="120" required>
+  </section>
+
+  <section>
+    <h2>Read-only (set via env var)</h2>
+    <p class="hint">These are read at container startup and cannot be hot-reloaded. Change them in <code>docker-compose.yml</code> / <code>.env</code> and restart the stack.</p>
+    <label for="public_host">PUBLIC_HOST</label>
+    <input type="text" id="public_host" name="public_host" value="{{.Fields.PublicHost}}" readonly>
+    <label for="livekit_public_url">LIVEKIT_PUBLIC_URL</label>
+    <input type="text" id="livekit_public_url" name="livekit_public_url" value="{{.Fields.LivekitPublicURL}}" readonly>
+  </section>
+
+  <button type="submit">Save</button>
+</form>
+
+<p class="version">v{{.Version}}</p>
+</body>
+</html>

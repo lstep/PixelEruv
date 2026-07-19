@@ -132,6 +132,13 @@ message RecordingRequestFrame {
   string room = 2;      // LiveKit room name (zone-<slug>)
   string target = 3;    // "mp4" | "youtube" (ignored on stop)
   string traceparent = 4;
+  // Per-recording YouTube override (target="youtube" only). When empty,
+  // ext-rec falls back to the world_options defaults (Admin > World Options).
+  // Populated by the frontend's "Stream to YouTube" confirm modal so the
+  // host can confirm or change the RTMP URL / stream key for this recording
+  // without editing the global defaults.
+  string youtube_rtmp_url = 5;
+  string youtube_stream_key = 6;
 }
 
 // === Server → Client frames ===

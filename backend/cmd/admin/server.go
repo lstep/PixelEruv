@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,6 +51,9 @@ func NewServer(cfg Config, logger *slog.Logger) (*Server, error) {
 	if _, err := tmpl.New("recordings").Parse(recordingsHTML); err != nil {
 		return nil, fmt.Errorf("parse recordings template: %w", err)
 	}
+	if _, err := tmpl.New("world_options").Parse(worldOptionsHTML); err != nil {
+		return nil, fmt.Errorf("parse world_options template: %w", err)
+	}
 	// NATS is optional: the stop button is disabled if not connected,
 	// but other admin features (list, delete, delete-all) still work.
 	var nc *nats.Conn
@@ -81,6 +85,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc("/admin/recordings/delete-all", s.handleRecordingsDeleteAll)
 	mux.HandleFunc("/admin/recordings/stop", s.handleRecordingsStop)
 	mux.HandleFunc("/admin/recordings/backfill-thumbnails", s.handleRecordingsBackfillThumbnails)
+	mux.HandleFunc("/admin/world-options", s.handleWorldOptions)
 
 	srv := &http.Server{Addr: addr, Handler: mux}
 
@@ -948,6 +953,181 @@ func (s *Server) handleRecordingsBackfillThumbnails(w http.ResponseWriter, r *ht
 	}
 	s.logger.Info("thumbnail backfill published", "by", sess.Email, "candidates", len(toBackfill), "published", published)
 	http.Redirect(w, r, "/admin/recordings", http.StatusFound)
+}
+
+// worldOptionsFormFields is the set of form fields rendered by the
+// world_options.html template and parsed by handleWorldOptions on POST.
+// PublicHost and LivekitPublicURL are read-only (set via env var on the
+// frontend/ext-av containers; hot-reload would not reissue the TLS cert or
+// re-mint LiveKit tokens).
+type worldOptionsFormFields struct {
+	SMTPHost          string
+	SMTPPort          int
+	SMTPUsername      string
+	SMTPPassword      string
+	SMTPFrom          string
+	SMTPSender        string
+	SMTPTLS           bool
+	AppURL            string
+	YoutubeRTMPURL    string
+	YoutubeStreamKey  string
+	FFmpegConcurrency int
+	FFmpegTimeoutMin  int
+	// Read-only display fields (not editable in the form).
+	PublicHost       string
+	LivekitPublicURL string
+}
+
+// worldOptionsReply mirrors the worldsim worldOptionsReply struct.
+type worldOptionsReply struct {
+	OK      bool   `json:"ok"`
+	Error   string `json:"error,omitempty"`
+	Options struct {
+		SMTPHost          string `json:"smtp_host"`
+		SMTPPort          int    `json:"smtp_port"`
+		SMTPUsername      string `json:"smtp_username"`
+		SMTPPassword      string `json:"smtp_password"`
+		SMTPFrom          string `json:"smtp_from"`
+		SMTPSender        string `json:"smtp_sender_name"`
+		SMTPTLS           bool   `json:"smtp_tls"`
+		AppURL            string `json:"app_url"`
+		YoutubeRTMPURL    string `json:"youtube_rtmp_url"`
+		YoutubeStreamKey  string `json:"youtube_stream_key"`
+		FFmpegConcurrency int    `json:"ffmpeg_concurrency"`
+		FFmpegTimeout     int64  `json:"ffmpeg_timeout"` // nanoseconds
+		PublicHost        string `json:"public_host"`
+		LivekitPublicURL  string `json:"livekit_public_url"`
+	} `json:"options"`
+}
+
+// handleWorldOptions renders the world options editor (GET) or saves edits
+// via the worldsim.world_options.set NATS request-reply (POST). worldsim
+// owns the NATS KV bucket and broadcasts world_options.update on save so
+// consumers (worldsim SMTP, ext-rec ffmpeg/YouTube) hot-reload.
+func (s *Server) handleWorldOptions(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusFound)
+		return
+	}
+	if s.nc == nil {
+		http.Error(w, "NATS unavailable; admin service has no bus connection", http.StatusServiceUnavailable)
+		return
+	}
+
+	if r.Method == "POST" {
+		s.handleWorldOptionsPost(w, r, sess)
+		return
+	}
+
+	// GET: fetch current options from worldsim via NATS request-reply.
+	opts, err := s.fetchWorldOptions()
+	if err != nil {
+		s.logger.Warn("world_options.get", "err", err)
+		http.Error(w, "failed to fetch world options from worldsim: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	fields := worldOptionsFormFields{
+		SMTPHost:          opts.Options.SMTPHost,
+		SMTPPort:          opts.Options.SMTPPort,
+		SMTPUsername:      opts.Options.SMTPUsername,
+		SMTPPassword:      opts.Options.SMTPPassword,
+		SMTPFrom:          opts.Options.SMTPFrom,
+		SMTPSender:        opts.Options.SMTPSender,
+		SMTPTLS:           opts.Options.SMTPTLS,
+		AppURL:            opts.Options.AppURL,
+		YoutubeRTMPURL:    opts.Options.YoutubeRTMPURL,
+		YoutubeStreamKey:  opts.Options.YoutubeStreamKey,
+		FFmpegConcurrency: opts.Options.FFmpegConcurrency,
+		FFmpegTimeoutMin:  int(opts.Options.FFmpegTimeout / 1e9 / 60),
+		PublicHost:        opts.Options.PublicHost,
+		LivekitPublicURL:  opts.Options.LivekitPublicURL,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	s.tmpl.ExecuteTemplate(w, "world_options", map[string]any{
+		"Email":   sess.Email,
+		"Version": version.Version,
+		"Fields":  fields,
+	})
+}
+
+// handleWorldOptionsPost parses the form, builds a WorldOptions JSON payload,
+// and sends it to worldsim via worldsim.world_options.set. On success,
+// worldsim writes to the KV bucket and broadcasts world_options.update; the
+// admin UI redirects back to the GET view with the refreshed values.
+func (s *Server) handleWorldOptionsPost(w http.ResponseWriter, r *http.Request, sess sessionCookie) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "parse form: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	port := 587
+	if v := r.FormValue("smtp_port"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			port = n
+		}
+	}
+	concurrency := 2
+	if v := r.FormValue("ffmpeg_concurrency"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			concurrency = n
+		}
+	}
+	timeoutMin := 10
+	if v := r.FormValue("ffmpeg_timeout_min"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 {
+			timeoutMin = n
+		}
+	}
+	payload := map[string]any{
+		"smtp_host":          r.FormValue("smtp_host"),
+		"smtp_port":          port,
+		"smtp_username":      r.FormValue("smtp_username"),
+		"smtp_password":      r.FormValue("smtp_password"),
+		"smtp_from":          r.FormValue("smtp_from"),
+		"smtp_sender_name":   r.FormValue("smtp_sender_name"),
+		"smtp_tls":           r.FormValue("smtp_tls") == "on",
+		"app_url":            r.FormValue("app_url"),
+		"youtube_rtmp_url":   r.FormValue("youtube_rtmp_url"),
+		"youtube_stream_key": r.FormValue("youtube_stream_key"),
+		"ffmpeg_concurrency": concurrency,
+		"ffmpeg_timeout":     int64(timeoutMin) * 60 * 1e9, // nanoseconds
+	}
+	data, _ := json.Marshal(payload)
+	reply, err := s.nc.Request("worldsim.world_options.set", data, 5*time.Second)
+	if err != nil {
+		s.logger.Warn("world_options.set request", "err", err)
+		http.Error(w, "failed to save world options: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	var resp worldOptionsReply
+	if err := json.Unmarshal(reply.Data, &resp); err != nil {
+		s.logger.Warn("world_options.set unmarshal", "err", err)
+		http.Error(w, "failed to parse worldsim reply", http.StatusBadGateway)
+		return
+	}
+	if !resp.OK {
+		http.Error(w, "worldsim rejected options: "+resp.Error, http.StatusBadRequest)
+		return
+	}
+	s.logger.Info("world_options saved", "by", sess.Email)
+	http.Redirect(w, r, "/admin/world-options", http.StatusFound)
+}
+
+// fetchWorldOptions calls worldsim.world_options.get via NATS request-reply
+// and returns the parsed reply.
+func (s *Server) fetchWorldOptions() (*worldOptionsReply, error) {
+	reply, err := s.nc.Request("worldsim.world_options.get", nil, 3*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("nats request: %w", err)
+	}
+	var opts worldOptionsReply
+	if err := json.Unmarshal(reply.Data, &opts); err != nil {
+		return nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	if !opts.OK {
+		return nil, fmt.Errorf("worldsim: %s", opts.Error)
+	}
+	return &opts, nil
 }
 
 // extractFilename pulls the filename out of a file_url like

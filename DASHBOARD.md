@@ -4,6 +4,31 @@
 
 - **Periodic world snapshot on the Welcome page** — show a 60s-refreshed full-map image (map + props + live players) below the buttons on `/welcome/`. Rendering approach deferred; the two obvious paths (headless browser container, Go server-side render) are rejected for now as respectively heavyweight or divergent. See `documentation/plans/2026-07-18-world-snapshot-on-welcome-roadmap.md` for alternatives to explore (SVG minimap via stats channel, real-client canvas upload, static map + live overlay, off-host headless).
 
+## World Options (server-wide runtime config)
+
+**Status:** Implemented — `make proto`, `go build ./...`, `go test ./internal/worldsim/`, `npm run build` all pass.
+
+A new `world_options` NATS KV bucket (key `current`) is the single source of truth for server-wide runtime config: SMTP (host/port/user/pass/from/sender/TLS), `APP_URL`, YouTube RTMP defaults (`youtube_rtmp_url` / `youtube_stream_key`), and ffmpeg audio-extraction limits (`ffmpeg_concurrency` default 2, `ffmpeg_timeout` default 10m). worldsim owns the bucket, seeds hardcoded defaults on first boot, and broadcasts `world_options.update` on every save so consumers hot-reload without restarting.
+
+### What was built
+
+- **`backend/internal/worldsim/worldoptions.go`** — `WorldOptionsManager`: creates/binds the KV bucket, seeds defaults if absent, `Get`/`Set` (validates, puts to KV, publishes update), `PublishUpdate` (called on `worldsim.ready` so late subscribers catch up). `PUBLIC_HOST` and `LIVEKIT_PUBLIC_URL` mirrored read-only from env on every boot (not editable — TLS cert / LiveKit tokens are startup-baked).
+- **`backend/internal/worldsim/worldoptions_sub.go`** — NATS request-reply `worldsim.world_options.get` / `.set` (admin-gated by the admin portal's signed-cookie session; worldsim trusts the admin service as a NATS peer, same pattern as `recording.*`). Plus `GET /api/world-options` on the embedded PocketBase for the frontend (admin-gated via users JWT + `players.is_admin`; returns only YouTube fields + `public_host`, not SMTP password).
+- **`backend/cmd/worldsim/main.go`** — `configureSMTP` replaced by `applySMTPFromOptions(app, opts)`; called once after `worldsim.New()` and again on every `world_options.update` via `sim.OnWorldOptionsUpdate(...)`. SMTP/APP_URL env vars removed.
+- **`backend/cmd/ext-rec/main.go`** — fetches world_options via `worldsim.world_options.get` at startup, subscribes to `world_options.update` for hot-reload. Replaces `YOUTUBE_RTMP_URL` / `YOUTUBE_STREAM_KEY` / `PUBLIC_HOST` env reads and the hardcoded `audioSem := make(chan struct{}, 2)` + `10*time.Minute` timeout. New `dynamicSemaphore` (sync.Cond-based) so capacity hot-reloads. `buildEgressRequest` now accepts per-recording YouTube override fields.
+- **`proto/frames.proto`** — `RecordingRequestFrame` gains optional `youtube_rtmp_url` (field 5) and `youtube_stream_key` (field 6) for per-recording override. Pusher passes them through unchanged.
+- **`frontend/src/net/WorldOptions.ts`** — fetches the YouTube subset from `/api/world-options` (admin-gated), cached.
+- **`frontend/src/ui/TopMenu.ts`** — "Stream to YouTube" now opens a confirm modal pre-filled from world_options; the host can edit RTMP URL / stream key for this recording only. Cancel sends nothing.
+- **`backend/cmd/admin/`** — new `handleWorldOptions` GET/POST + `/admin/world-options` route. POST sends the form to `worldsim.world_options.set` via NATS request-reply. New template `templates/world_options.html` (grouped sections, read-only PUBLIC_HOST/LIVEKIT_PUBLIC_URL). New landing tile "World Options".
+- **Docker compose** (`docker/docker-compose.yml` + `docker/dist/docker-compose.yml`) — removed `SMTP_*`, `APP_URL`, `YOUTUBE_*` env from `worldsim` and `ext-rec`. Kept `PUBLIC_HOST` (TLS cert SAN) and `LIVEKIT_PUBLIC_URL` (ext-av tokens).
+- **Tests** — `backend/internal/worldsim/worldoptions_test.go` covers seed defaults, persistence across manager instances, `Set` broadcasting `world_options.update`, and validation rejecting invalid values. Uses a new `startEmbeddedNATSWithJetStream` helper (the existing `startEmbeddedNATS` doesn't enable JetStream).
+
+### Notes / migration
+
+- **No .env migration.** Operators with `SMTP_HOST=…` in `.env` will have those vars ignored after this change. worldsim seeds hardcoded defaults on first boot; edit them via Admin > World Options.
+- **NATS KV is a new pattern in this repo** — the codebase previously used only NATS Core pub/sub. The `nats:2.10-alpine` image already runs with `-js`, so KV works without config changes. KV is semi-persistent (survives NATS restart, lost on volume wipe); worldsim re-seeds defaults if the bucket is empty.
+- **Secrets in NATS KV** — SMTP password and YouTube stream key stored in the KV bucket. NATS is inside the stack; the write endpoint is admin-gated. Acceptable for this deployment.
+
 ## MCP server (admin LLM tooling)
 
 **Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, and `go test ./cmd/mcp/` all pass. Not yet exercised end-to-end with a real MCP client (Claude Desktop / Devin / Cursor).
