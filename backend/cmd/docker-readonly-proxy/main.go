@@ -92,7 +92,7 @@ func main() {
 // response back. We do not forward arbitrary headers — Docker's API only
 // needs the method + path + query. The response body is streamed.
 func proxy(w http.ResponseWriter, r *http.Request, client *http.Client, logger *slog.Logger) {
-	upstream := "http://docker" + r.URL.RequestURI()
+	upstream := "http://unix-socket" + r.URL.RequestURI()
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstream, nil)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
