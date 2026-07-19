@@ -47,11 +47,11 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type QueryEntitiesArgs struct {
-		MapID          string `json:"map_id,omitempty"          jsonschema:"description=Filter by map ID"`
-		EntityType     string `json:"entity_type,omitempty"     jsonschema:"description=Filter by entity type (e.g. wall, light)"`
-		OwnerExtension string `json:"owner_extension,omitempty" jsonschema:"description=Filter by owning extension ID (e.g. ext-walls)"`
-		ZoneID         string `json:"zone_id,omitempty"         jsonschema:"description=Filter to players currently inside this zone ID"`
-		Limit          int    `json:"limit,omitempty"           jsonschema:"description=Max results (default 500, hard cap 500)"`
+		MapID          string `json:"map_id,omitempty"          jsonschema:"Filter by map ID"`
+		EntityType     string `json:"entity_type,omitempty"     jsonschema:"Filter by entity type (e.g. wall, light)"`
+		OwnerExtension string `json:"owner_extension,omitempty" jsonschema:"Filter by owning extension ID (e.g. ext-walls)"`
+		ZoneID         string `json:"zone_id,omitempty"         jsonschema:"Filter to players currently inside this zone ID"`
+		Limit          int    `json:"limit,omitempty"           jsonschema:"Max results (default 500, hard cap 500)"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "query_entities",
@@ -71,7 +71,7 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type GetEntityArgs struct {
-		EntityID string `json:"entity_id" jsonschema:"description=Entity ID to fetch,required"`
+		EntityID string `json:"entity_id" jsonschema:"Entity ID to fetch"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_entity",
@@ -85,12 +85,12 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type QueryAuditArgs struct {
-		EventType string `json:"event_type,omitempty" jsonschema:"description=Filter by event type (e.g. player.kicked, chat.message)"`
-		Severity  string `json:"severity,omitempty"  jsonschema:"description=Filter by severity: info, warn, error"`
-		ActorSub  string `json:"actor_sub,omitempty"  jsonschema:"description=Filter by actor OIDC subject"`
-		EntityID  string `json:"entity_id,omitempty"  jsonschema:"description=Filter by actor entity_id"`
-		Limit     int    `json:"limit,omitempty"      jsonschema:"description=Max results (default 50, max 500)"`
-		Offset    int    `json:"offset,omitempty"     jsonschema:"description=Pagination offset"`
+		EventType string `json:"event_type,omitempty" jsonschema:"Filter by event type (e.g. player.kicked, chat.message)"`
+		Severity  string `json:"severity,omitempty"  jsonschema:"Filter by severity: info, warn, error"`
+		ActorSub  string `json:"actor_sub,omitempty"  jsonschema:"Filter by actor OIDC subject"`
+		EntityID  string `json:"entity_id,omitempty"  jsonschema:"Filter by actor entity_id"`
+		Limit     int    `json:"limit,omitempty"      jsonschema:"Max results (default 50, max 500)"`
+		Offset    int    `json:"offset,omitempty"     jsonschema:"Pagination offset"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "query_audit_events",
@@ -111,7 +111,7 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type GetAuditEventArgs struct {
-		ID int64 `json:"id" jsonschema:"description=Audit event ID,required"`
+		ID int64 `json:"id" jsonschema:"Audit event ID"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_audit_event",
@@ -125,7 +125,7 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type PlayerTimelineArgs struct {
-		Sub string `json:"sub" jsonschema:"description=Player OIDC subject,required"`
+		Sub string `json:"sub" jsonschema:"Player OIDC subject"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "player_timeline",
@@ -139,11 +139,11 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type ListPBRecordsArgs struct {
-		Collection string `json:"collection" jsonschema:"description=PocketBase collection name (e.g. players, maps, sprite_bases, bans),required"`
-		PerPage    int    `json:"per_page,omitempty" jsonschema:"description=Page size (default 30)"`
-		Page       int    `json:"page,omitempty" jsonschema:"description=Page number (1-based, default 1)"`
-		Filter     string `json:"filter,omitempty" jsonschema:"description=PocketBase filter expression, e.g. 'is_default = true' or 'is_admin = true'"`
-		Sort       string `json:"sort,omitempty" jsonschema:"description=Sort expression, e.g. '-created' or 'display_name'"`
+		Collection string `json:"collection" jsonschema:"PocketBase collection name (e.g. players, maps, sprite_bases, bans)"`
+		PerPage    int    `json:"per_page,omitempty" jsonschema:"Page size (default 30)"`
+		Page       int    `json:"page,omitempty" jsonschema:"Page number (1-based, default 1)"`
+		Filter     string `json:"filter,omitempty" jsonschema:"PocketBase filter expression, e.g. 'is_default = true' or 'is_admin = true'"`
+		Sort       string `json:"sort,omitempty" jsonschema:"Sort expression, e.g. '-created' or 'display_name'"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_pb_records",
@@ -162,8 +162,8 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	})
 
 	type GetPBRecordArgs struct {
-		Collection string `json:"collection" jsonschema:"description=PocketBase collection name,required"`
-		ID         string `json:"id" jsonschema:"description=Record ID,required"`
+		Collection string `json:"collection" jsonschema:"PocketBase collection name"`
+		ID         string `json:"id" jsonschema:"Record ID"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_pb_record",
@@ -181,9 +181,9 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 
 func registerControlTools(s *mcp.Server, w *WorldsimClient) {
 	type TeleportArgs struct {
-		EntityID     string `json:"entity_id" jsonschema:"description=Player entity ID to teleport,required"`
-		MapID        string `json:"map_id" jsonschema:"description=Target map ID,required"`
-		TargetEntity string `json:"target_entity,omitempty" jsonschema:"description=Optional target entity (beacon name) on the target map; if empty, a random spawn zone is used"`
+		EntityID     string `json:"entity_id" jsonschema:"Player entity ID to teleport"`
+		MapID        string `json:"map_id" jsonschema:"Target map ID"`
+		TargetEntity string `json:"target_entity,omitempty" jsonschema:"Optional target entity (beacon name) on the target map; if empty, a random spawn zone is used"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "teleport_entity",
@@ -197,8 +197,8 @@ func registerControlTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type KickArgs struct {
-		ClientID string `json:"client_id" jsonschema:"description=Pusher session ID (client_id from get_world_stats) to kick,required"`
-		Reason   string `json:"reason,omitempty" jsonschema:"description=Human-readable kick reason (recorded in audit)"`
+		ClientID string `json:"client_id" jsonschema:"Pusher session ID (client_id from get_world_stats) to kick"`
+		Reason   string `json:"reason,omitempty" jsonschema:"Human-readable kick reason (recorded in audit)"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "kick_player",
@@ -212,11 +212,11 @@ func registerControlTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type BanArgs struct {
-		TargetType  string `json:"target_type" jsonschema:"description=Which identifier to ban: 'user_id', 'ip', or 'device_id',required"`
-		TargetValue string `json:"target_value" jsonschema:"description=The identifier value to ban,required"`
-		Reason      string `json:"reason,omitempty" jsonschema:"description=Human-readable ban reason (recorded in audit + shown to the player on connect)"`
-		BannedUntil int64  `json:"banned_until,omitempty" jsonschema:"description=Unix timestamp (seconds) when the ban expires. 0 = permanent."`
-		BannedBy    string `json:"banned_by,omitempty" jsonschema:"description=Optional audit label (e.g. admin sub or 'mcp')"`
+		TargetType  string `json:"target_type" jsonschema:"Which identifier to ban: 'user_id', 'ip', or 'device_id'"`
+		TargetValue string `json:"target_value" jsonschema:"The identifier value to ban"`
+		Reason      string `json:"reason,omitempty" jsonschema:"Human-readable ban reason (recorded in audit + shown to the player on connect)"`
+		BannedUntil int64  `json:"banned_until,omitempty" jsonschema:"Unix timestamp (seconds) when the ban expires. 0 = permanent."`
+		BannedBy    string `json:"banned_by,omitempty" jsonschema:"Optional audit label (e.g. admin sub or 'mcp')"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ban_player",
@@ -234,9 +234,9 @@ func registerControlTools(s *mcp.Server, w *WorldsimClient) {
 
 func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 	type SendChatAsArgs struct {
-		EntityID string `json:"entity_id" jsonschema:"description=Entity ID to send as (display name is stamped from the entity),required"`
-		Channel  string `json:"channel" jsonschema:"description=Chat channel: 'global' or 'proximity',required"`
-		Text     string `json:"text" jsonschema:"description=Message text (truncated to 500 runes server-side),required"`
+		EntityID string `json:"entity_id" jsonschema:"Entity ID to send as (display name is stamped from the entity)"`
+		Channel  string `json:"channel" jsonschema:"Chat channel: 'global' or 'proximity'"`
+		Text     string `json:"text" jsonschema:"Message text (truncated to 500 runes server-side)"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "send_chat_as",
@@ -250,8 +250,8 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type SetNameArgs struct {
-		EntityID string `json:"entity_id" jsonschema:"description=Entity ID to rename,required"`
-		Name     string `json:"name" jsonschema:"description=New display name (sanitized to ASCII printable, truncated to 20 runes),required"`
+		EntityID string `json:"entity_id" jsonschema:"Entity ID to rename"`
+		Name     string `json:"name" jsonschema:"New display name (sanitized to ASCII printable, truncated to 20 runes)"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_player_name",
@@ -265,8 +265,8 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type SetStatusArgs struct {
-		EntityID string `json:"entity_id" jsonschema:"description=Entity ID,required"`
-		Status   uint32 `json:"status" jsonschema:"description=Presence status: 0=Available, 1=Busy, 2=Do Not Disturb,required"`
+		EntityID string `json:"entity_id" jsonschema:"Entity ID"`
+		Status   uint32 `json:"status" jsonschema:"Presence status: 0=Available, 1=Busy, 2=Do Not Disturb"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_player_status",
@@ -280,8 +280,8 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type SetSpriteArgs struct {
-		EntityID   string `json:"entity_id" jsonschema:"description=Entity ID,required"`
-		SpriteBase string `json:"sprite_base" jsonschema:"description=sprite_bases PocketBase record ID; empty = revert to fallback,required"`
+		EntityID   string `json:"entity_id" jsonschema:"Entity ID"`
+		SpriteBase string `json:"sprite_base" jsonschema:"sprite_bases PocketBase record ID; empty = revert to fallback"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_player_sprite",
@@ -295,8 +295,8 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type SetPlayerOptionsArgs struct {
-		EntityID string `json:"entity_id" jsonschema:"description=Entity ID,required"`
-		Options  string `json:"options" jsonschema:"description=JSON-encoded player options (full replace, e.g. {\"show_own_name_tag\":true,\"zoom\":2}),required"`
+		EntityID string `json:"entity_id" jsonschema:"Entity ID"`
+		Options  string `json:"options" jsonschema:"JSON-encoded player options (full replace, e.g. {\"show_own_name_tag\":true,\"zoom\":2})"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "set_player_options",
@@ -310,8 +310,8 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type DispatchExtensionActionArgs struct {
-		ExtensionID string         `json:"extension_id" jsonschema:"description=Extension ID (e.g. ext-walls, ext-props),required"`
-		Payload     map[string]any `json:"payload" jsonschema:"description=Action dispatch payload (entity_id, input, action_id, etc.) — passed through to extension.<id>.action,required"`
+		ExtensionID string         `json:"extension_id" jsonschema:"Extension ID (e.g. ext-walls, ext-props)"`
+		Payload     map[string]any `json:"payload" jsonschema:"Action dispatch payload (entity_id, input, action_id, etc.) — passed through to extension.<id>.action"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "dispatch_extension_action",
