@@ -158,6 +158,35 @@ make debug    # starts motel, NATS container, PocketBase, worldsim + pusher with
 - Worldsim auto-seeds sprite_bases from `SPRITES_DIR` (default `./sprites`) on startup — non-fatal if it fails.
 - Heredoc chokes on backticks. Write the body to a file first.
 
+### `dist/` is a build artifact — never edit it directly
+
+`dist/` is gitignored (`.gitignore` line 41: `/dist/`). It is regenerated from sources by `make dist-stage` on every `make build` / `make dist` / `make deploy-remote`. Editing files under `dist/` is a trap:
+
+- The `edit`/`write` tools report success but the changes are untracked, so `git status` shows clean and nothing gets committed.
+- `make deploy-remote` overwrites `dist/` from the sources, silently dropping your edits.
+- The deployed host never sees the change (this is exactly how PR #164's `mcp` service got lost — `docker compose up -d mcp` returned `no such service: mcp` on the remote).
+
+**Edit the source files instead.** The mapping (see `Makefile` `dist-stage` target, ~L85):
+
+| Source (tracked) | Staged to (gitignored) |
+|---|---|
+| `docker/dist/docker-compose.yml` | `dist/docker-compose.yml` |
+| `docker/dist/backend.Dockerfile` | `dist/docker/backend.Dockerfile` |
+| `docker/dist/backend-rec.Dockerfile` | `dist/docker/backend-rec.Dockerfile` |
+| `docker/dist/frontend.Dockerfile` | `dist/docker/frontend.Dockerfile` |
+| `docker/nginx.conf` | `dist/docker/nginx.conf` |
+| `docker/dist/example.nginx.conf` | `dist/example.nginx.conf` |
+| `docker/livekit.yaml` | `dist/docker/livekit.yaml` |
+| `docker/egress.yaml` | `dist/docker/egress.yaml` |
+| `docker/frontend-entrypoint.sh` | `dist/docker/frontend-entrypoint.sh` |
+| `docker/welcome/*` | `dist/docker/welcome/*` |
+| `docker/dist/*.sh` | `dist/*.sh` |
+| `frontend/public/sprites/*` | `dist/sprites/` |
+| `maps/*` | `dist/maps/` |
+| `backend/cmd/audit/data/ip-to-country.mmdb` | `dist/geoip/` |
+
+After editing a source: `make build` (or `make dist`) regenerates `dist/`, then verify with `grep`/`diff` against the staged file before committing the **source** change. Never `git add dist/`.
+
 ### Frontend camera zoom (Phaser 4)
 
 The GameScene camera zoom is user-adjustable via mouse wheel (ZOOM_MIN=1, ZOOM_MAX=4, default 2). **Any UI element positioned in world space must account for zoom**, or it will end up at the wrong screen position and/or scale with zoom (which also breaks input hit areas).
