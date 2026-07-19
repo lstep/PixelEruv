@@ -24,6 +24,10 @@ Instead of switching between chat applications, video meetings and shared docume
 * 🔍 Audit log + observability — searchable audit event history (HTMX UI + JSON API) + OpenTelemetry traces (motel dev / OpenObserve optional)
 * 🔐 Admin portal — unified email/password login via PocketBase, protects PB admin + audit UI behind a single auth gate
 * 🤖 MCP server — expose world state, audit history, and admin actions (kick, ban, teleport, chat-as, set_*) to LLM clients (Claude Desktop, Devin, Cursor) over HTTP/SSE with bearer-token auth
+* 🎥 Meeting recording — LiveKit Egress to MP4 (with ffmpeg MP3 audio extraction) or stream to YouTube; managed via Admin > Recordings
+* ⚙️ World Options — runtime server config (SMTP, APP_URL, YouTube RTMP, ffmpeg limits, world king, error emails, recording gate) in a NATS KV bucket, edited via Admin > World Options and hot-reloaded without restart
+* 👑 World king — display-only world identity (name shown on the welcome page footer; email used for error notifications)
+* 📧 Error email notifications — audit service emails recipients on severity=error events (king / all admins / custom list / none)
 
 🧭 Roadmap (post-MVP)
 

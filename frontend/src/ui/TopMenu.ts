@@ -32,6 +32,7 @@ export class TopMenu {
   private recIsAdmin: (() => boolean) | null = null;
   private recGetRoom: (() => string | null) | null = null;
   private recActive = false; // true while a recording is active in the current room
+  private recRecordingEnabled = true; // world_options.recording_enabled; fetched on setRecordingClient
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
@@ -505,6 +506,12 @@ export class TopMenu {
     this.recWs = ws;
     this.recIsAdmin = isAdmin;
     this.recGetRoom = getRoom;
+    // Fetch world_options.recording_enabled so we can disable the Record
+    // button when the admin has turned off recording globally. Fire-and-
+    // forget; the flag defaults to true until the fetch resolves.
+    fetchWorldOptions().then((opts) => {
+      if (opts) this.recRecordingEnabled = opts.recording_enabled;
+    });
   }
 
   // updateRecVisibility shows/hides the record button based on admin status
@@ -514,7 +521,19 @@ export class TopMenu {
     const room = this.recGetRoom?.() ?? null;
     const shouldShow = admin && room !== null;
     this.recBtn.style.display = shouldShow ? "block" : "none";
-    if (!shouldShow) this.closeRecMenu();
+    if (!shouldShow) {
+      this.closeRecMenu();
+      return;
+    }
+    // Dim the button when recording is globally disabled; the dropdown is
+    // also suppressed in toggleRecMenu so clicks do nothing.
+    if (!this.recRecordingEnabled) {
+      this.recBtn.style.opacity = "0.5";
+      this.recBtn.title = "Recording is disabled globally";
+    } else if (!this.recActive) {
+      this.recBtn.style.opacity = "";
+      this.recBtn.title = "Record this A/V meeting (admin only)";
+    }
   }
 
   // setRecordingState is called by the GameScene when a RecordingStateFrame
@@ -567,6 +586,7 @@ export class TopMenu {
     }
     const room = this.recGetRoom?.() ?? null;
     if (!room || !this.recWs) return;
+    if (!this.recRecordingEnabled) return; // globally disabled; tooltip explains
 
     const menu = document.createElement("div");
     menu.style.cssText =

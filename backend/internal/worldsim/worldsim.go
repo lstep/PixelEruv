@@ -421,7 +421,15 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	if publicHost == "" {
 		publicHost = "localhost"
 	}
+	// Default LIVEKIT_PUBLIC_URL to ws://<publicHost>:7880 when unset, matching
+	// ext-av/main.go and the compose default. Without this, running worldsim
+	// outside Docker (make debug, direct binary) would store an empty string
+	// in the KV bucket and expose it via /api/world-options, breaking the
+	// frontend's LiveKit connection.
 	livekitPublicURL := os.Getenv("LIVEKIT_PUBLIC_URL")
+	if livekitPublicURL == "" {
+		livekitPublicURL = "ws://" + publicHost + ":7880"
+	}
 	worldOpts, err := NewWorldOptionsManager(nc, logger, publicHost, livekitPublicURL)
 	if err != nil {
 		nc.Close()
@@ -436,6 +444,9 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	// options (SMTP password etc. stay server-side).
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/world-options", s.handleWorldOptionsHTTP).Bind(apis.RequireAuth("users"))
+		// /api/world-king is public (no auth) — returns only the king's
+		// display name for the welcome page footer. King email is not exposed.
+		e.Router.GET("/api/world-king", s.handleWorldKingHTTP)
 		return nil
 	})
 

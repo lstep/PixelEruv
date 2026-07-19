@@ -42,8 +42,22 @@ p { color: var(--muted); line-height: 1.6; margin-bottom: 2rem; }
   <div class="community">
     <p>Join us on <a href="https://discord.gg/ydJr9E7bEj">Discord</a> · <a href="https://github.com/lstep/PixelEruv/releases">Release notes</a></p>
     <p class="version">Version __VERSION__</p>
+    <p id="king-line" style="display:none;margin-top:0.5rem;color:var(--muted);font-size:0.85rem;"></p>
     <!-- Community: customize this page with your own info, links, and branding. -->
   </div>
 </div>
+<script>
+// Show "King of this world: <name>" in the footer if the admin configured one
+// via Admin > World Options. The king's email is not exposed publicly.
+(function () {
+  fetch("/api/world-king").then(function (r) { return r.json(); }).then(function (data) {
+    if (!data || !data.name) return;
+    var el = document.getElementById("king-line");
+    if (!el) return;
+    el.textContent = "King of this world: " + data.name;
+    el.style.display = "block";
+  }).catch(function () { /* welcome page degrades gracefully if worldsim is down */ });
+})();
+</script>
 </body>
 </html>
