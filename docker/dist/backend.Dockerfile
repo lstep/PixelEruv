@@ -1,7 +1,7 @@
 # Binary-based image: copies a pre-built binary from dist/bin/ instead of
 # compiling from source. Used by dist/docker-compose.yml with:
 #   args:
-#     BINARY: pusher | worldsim | ext-demo | ext-walls | ext-props | ext-av | audit | admin
+#     BINARY: pusher | worldsim | ext-demo | ext-walls | ext-props | ext-av | audit | admin | mcp
 FROM alpine:3.20
 ARG BINARY
 RUN apk add --no-cache ca-certificates
