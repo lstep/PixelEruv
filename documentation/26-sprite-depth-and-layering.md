@@ -7,18 +7,21 @@
 > you want the visual model of how a player ends up in front of, or behind,
 > a chair / tree / wall.
 
-This document answers two questions that keep coming up:
+This document answers three questions that keep coming up:
 
 1. **How does the player end up in front of one part of a sprite and behind
    another part?** (e.g. a chair where the player is in front of the seat but
    behind the back.)
 2. **Can a sprite be bigger than 32×32?** (e.g. a 32×128 tree — does the engine
    handle it, or do I have to chop it into 32×32 chunks?)
+3. **How can the player pass "behind" a wall?** (The `Walls` tile layer always
+   renders under the player — so what do you do for a north wall you can walk
+   behind?)
 
-The short answer to both: depth is **one number per sprite**, recomputed every
-frame from the sprite's **feet/base Y**. Sprites can be any size. The
+The short answer to all three: depth is **one number per sprite**, recomputed
+every frame from the sprite's **feet/base Y**. Sprites can be any size. The
 "front/behind" illusion is a side effect of comparing two depth numbers, not a
-property of the sprite itself.
+property of the sprite itself. Walls are a special case covered in [§8](#8-walls--when-can-the-player-render-behind-one).
 
 ---
 
@@ -348,7 +351,117 @@ sprites (trees, pillars, walls-as-props) do not need it.
 
 ---
 
-## 8. There is no per-pixel occlusion
+## 8. Walls — when can the player render behind one?
+
+Walls are a different case from the chair/tree, and the answer is not
+obvious. There are **two** existing wall systems in the codebase, and
+**neither one gives you visual "walk behind" occlusion by default.**
+
+### The two existing wall systems
+
+**1. The `Walls` tile layer — collision fallback, always renders BELOW the player.**
+
+The reserved `Walls` tile layer (matched by name, case-insensitive) does two
+things:
+
+- **Collision grid:** any non-zero tile = blocked. `GameScene` reads it into
+  `collisionGrid` and worldsim does the same server-side.
+- **Rendering:** the whole layer is drawn at a fixed `DEPTH_WALLS_FALLBACK =
+  500` (<ref_snippet file="/Users/lstep/Workspace/GIT/PixelEruv.o/frontend/src/scenes/GameScene.ts" lines="699-700" />).
+
+The problem: `500` is below the dynamic band (`1000`). The player's depth is
+always `~1000 + something`. So **every wall tile in the `Walls` layer is
+always drawn under the player.** The wall only stops movement; it never
+hides the player.
+
+**2. Wall zones (`zone_type=wall`) — pure collision, not rendered at all.**
+
+Rectangles/polygons on the `Zones` object layer, handled by `ext-walls`.
+Swept segment-vs-shape collision (more precise than the tile grid). They have
+**no visual** — they're invisible collision volumes. They also can't hide
+the player.
+
+### Why walls are different from the chair
+
+The chair works because it's on a `sort_mode=dynamic` object layer, which
+puts it in the same depth band as the player (`1000 + baseY/mapH`), so they
+Y-sort against each other. The `Walls` tile layer is explicitly **not** a
+decoration layer — it's at a fixed low depth (`500`) so it always renders
+under everything in the dynamic band. That's by design: most walls are
+floor-level obstacles (like the boundary of the map), and you don't want the
+player to disappear behind them.
+
+But a **tall wall** — a north wall you can walk behind, a fence, a room
+divider, a building facade — needs the chair treatment, not the `Walls`-layer
+treatment.
+
+### How to actually get "walk behind a wall"
+
+Author the wall as a **dynamic decoration** (the chair/tree pattern), and
+handle collision separately. Two layers, one wall:
+
+- **Collision (pick one):**
+  - **Option A:** put collision tiles in the `Walls` tile layer at the wall's
+    base row. This blocks movement. The `Walls` layer renders at depth 500
+    (under the player), but you won't see those tiles because your visual
+    wall (below) draws over them at a higher depth.
+  - **Option B:** draw a `zone_type=wall` rectangle on the `Zones` layer at
+    the wall's base. `ext-walls` blocks movement there. No visual.
+- **Visual (the occluding part):** author the wall as tile-objects on an
+  object layer with `layer_type=decoration, sort_mode=dynamic`. Each wall
+  segment is a sprite (e.g. 32×64 for a 1-tile-tall wall, 32×96 for a
+  1.5-tile wall, etc.) anchored at its base, just like the chair. It gets
+  `depth = 1000 + baseY/mapH` and Y-sorts against the player.
+
+### The north-wall-of-a-room example
+
+This is the case you're probably thinking of. A room with a north wall at
+row 3. Walkable space inside the room (rows 4+) and walkable space outside
+above the wall (rows 0-2, e.g. a hallway or outdoor area north of the
+building).
+
+![Wall occlusion](./sprite-wall-occlusion.svg)
+
+- Wall visual: a 32×64 (or taller) tile-object on a `sort_mode=dynamic`
+  object layer, base at row 3 (`baseY = 128`).
+- Wall collision: a tile in the `Walls` layer at row 3 (blocks the player
+  from walking through the wall).
+- Player above the wall (rows 0-2): `feetY < 128` → depth < wall's depth →
+  player drawn **behind** the wall. The wall hides them.
+- Player below the wall (row 4+): `feetY > 128` → depth > wall's depth →
+  player drawn **in front of** the wall.
+
+This is exactly the chair pattern, just at wall scale. The only difference
+from the chair is that the wall also has a collision tile in the `Walls`
+layer (or a wall zone) so the player can't walk *through* it — they can only
+walk *behind* it (from above) or *in front of* it (from below).
+
+### The case where "walk behind" doesn't apply
+
+If the wall is at the **edge of the map** (no walkable space on the other
+side), there's no "behind" to worry about — the player can never get there.
+In that case, just use the `Walls` tile layer as-is. The wall renders under
+the player (depth 500), collision stops the player, and nobody cares about
+occlusion because the player can never be on the far side. This is why the
+`Walls` layer is at a fixed low depth by default: it's optimized for the
+common case (boundary walls) where occlusion doesn't matter.
+
+### Summary
+
+| Wall type | Collision | Visual occlusion | When to use |
+|---|---|---|---|
+| `Walls` tile layer only | yes (tile grid) | **no** — always renders under player (depth 500) | Boundary walls, map edge, anywhere the player can't get behind |
+| Wall zone (`zone_type=wall`) only | yes (swept, precise) | **no** — invisible | Same, when you need thinner-than-tile or polygon shapes |
+| Dynamic decoration + `Walls`/zone collision | yes (from Walls/zone) | **yes** — Y-sorts against player | Tall walls, north walls, fences, room dividers, building facades — anywhere the player can be on both sides |
+
+The rule: **if the player can be on both sides of the wall, the wall's
+visual must be a `sort_mode=dynamic` decoration, not a `Walls`-layer tile.**
+The `Walls` layer (or a wall zone) still handles collision; the dynamic
+decoration handles occlusion.
+
+---
+
+## 9. There is no per-pixel occlusion
 
 The engine does **not** slice sprites per-row or per-pixel for occlusion. A
 tall sprite is one flat image with one depth value. This is a deliberate
@@ -367,7 +480,7 @@ are not worth the cost here.
 
 ---
 
-## 9. What is not supported today
+## 10. What is not supported today
 
 1. **Per-tile Y-sort on tile layers.** If you set `sort_mode=dynamic` on a
    *tile* layer (not an object layer), the whole layer gets a flat
@@ -380,7 +493,7 @@ are not worth the cost here.
    props). If you want a tile-layer tree to Y-sort against the player, place
    it as an object on an object layer instead.
 
-2. **Per-pixel / per-row occlusion.** Deliberately not done. See [§8](#8-there-is-no-per-pixel-occlusion).
+2. **Per-pixel / per-row occlusion.** Deliberately not done. See [§9](#9-there-is-no-per-pixel-occlusion).
 
 3. **Moving dynamic decorations.** Dynamic decorations from an object layer
    compute their depth once at load. If you need a *moving* object that
@@ -389,7 +502,7 @@ are not worth the cost here.
 
 ---
 
-## 10. Authoring checklist
+## 11. Authoring checklist
 
 For a sprite that must let the player walk in front of it and behind it:
 
@@ -480,6 +593,7 @@ All of the logic lives in `frontend/src/scenes/GameScene.ts`:
 | Per-frame depth update for remote avatars | line 1322 |
 | Per-frame depth update for props | line 1840 |
 | Per-tileset spritesheet loading (respects `tilewidth`/`tileheight`) | `preload()`, ~lines 622-645 |
+| `Walls` layer collision grid + `DEPTH_WALLS_FALLBACK` render | ~lines 696-710 |
 
 The design doc is
 `documentation/plans/2026-07-05-decoration-layers-and-interactive-entities-design.md`

@@ -1,0 +1,184 @@
+<svg width="100%" viewBox="0 0 1100 760" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Walls — when does the player render behind a wall?</title>
+<desc>Three wall scenarios. (1) Walls tile layer only: collision yes, but always renders under the player at depth 500, so the player is never visually hidden. Good for map-edge boundary walls. (2) Wall zone only: invisible collision, no visual at all. Same use case. (3) Tall wall as dynamic decoration + Walls/zone collision: the wall visual Y-sorts against the player, so a player above the wall (smaller feetY) renders behind it, and a player below (larger feetY) renders in front. This is the only way to get "walk behind a wall" occlusion. Includes a north-wall-of-a-room diagram with player positions on both sides.</desc>
+
+  <rect width="1100" height="760" fill="#fafaf9"/>
+
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Walls — when can the player render behind one?</text>
+  <text x="550" y="56" text-anchor="middle" font-size="13" fill="#64748b">The Walls tile layer and wall zones only handle collision. Visual occlusion needs a dynamic decoration, just like the chair.</text>
+
+  <!-- ===================== Top: the three wall systems ===================== -->
+  <g>
+    <!-- System 1: Walls tile layer -->
+    <g>
+      <rect x="40" y="90" width="340" height="240" rx="10" fill="#fff" stroke="#64748b" stroke-width="1.5"/>
+      <text x="210" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#334155">1. "Walls" tile layer only</text>
+
+      <!-- mini scene: wall at row 3, player at row 4 -->
+      <g transform="translate(60,140)">
+        <rect x="0" y="0" width="300" height="160" fill="#f8fafc" stroke="#e2e8f0"/>
+        <!-- grid lines -->
+        <g stroke="#e2e8f0">
+          <line x1="0" y1="40" x2="300" y2="40"/>
+          <line x1="0" y1="80" x2="300" y2="80"/>
+          <line x1="0" y1="120" x2="300" y2="120"/>
+          <line x1="60" y1="0" x2="60" y2="160"/>
+          <line x1="120" y1="0" x2="120" y2="160"/>
+          <line x1="180" y1="0" x2="180" y2="160"/>
+          <line x1="240" y1="0" x2="240" y2="160"/>
+        </g>
+        <!-- wall tile at row 2 (y=80-120) -->
+        <rect x="0" y="80" width="300" height="40" fill="#94a3b8" stroke="#475569" stroke-width="2"/>
+        <text x="150" y="106" text-anchor="middle" font-size="11" fill="#0f172a" font-weight="700">wall (depth 500)</text>
+        <!-- player at row 3 (y=120-160), drawn ON TOP because depth 1000+ > 500 -->
+        <rect x="120" y="120" width="40" height="40" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+        <text x="140" y="148" text-anchor="middle" font-size="20">🧍</text>
+        <text x="180" y="148" font-size="10" fill="#1d4ed8">player (depth ~1000)</text>
+      </g>
+
+      <text x="60" y="318" font-size="11" fill="#334155">Collision: ✓ (tile grid)</text>
+      <text x="200" y="318" font-size="11" font-weight="700" fill="#991b1b">Occlusion: ✗ always under player</text>
+    </g>
+
+    <!-- System 2: Wall zone -->
+    <g>
+      <rect x="390" y="90" width="340" height="240" rx="10" fill="#fff" stroke="#64748b" stroke-width="1.5"/>
+      <text x="560" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#334155">2. Wall zone (zone_type=wall) only</text>
+
+      <g transform="translate(410,140)">
+        <rect x="0" y="0" width="300" height="160" fill="#f8fafc" stroke="#e2e8f0"/>
+        <g stroke="#e2e8f0">
+          <line x1="0" y1="40" x2="300" y2="40"/>
+          <line x1="0" y1="80" x2="300" y2="80"/>
+          <line x1="0" y1="120" x2="300" y2="120"/>
+          <line x1="60" y1="0" x2="60" y2="160"/>
+          <line x1="120" y1="0" x2="120" y2="160"/>
+          <line x1="180" y1="0" x2="180" y2="160"/>
+          <line x1="240" y1="0" x2="240" y2="160"/>
+        </g>
+        <!-- invisible wall zone, shown as dashed outline -->
+        <rect x="0" y="80" width="300" height="40" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+        <text x="150" y="106" text-anchor="middle" font-size="10" fill="#dc2626" font-weight="700">zone_type=wall (invisible)</text>
+        <!-- player at row 3, no wall visual to hide behind -->
+        <rect x="120" y="120" width="40" height="40" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+        <text x="140" y="148" text-anchor="middle" font-size="20">🧍</text>
+      </g>
+
+      <text x="410" y="318" font-size="11" fill="#334155">Collision: ✓ (swept, precise)</text>
+      <text x="570" y="318" font-size="11" font-weight="700" fill="#991b1b">Occlusion: ✗ no visual at all</text>
+    </g>
+
+    <!-- System 3: Dynamic decoration + collision -->
+    <g>
+      <rect x="740" y="90" width="340" height="240" rx="10" fill="#fff" stroke="#15803d" stroke-width="2"/>
+      <text x="910" y="116" text-anchor="middle" font-size="13" font-weight="700" fill="#14532d">3. Dynamic decoration + collision ✓</text>
+
+      <g transform="translate(760,140)">
+        <rect x="0" y="0" width="300" height="160" fill="#f8fafc" stroke="#e2e8f0"/>
+        <g stroke="#e2e8f0">
+          <line x1="0" y1="40" x2="300" y2="40"/>
+          <line x1="0" y1="80" x2="300" y2="80"/>
+          <line x1="0" y1="120" x2="300" y2="120"/>
+          <line x1="60" y1="0" x2="60" y2="160"/>
+          <line x1="120" y1="0" x2="120" y2="160"/>
+          <line x1="180" y1="0" x2="180" y2="160"/>
+          <line x1="240" y1="0" x2="240" y2="160"/>
+        </g>
+        <!-- wall as 32x64 dynamic decoration, base at row 3 bottom (y=120), spans rows 2-3 -->
+        <rect x="0" y="40" width="300" height="80" fill="#86efac" stroke="#15803d" stroke-width="2"/>
+        <text x="150" y="86" text-anchor="middle" font-size="11" fill="#14532d" font-weight="700">wall (depth 1000+baseY)</text>
+        <!-- base line -->
+        <line x1="0" y1="120" x2="300" y2="120" stroke="#b45309" stroke-width="2"/>
+        <text x="306" y="116" font-size="9" fill="#b45309">baseY</text>
+        <!-- collision marker -->
+        <rect x="0" y="80" width="300" height="40" fill="none" stroke="#dc2626" stroke-width="1.5" stroke-dasharray="4 3"/>
+        <text x="150" y="60" text-anchor="middle" font-size="9" fill="#dc2626">collision tile (Walls layer)</text>
+        <!-- player at row 4 (below wall), in front -->
+        <rect x="120" y="120" width="40" height="40" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+        <text x="140" y="148" text-anchor="middle" font-size="20">🧍</text>
+      </g>
+
+      <text x="760" y="318" font-size="11" fill="#334155">Collision: ✓ (Walls layer or zone)</text>
+      <text x="940" y="318" font-size="11" font-weight="700" fill="#14532d">Occlusion: ✓ Y-sorts vs player</text>
+    </g>
+  </g>
+
+  <!-- ===================== Bottom: north-wall-of-a-room example ===================== -->
+  <g>
+    <rect x="40" y="360" width="1040" height="380" rx="10" fill="#fff" stroke="#cbd5e1"/>
+    <text x="550" y="386" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">North wall of a room — player on both sides</text>
+    <text x="550" y="404" text-anchor="middle" font-size="11" fill="#64748b">Wall visual: 32×64 dynamic decoration, base at row 3 (baseY=128). Collision: Walls tile at row 3.</text>
+
+    <g transform="translate(80,420)">
+      <!-- 6 cols x 8 rows, 80px each -->
+      <g stroke="#e2e8f0" stroke-width="1">
+        <line x1="0"   y1="0"   x2="0"   y2="640"/>
+        <line x1="80"  y1="0"   x2="80"  y2="640"/>
+        <line x1="160" y1="0"   x2="160" y2="640"/>
+        <line x1="240" y1="0"   x2="240" y2="640"/>
+        <line x1="320" y1="0"   x2="320" y2="640"/>
+        <line x1="400" y1="0"   x2="400" y2="640"/>
+        <line x1="480" y1="0"   x2="480" y2="640"/>
+        <line x1="560" y1="0"   x2="560" y2="640"/>
+        <line x1="640" y1="0"   x2="640" y2="640"/>
+        <line x1="720" y1="0"   x2="720" y2="640"/>
+        <line x1="800" y1="0"   x2="800" y2="640"/>
+        <line x1="880" y1="0"   x2="880" y2="640"/>
+        <line x1="960" y1="0"   x2="960" y2="640"/>
+        <line x1="0" y1="0"   x2="960" y2="0"/>
+        <line x1="0" y1="80"  x2="960" y2="80"/>
+        <line x1="0" y1="160" x2="960" y2="160"/>
+        <line x1="0" y1="240" x2="960" y2="240"/>
+        <line x1="0" y1="320" x2="960" y2="320"/>
+        <line x1="0" y1="400" x2="960" y2="400"/>
+        <line x1="0" y1="480" x2="960" y2="480"/>
+        <line x1="0" y1="560" x2="960" y2="560"/>
+        <line x1="0" y1="640" x2="960" y2="640"/>
+      </g>
+      <text x="-8" y="44"  text-anchor="end" font-size="10" fill="#94a3b8">r0</text>
+      <text x="-8" y="124" text-anchor="end" font-size="10" fill="#94a3b8">r1</text>
+      <text x="-8" y="204" text-anchor="end" font-size="10" fill="#94a3b8">r2</text>
+      <text x="-8" y="284" text-anchor="end" font-size="10" fill="#94a3b8">r3 (wall base)</text>
+      <text x="-8" y="364" text-anchor="end" font-size="10" fill="#94a3b8">r4</text>
+      <text x="-8" y="444" text-anchor="end" font-size="10" fill="#94a3b8">r5</text>
+
+      <!-- "outside/above" label -->
+      <text x="480" y="20" text-anchor="middle" font-size="11" fill="#64748b" font-style="italic">walkable — outside / above the room</text>
+
+      <!-- wall: 32x64 dynamic decoration, base at row 3 bottom (y=320), spans rows 2-3 -->
+      <rect x="0" y="160" width="960" height="160" fill="#86efac" stroke="#15803d" stroke-width="2"/>
+      <text x="480" y="244" text-anchor="middle" font-size="13" fill="#14532d" font-weight="700">north wall (dynamic decoration, baseY=128)</text>
+
+      <!-- base line -->
+      <line x1="0" y1="320" x2="960" y2="320" stroke="#b45309" stroke-width="2"/>
+      <text x="966" y="316" font-size="10" fill="#b45309">baseY=128</text>
+
+      <!-- collision tile marker on row 3 -->
+      <rect x="0" y="240" width="960" height="80" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="480" y="290" text-anchor="middle" font-size="10" fill="#dc2626" font-weight="700">collision row (Walls layer or wall zone)</text>
+
+      <!-- "inside room" label -->
+      <text x="480" y="340" text-anchor="middle" font-size="11" fill="#64748b" font-style="italic">walkable — inside the room</text>
+
+      <!-- Player A: above the wall (row 1), feetY=64, BEHIND -->
+      <rect x="120" y="40" width="80" height="80" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+      <text x="160" y="100" text-anchor="middle" font-size="32">🧍</text>
+      <text x="160" y="32" text-anchor="middle" font-size="10" fill="#1d4ed8" font-weight="700">Player A (row 1)</text>
+      <!-- wall overhang covers player A -->
+      <rect x="0" y="160" width="960" height="160" fill="#86efac" stroke="#15803d" stroke-width="2" opacity="0.85"/>
+      <text x="480" y="244" text-anchor="middle" font-size="13" fill="#14532d" font-weight="700">north wall (dynamic decoration, baseY=128)</text>
+      <line x1="0" y1="320" x2="960" y2="320" stroke="#b45309" stroke-width="2"/>
+      <rect x="0" y="240" width="960" height="80" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="6 4"/>
+
+      <!-- Player B: below the wall (row 5), feetY=192, IN FRONT -->
+      <rect x="640" y="400" width="80" height="80" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+      <text x="680" y="460" text-anchor="middle" font-size="32">🧍</text>
+      <text x="680" y="500" text-anchor="middle" font-size="10" fill="#1d4ed8" font-weight="700">Player B (row 5)</text>
+    </g>
+
+    <!-- Result box -->
+    <rect x="80" y="700" width="960" height="30" rx="4" fill="#f1f5f9"/>
+    <text x="100" y="720" font-size="11" fill="#14532d" font-weight="700">Player A: feetY 64 &lt; baseY 128 → BEHIND wall (wall covers player).</text>
+    <text x="540" y="720" font-size="11" fill="#14532d" font-weight="700">Player B: feetY 192 &gt; baseY 128 → IN FRONT of wall.</text>
+  </g>
+</svg>
