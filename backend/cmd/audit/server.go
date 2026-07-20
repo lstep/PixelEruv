@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -19,37 +20,39 @@ import (
 
 // Server is the audit service: NATS subscriber + HTTP UI.
 type Server struct {
-	nc          *nats.Conn
-	store       EventStore
-	logger      *slog.Logger
-	healthzURL  string
-	otelBaseURL string
-	basePath    string
-	authUser    string
-	authPass    string
-	startTime   time.Time
-	templates   map[string]*template.Template
-	notifier    *notifier
+	nc             *nats.Conn
+	store          EventStore
+	logger         *slog.Logger
+	healthzURL     string
+	otelBaseURL    string
+	dockerProxyURL string
+	basePath       string
+	authUser       string
+	authPass       string
+	startTime      time.Time
+	templates      map[string]*template.Template
+	notifier       *notifier
 }
 
-func NewServer(nc *nats.Conn, store EventStore, logger *slog.Logger, healthzURL, otelBaseURL, basePath, authUser, authPass string) (*Server, error) {
+func NewServer(nc *nats.Conn, store EventStore, logger *slog.Logger, healthzURL, otelBaseURL, dockerProxyURL, basePath, authUser, authPass string) (*Server, error) {
 	tmpls, err := parseTemplates(basePath)
 	if err != nil {
 		return nil, fmt.Errorf("parse templates: %w", err)
 	}
 
 	s := &Server{
-		nc:          nc,
-		store:       store,
-		logger:      logger,
-		healthzURL:  healthzURL,
-		otelBaseURL: otelBaseURL,
-		basePath:    basePath,
-		authUser:    authUser,
-		authPass:    authPass,
-		startTime:   time.Now(),
-		templates:   tmpls,
-		notifier:    newNotifier(nc, logger),
+		nc:             nc,
+		store:          store,
+		logger:         logger,
+		healthzURL:     healthzURL,
+		otelBaseURL:    otelBaseURL,
+		dockerProxyURL: dockerProxyURL,
+		basePath:       basePath,
+		authUser:       authUser,
+		authPass:       authPass,
+		startTime:      time.Now(),
+		templates:      tmpls,
+		notifier:       newNotifier(nc, logger),
 	}
 
 	// Subscribe to audit events.
@@ -68,6 +71,7 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc(bp+"/events/", s.handleEventDetail)
 	mux.HandleFunc(bp+"/players/", s.handlePlayerTimeline)
 	mux.HandleFunc(bp+"/health", s.handleHealthPage)
+	mux.HandleFunc(bp+"/docker/partial", s.handleDockerPartial)
 	mux.HandleFunc(bp+"/world", s.handleWorld)
 	mux.HandleFunc(bp+"/world/partial", s.handleWorldPartial)
 	mux.HandleFunc(bp+"/healthz", s.handleHealthz)
@@ -261,8 +265,110 @@ func (s *Server) handleHealthPage(w http.ResponseWriter, r *http.Request) {
 	health := s.fetchHealthz()
 	s.render(w, "health.html", map[string]any{
 		"Health":   health,
+		"Docker":   s.fetchDockerContainers(),
 		"BasePath": s.basePath,
 	})
+}
+
+// dockerContainerRow is one card in the docker section of /audit/health.
+type dockerContainerRow struct {
+	Name      string
+	Image     string
+	State     string
+	Status    string
+	Created   string
+	StateKind string
+}
+
+// fetchDockerContainers queries the docker-readonly-proxy (which fronts the
+// host docker socket with a strict GET /containers/json + GET /info
+// allowlist) and returns one row per container in the pixeleruv compose
+// project. Returns nil when DOCKER_PROXY_URL is not configured; returns an
+// error row when the proxy is unreachable so the UI can surface it.
+func (s *Server) fetchDockerContainers() []dockerContainerRow {
+	if s.dockerProxyURL == "" {
+		return nil
+	}
+	filters := `{"label":["com.docker.compose.project=pixeleruv"]}`
+	u := s.dockerProxyURL + "/containers/json?all=true&filters=" + url.QueryEscape(filters)
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(u)
+	if err != nil {
+		s.logger.Warn("docker proxy call", "err", err)
+		return []dockerContainerRow{{Name: "docker-proxy unreachable", StateKind: "exited", Status: err.Error()}}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		s.logger.Warn("docker proxy status", "status", resp.StatusCode)
+		return []dockerContainerRow{{Name: "docker-proxy returned " + resp.Status, StateKind: "exited"}}
+	}
+	var containers []struct {
+		Names   []string `json:"Names"`
+		Image   string   `json:"Image"`
+		State   string   `json:"State"`
+		Status  string   `json:"Status"`
+		Created int64    `json:"Created"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&containers); err != nil {
+		s.logger.Warn("docker containers decode", "err", err)
+		return nil
+	}
+	rows := make([]dockerContainerRow, 0, len(containers))
+	for _, c := range containers {
+		name := ""
+		if len(c.Names) > 0 {
+			name = strings.TrimPrefix(c.Names[0], "/")
+		}
+		rows = append(rows, dockerContainerRow{
+			Name:      name,
+			Image:     c.Image,
+			State:     c.State,
+			Status:    c.Status,
+			Created:   dockerHumanCreated(c.Created),
+			StateKind: dockerStateKind(c.State),
+		})
+	}
+	return rows
+}
+
+// handleDockerPartial renders just the docker cards fragment for htmx
+// polling on /audit/health. No-op (empty body) when DOCKER_PROXY_URL is
+// not configured, so the section stays blank.
+func (s *Server) handleDockerPartial(w http.ResponseWriter, r *http.Request) {
+	rows := s.fetchDockerContainers()
+	if rows == nil {
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	data := map[string]any{"Docker": rows, "BasePath": s.basePath}
+	t := s.templates["health.html"]
+	if err := t.ExecuteTemplate(w, "docker_cards", data); err != nil {
+		s.logger.Warn("render docker partial", "err", err)
+	}
+}
+
+// dockerStateKind maps Docker's State field to a CSS color bucket.
+func dockerStateKind(state string) string {
+	switch state {
+	case "running":
+		return "running"
+	case "exited", "dead":
+		return "exited"
+	case "created", "restarting", "paused", "removing":
+		return "warn"
+	default:
+		return "other"
+	}
+}
+
+// dockerHumanCreated formats a unix-seconds Created timestamp as
+// "2006-01-02 15:04:05" in the local zone. Returns "" for 0.
+func dockerHumanCreated(created int64) string {
+	if created == 0 {
+		return ""
+	}
+	return time.Unix(created, 0).Format("2006-01-02 15:04:05")
 }
 
 // fetchWorldStats requests world stats from worldsim via NATS request-reply.

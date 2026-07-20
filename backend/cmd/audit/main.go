@@ -10,6 +10,9 @@
 //	AUDIT_AUTH_USER    basic auth username (if set with AUDIT_AUTH_PASS, enables auth)
 //	AUDIT_AUTH_PASS    basic auth password
 //	PUSHER_HEALTHZ     pusher /healthz URL for dashboard health cards
+//	DOCKER_PROXY_URL   read-only docker-proxy URL for the /audit/health docker
+//	                   cards section (e.g. http://docker-proxy:2375). If empty,
+//	                   the docker section is omitted.
 //	OTEL_BASE_URL      OpenObserve base URL for trace deep-links (e.g. http://localhost:5080)
 //	AUDIT_RETENTION_HOURS  retention period in hours (default: 720 = 30 days)
 //	GEOIP_DB           path to a GeoIP2-compatible MMDB for country flag lookups
@@ -35,6 +38,7 @@ func main() {
 	dbPath := envOr("AUDIT_DB", "./audit.db")
 	httpAddr := envOr("AUDIT_HTTP_ADDR", ":8082")
 	healthzURL := os.Getenv("PUSHER_HEALTHZ")
+	dockerProxyURL := os.Getenv("DOCKER_PROXY_URL")
 	otelBaseURL := envOr("OTEL_BASE_URL", "http://localhost:5080")
 	basePath := os.Getenv("AUDIT_BASE_PATH")
 	authUser := os.Getenv("AUDIT_AUTH_USER")
@@ -79,7 +83,7 @@ func main() {
 	defer fc.Close()
 	flagCache = fc
 
-	srv, err := NewServer(nc, store, logger, healthzURL, otelBaseURL, basePath, authUser, authPass)
+	srv, err := NewServer(nc, store, logger, healthzURL, otelBaseURL, dockerProxyURL, basePath, authUser, authPass)
 	if err != nil {
 		logger.Error("create server", "err", err)
 		os.Exit(1)

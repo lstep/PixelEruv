@@ -111,3 +111,46 @@ a { color: var(--accent); }
   vertical-align: middle;
 }
 .ip-cell { white-space: nowrap; }
+
+/* Docker container cards on /audit/health. Color buckets match the
+   StateKind field: running=ok, exited=error, warn=warn, other=muted. */
+.docker-section { margin-top: 2rem; }
+.docker-section h2 { color: var(--accent); margin-bottom: 0.75rem; }
+.docker-total { font-size: 0.85rem; margin-bottom: 0.75rem; }
+.docker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.docker-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--muted);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.docker-card.running { border-left-color: #2ecc71; }
+.docker-card.exited { border-left-color: var(--error); }
+.docker-card.warn { border-left-color: var(--warn); }
+.docker-card.other { border-left-color: var(--muted); }
+.docker-name { font-size: 1rem; font-weight: 600; word-break: break-all; }
+.docker-image { font-family: monospace; font-size: 0.78rem; color: var(--muted); word-break: break-all; }
+.docker-row { display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.85rem; align-items: center; }
+.docker-label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.docker-val { text-align: right; }
+.docker-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.docker-badge.running { background: rgba(46,204,113,0.18); color: #2ecc71; }
+.docker-badge.exited { background: rgba(231,76,60,0.18); color: var(--error); }
+.docker-badge.warn { background: rgba(240,173,78,0.18); color: var(--warn); }
+.docker-badge.other { background: rgba(136,136,136,0.18); color: var(--muted); }
