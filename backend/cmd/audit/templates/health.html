@@ -23,4 +23,41 @@
     </tbody>
   </table>
 </section>
+{{if .Docker}}
+<section class="docker-section">
+  <h2>Docker Status</h2>
+  <div hx-get="{{bp}}/docker/partial" hx-trigger="every 10s" hx-swap="outerHTML">
+    {{template "docker_cards" .}}
+  </div>
+</section>
+{{end}}
+{{end}}
+
+{{define "docker_cards"}}
+{{$rows := .Docker}}
+<p class="muted docker-total">{{len $rows}} container{{if ne (len $rows) 1}}s{{end}} in the pixeleruv stack</p>
+{{if $rows}}
+<div class="docker-grid">
+  {{range $r := $rows}}
+  <div class="docker-card {{$r.StateKind}}">
+    <div class="docker-name">{{$r.Name}}</div>
+    <div class="docker-image">{{$r.Image}}</div>
+    <div class="docker-row">
+      <span class="docker-label">State</span>
+      <span class="docker-val"><span class="docker-badge {{$r.StateKind}}">{{$r.State}}</span></span>
+    </div>
+    <div class="docker-row">
+      <span class="docker-label">Status</span>
+      <span class="docker-val">{{$r.Status}}</span>
+    </div>
+    <div class="docker-row">
+      <span class="docker-label">Created</span>
+      <span class="docker-val">{{$r.Created}}</span>
+    </div>
+  </div>
+  {{end}}
+</div>
+{{else}}
+<p class="muted">No containers found in the pixeleruv compose project.</p>
+{{end}}
 {{end}}
