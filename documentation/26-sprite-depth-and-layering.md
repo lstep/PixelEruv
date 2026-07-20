@@ -498,15 +498,16 @@ Tile layers in this codebase do two things, and that's it:
      for floors, rugs, shadows, ground decals, canopy/roof overlays —
      anything that should never interleave with the player.
    - `sort_mode=dynamic`: gets a flat `DEPTH_BAND_DYNAMIC` depth + a console
-     warning. **Per-tile Y-sort is not implemented.** Effectively useless
-     today — if you want Y-sort, use an object layer.
+     warning. **Per-tile Y-sort is not planned** (see [§11](#11-what-is-not-supported-today)).
+     Effectively useless — if you want Y-sort, use an object layer.
 
 What tile layers **cannot** do:
 
-- **Per-tile Y-sort against the player.** The whole layer is one Phaser
-  `TilemapLayer` with one depth value. There's no per-tile sprite to give
-  individual depths to. This is the fundamental limitation, and it's why the
-  chair/tree/wall examples all use object layers.
+- **Per-tile Y-sort against the player — not planned.** The whole layer is
+  one Phaser `TilemapLayer` with one depth value. There's no per-tile sprite
+  to give individual depths to. This is the fundamental limitation, and it's
+  why the chair/tree/wall examples all use object layers. See
+  [§11](#11-what-is-not-supported-today).
 - **Be picked up by name for any other special behavior.** Only `Walls` is
   name-matched. (`Zones` and `Entities` are also name-matched, but they're
   object layers, not tile layers.)
@@ -528,16 +529,23 @@ against the player has to live. That's the whole model.
 
 ## 11. What is not supported today
 
-1. **Per-tile Y-sort on tile layers.** If you set `sort_mode=dynamic` on a
-   *tile* layer (not an object layer), the whole layer gets a flat
-   `DEPTH_BAND_DYNAMIC` depth and the frontend prints a console warning:
+1. **Per-tile Y-sort on tile layers — not planned.** If you set
+   `sort_mode=dynamic` on a *tile* layer (not an object layer), the whole
+   layer gets a flat `DEPTH_BAND_DYNAMIC` depth and the frontend prints a
+   console warning:
 
    > `decoration layer "<name>": sort_mode=dynamic on a tile layer only gets
-   > a flat depth (per-tile Y-sort isn't implemented yet)`
+   > a flat depth (per-tile Y-sort is not planned; use an object layer for
+   > Y-sortable scenery)`
 
-   Per-object Y-sort only works for **object layers** (individually placed
-   props). If you want a tile-layer tree to Y-sort against the player, place
-   it as an object on an object layer instead.
+   Per-tile Y-sort would require extracting each tile into its own sprite
+   (Phaser's `TilemapLayer` is one render object with one depth), which
+   defeats the bulk-render efficiency that's the whole point of tile
+   layers. The workaround is to place those tiles as objects on an object
+   layer with `sort_mode=dynamic` — identical visual result, only the
+   authoring workflow changes (place N objects instead of painting N tiles).
+   Per-object Y-sort is the supported path for anything that needs to
+   interleave with the player.
 
 2. **Per-pixel / per-row occlusion.** Deliberately not done. See [§9](#9-there-is-no-per-pixel-occlusion).
 
@@ -553,7 +561,8 @@ against the player has to live. That's the whole model.
 For a sprite that must let the player walk in front of it and behind it:
 
 1. **Author it as a tile-object on an object layer** — not as cells in a
-   tile layer. (Per-tile Y-sort on tile layers is not implemented.)
+   tile layer. (Per-tile Y-sort on tile layers is not planned; see
+   [§11](#11-what-is-not-supported-today).)
 2. **Set the layer's custom property** `layer_type = decoration`.
 3. **Set the layer's custom property** `sort_mode = dynamic`.
 4. **The tile can be any size** in the tileset: 32×32, 32×64, 32×128, etc.
