@@ -60,6 +60,7 @@ var knownZoneTypes = map[string]bool{
 	"work":    true,
 	"silent":  true,
 	"spawn":   true,
+	"portal":  true,
 }
 
 // knownActionVerbs is the set of effect action verbs that ext-props knows
