@@ -1,4 +1,4 @@
-.PHONY: proto build sync-assets sync-maps sync-sprites web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote reseed-map-remote
+.PHONY: proto build sync-assets sync-maps sync-sprites audit-assets web dist dist-x86 dist-macos dist-stage up down logs debug debug-frontend pb-collections geoip deploy-remote reseed-map-remote
 
 PROTO_DIR := proto
 GO_OUT := backend/internal/pb
@@ -52,12 +52,20 @@ build: proto
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pb-collections ./cmd/pb-collections
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/validate-map ./cmd/validate-map
+	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/audit-assets ./cmd/audit-assets
 
 # Sync root assets into frontend/public/ so Vite serves them in dev and bundles
 # them into dist/web/. The root maps/ and spritesheets/ directories are the
 # authoritative sources; frontend/public/assets/maps and frontend/public/sprites
 # are generated copies.
-sync-assets: sync-maps sync-sprites sync-icon sync-game-assets
+sync-assets: audit-assets sync-maps sync-sprites sync-icon sync-game-assets
+
+# audit-assets rejects PNGs that exceed WebGL texture limits or the file-size
+# budget. Runs before sync-maps/sync-sprites so `make up`, `make web`, and
+# `make dist` all fail fast on oversized tilesets. Defaults: 8192px max dim,
+# 2MiB max size. Override via AUDIT_MAX_DIM / AUDIT_MAX_BYTES env vars.
+audit-assets: build
+	$(DIST_BIN)/audit-assets maps spritesheets
 
 sync-maps:
 	@mkdir -p frontend/public/assets/maps
