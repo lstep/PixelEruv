@@ -13,13 +13,15 @@ import (
 //   - Control tools: teleport, kick, ban
 //   - Admin override tools: send_chat_as, set_player_*, set_world_options,
 //     dispatch_extension_action
+//   - Docker tools: list containers, engine info (via docker-readonly-proxy)
 //
 // Each tool uses the typed ToolHandlerFor pattern so the SDK validates input
 // against the In struct's JSON schema automatically.
-func registerTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *PocketBaseClient) {
+func registerTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *PocketBaseClient, d *DockerClient) {
 	registerReadTools(s, w, a, pb)
 	registerControlTools(s, w)
 	registerAdminTools(s, w)
+	registerDockerTools(s, d)
 }
 
 // --- Read tools ---
@@ -382,6 +384,39 @@ func registerAdminTools(s *mcp.Server, w *WorldsimClient) {
 			return nil, nil, err
 		}
 		return jsonResult(updated)
+	})
+}
+
+// --- Docker tools ---
+
+// registerDockerTools exposes the running Docker container list + engine info
+// via the docker-readonly-proxy (DOCKER_PROXY_URL). If the proxy URL is not
+// configured, the tools return an error when called but still register, so
+// the MCP server can run with a subset of backends.
+func registerDockerTools(s *mcp.Server, d *DockerClient) {
+	type ListDockerContainersArgs struct {
+		AllProjects bool `json:"all_projects,omitempty" jsonschema:"If true, return every container on the host engine. Default false: filter to com.docker.compose.project=pixeleruv."`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_docker_containers",
+		Description: "List Docker containers (running + stopped) via the docker-readonly-proxy. Default filters to the pixeleruv compose project; pass all_projects=true to list every container on the host engine. Each row: id, name, image, image_id, state (running|created|exited|paused|restarting|...), status (human string like 'Up 5 minutes'), created (unix seconds), labels (incl. com.docker.compose.project/service).",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args ListDockerContainersArgs) (*mcp.CallToolResult, any, error) {
+		rows, err := d.ListContainers(ctx, args.AllProjects)
+		if err != nil {
+			return nil, nil, err
+		}
+		return jsonResult(rows)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_docker_info",
+		Description: "Get Docker engine info via the docker-readonly-proxy (GET /info). Returns the raw Docker engine JSON: containers/containersRunning/containersPaused/containersStopped counts, images count, OS, architecture, kernel version, docker root dir, etc. No arguments.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		data, err := d.Info(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return rawJSONResult(data)
 	})
 }
 

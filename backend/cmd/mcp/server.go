@@ -19,6 +19,7 @@ type Deps struct {
 	Worldsim *WorldsimClient
 	Audit    *AuditClient
 	PB       *PocketBaseClient
+	Docker   *DockerClient
 }
 
 // NewMCPServer builds the MCP server: registers all tools, resources, and
@@ -34,8 +35,8 @@ func NewMCPServer(deps Deps, logger *slog.Logger) *mcp.Server {
 		Logger: logger,
 	})
 
-	registerTools(s, deps.Worldsim, deps.Audit, deps.PB)
-	registerResources(s, deps.Worldsim, deps.Audit, deps.PB)
+	registerTools(s, deps.Worldsim, deps.Audit, deps.PB, deps.Docker)
+	registerResources(s, deps.Worldsim, deps.Audit, deps.PB, deps.Docker)
 	registerPrompts(s, deps.Worldsim, deps.Audit)
 
 	return s
