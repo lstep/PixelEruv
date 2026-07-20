@@ -20,6 +20,9 @@ mono_crash.*.json
 
 # Go
 backend/internal/pb/*.pb.go
+# Local go.work (gopls workspace file — developer-local, not committed)
+go.work
+go.work.sum
 # Stray binaries from `go build ./cmd/<name>` (no -o) — drops at module root.
 # The Makefile builds into dist/bin/ (covered by dist/ above); these cover
 # the case where someone builds directly in backend/.
