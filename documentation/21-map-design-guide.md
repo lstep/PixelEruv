@@ -119,9 +119,11 @@ depth = BAND_BASE(layer) + (baseY_pixels / mapHeightPixels)
   above avatars — use for canopies, roofs).
 
 > **Note on `dynamic` tile layers:** per-tile Y-sort requires splitting the
-> layer into individual sprites, which is not yet implemented. A
+> layer into individual sprites, which is not planned (it would defeat the
+> bulk-render efficiency that's the point of tile layers). A
 > `sort_mode=dynamic` tile layer currently gets a flat depth in the dynamic
 > band (with a console warning). Use object layers for dynamic props. See
+> `documentation/26-sprite-depth-and-layering.md` §11 and
 > `documentation/depth-layers-diagram.svg` for a visual explanation.
 
 #### Anchoring multi-tile-tall objects

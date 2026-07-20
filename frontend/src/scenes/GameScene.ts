@@ -730,10 +730,11 @@ export class GameScene extends Phaser.Scene {
             seenDynamic = true;
             // Per-tile Y-sort within a tile layer requires per-tile sprites
             // (a Phaser TilemapLayer has one depth for the whole layer).
-            // Not yet implemented — render at a flat depth in the shared
-            // band so it still interleaves at the layer granularity rather
-            // than being silently dropped or crashing.
-            console.warn(`decoration layer "${layer.name}": sort_mode=dynamic on a tile layer only gets a flat depth (per-tile Y-sort isn't implemented yet)`);
+            // Not planned — use an object layer for Y-sortable scenery.
+            // Render at a flat depth in the shared band so it still
+            // interleaves at the layer granularity rather than being
+            // silently dropped or crashing.
+            console.warn(`decoration layer "${layer.name}": sort_mode=dynamic on a tile layer only gets a flat depth (per-tile Y-sort is not planned; use an object layer for Y-sortable scenery)`);
             tiledLayer.setDepth(DEPTH_BAND_DYNAMIC);
           } else {
             tiledLayer.setDepth(seenDynamic ? DEPTH_BAND_STATIC_ABOVE + aboveBand++ : belowBand++);
