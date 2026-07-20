@@ -223,6 +223,13 @@ type Simulator struct {
 	// to all connected clients. Drained after each tick's replication loop.
 	destroyedEntities []string
 
+	// pendingPortalTransitions queues portal zone transitions detected during
+	// the tick's zone-enter scan. They cannot be applied inline because
+	// transitionEntity re-locks s.mu, which tick already holds (sync.Mutex is
+	// not reentrant — applying inline self-deadlocks the tick goroutine).
+	// Drained after tick() releases s.mu.
+	pendingPortalTransitions []portalTransitionReq
+
 	// lastSavedPos records the last position/map persisted to PocketBase per
 	// player entity, so startPositionPersister can skip writes for entities
 	// that haven't moved since the last 30s tick. Cleared in despawnClient.
@@ -1417,9 +1424,19 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 		"")
 }
 
-// handlePortalZone checks if the entered zone is a portal and triggers a map
+// portalTransitionReq is a deferred portal transition queued during the tick's
+// zone-enter scan and applied after the tick releases s.mu.
+type portalTransitionReq struct {
+	entityID     string
+	targetMap    string
+	targetEntity string
+}
+
+// handlePortalZone checks if the entered zone is a portal and queues a map
 // transition if so. Portal zones are defined in Tiled with zone_type="portal",
-// target_map, target_x, and target_y properties. Caller must hold s.mu.
+// target_map, and target_entity properties. The actual transition is applied
+// after the tick releases s.mu (see tick); calling transitionEntity inline
+// would self-deadlock on the non-reentrant s.mu. Caller must hold s.mu.
 func (s *Simulator) handlePortalZone(ctx context.Context, e *Entity, zoneID, clientID string) {
 	if e.NetworkSession == nil {
 		return // only player avatars can transition
@@ -1442,7 +1459,11 @@ func (s *Simulator) handlePortalZone(ctx context.Context, e *Entity, zoneID, cli
 				"entity", e.ID, "zone", zoneID, "target_map", z.PortalTargetMap)
 			return
 		}
-		s.transitionEntity(ctx, e.ID, z.PortalTargetMap, z.PortalTargetEntity)
+		s.pendingPortalTransitions = append(s.pendingPortalTransitions, portalTransitionReq{
+			entityID:     e.ID,
+			targetMap:    z.PortalTargetMap,
+			targetEntity: z.PortalTargetEntity,
+		})
 		return
 	}
 }
@@ -2190,7 +2211,6 @@ func (s *Simulator) tick() {
 	start := time.Now()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	s.snapshotSeq++
 
@@ -2331,6 +2351,18 @@ func (s *Simulator) tick() {
 			"replicated_clients", replicated,
 			"snapshot_seq", s.snapshotSeq,
 		)
+	}
+
+	// Apply portal transitions after releasing s.mu. transitionEntity
+	// re-locks s.mu, which would self-deadlock if called inline above
+	// (sync.Mutex is not reentrant). No recover wraps tick(), so a panic
+	// here crashes the process (Docker restarts it) — explicit unlock is
+	// safe because the lock is never observed held after the process dies.
+	pending := s.pendingPortalTransitions
+	s.pendingPortalTransitions = nil
+	s.mu.Unlock()
+	for _, t := range pending {
+		s.transitionEntity(ctx, t.entityID, t.targetMap, t.targetEntity)
 	}
 }
 
