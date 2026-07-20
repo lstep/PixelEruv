@@ -1118,6 +1118,17 @@ export class GameScene extends Phaser.Scene {
         document.body.classList.toggle("server-unavailable", !connected);
         if (connected) this.scene.resume("GameScene");
         else this.scene.pause("GameScene");
+        // Tear down LiveKit when the game WS drops. Without this, the
+        // LiveKit room outlives the game connection: the server despawns
+        // the entity and emits zone.exit, but the leave token goes to the
+        // old (dead) client ID and never reaches AvClient. On reconnect,
+        // the player respawns at the spawn point (outside the A/V zone),
+        // so no zone.enter rejoin occurs — leaving a stale video tile
+        // forever. Fire-and-forget: close() is idempotent (no-op if no
+        // room is connected) and safe to call concurrently.
+        if (!connected) {
+          void this.avClient?.close();
+        }
       },
       onAvToken: (msg) => {
         this.avClient?.handleTokenFrame(msg).catch((err) =>
