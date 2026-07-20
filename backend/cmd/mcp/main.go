@@ -23,6 +23,9 @@
 //	PB_ADMIN_TOKEN     Optional PocketBase admin token (Authorization header).
 //	                   If empty, requests are unauthenticated (works only if
 //	                   PB has no API rules).
+//	DOCKER_PROXY_URL   docker-readonly-proxy base URL (e.g.
+//	                   http://docker-proxy:2375). If empty, docker tools
+//	                   return an error.
 //
 // Endpoints:
 //
@@ -53,6 +56,7 @@ func main() {
 	auditPass := os.Getenv("AUDIT_AUTH_PASS")
 	pbBase := os.Getenv("PB_BASE_URL")
 	pbToken := os.Getenv("PB_ADMIN_TOKEN")
+	dockerProxyURL := os.Getenv("DOCKER_PROXY_URL")
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -82,6 +86,7 @@ func main() {
 		Worldsim: NewWorldsimClient(nc, actor),
 		Audit:    NewAuditClient(auditBase, auditUser, auditPass, nc),
 		PB:       NewPocketBaseClient(pbBase, pbToken),
+		Docker:   NewDockerClient(dockerProxyURL),
 	}
 
 	if err := ServeHTTP(ctx, httpAddr, token, deps, logger); err != nil {

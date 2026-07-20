@@ -15,7 +15,7 @@ import (
 //
 // URIs use the pixeleruv:// scheme. Static resources are registered with
 // AddResource; parameterized ones use AddResourceTemplate.
-func registerResources(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *PocketBaseClient) {
+func registerResources(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *PocketBaseClient, d *DockerClient) {
 	// Static resources (no path-template variables).
 	s.AddResource(&mcp.Resource{
 		URI:         "pixeleruv://world/stats",
@@ -63,6 +63,24 @@ func registerResources(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 		Description: "Severity and type counts for the last 24h of audit events, plus audit service uptime and version.",
 		MIMEType:    "application/json",
 	}, makeStaticResourceHandler(func(ctx context.Context) (any, error) { return a.Stats(ctx) }))
+
+	// Docker resources (via docker-readonly-proxy). Default to the pixeleruv
+	// compose project; the resource has no args so the all_projects filter is
+	// not exposed here — use the list_docker_containers tool with
+	// all_projects=true for that.
+	s.AddResource(&mcp.Resource{
+		URI:         "pixeleruv://docker/containers",
+		Name:        "Docker Containers",
+		Description: "Running + stopped containers in the pixeleruv compose project (name, image, state, status, created, labels).",
+		MIMEType:    "application/json",
+	}, makeStaticResourceHandler(func(ctx context.Context) (any, error) { return d.ListContainers(ctx, false) }))
+
+	s.AddResource(&mcp.Resource{
+		URI:         "pixeleruv://docker/info",
+		Name:        "Docker Engine Info",
+		Description: "Raw Docker engine info (container/image counts, OS, kernel, docker root dir).",
+		MIMEType:    "application/json",
+	}, makeStaticResourceHandler(func(ctx context.Context) (any, error) { return d.Info(ctx) }))
 
 	// Parameterized resources (templates).
 	s.AddResourceTemplate(&mcp.ResourceTemplate{

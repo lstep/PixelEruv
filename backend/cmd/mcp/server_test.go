@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -285,6 +286,86 @@ func TestPocketBaseClient(t *testing.T) {
 	}
 }
 
+// TestDockerClient verifies the MCP DockerClient correctly calls the
+// docker-readonly-proxy: filters to com.docker.compose.project=pixeleruv by
+// default, drops the filter when allProjects=true, parses the /containers/json
+// response into ContainerRow, and surfaces /info as raw JSON.
+func TestDockerClient(t *testing.T) {
+	var lastPath string
+	var lastQuery string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/containers/json", func(w http.ResponseWriter, r *http.Request) {
+		lastPath = r.URL.Path
+		lastQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		// Two canned containers: one in pixeleruv project, one not.
+		_, _ = w.Write([]byte(`[
+			{"Id":"abc123","Names":["/pixeleruv-mcp-1"],"Image":"pixeleruv/mcp:latest","ImageID":"sha256:img1","State":"running","Status":"Up 5 minutes","Created":1700000000,"Labels":{"com.docker.compose.project":"pixeleruv","com.docker.compose.service":"mcp"}},
+			{"Id":"def456","Names":["/other-app-1"],"Image":"other:latest","ImageID":"sha256:img2","State":"exited","Status":"Exited (0) 2 hours ago","Created":1699990000,"Labels":{"com.docker.compose.project":"other"}}
+		]`))
+	})
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"Containers":5,"ContainersRunning":3,"Images":10,"OperatingSystem":"linux"}`))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	d := NewDockerClient(srv.URL)
+
+	// Default: pixeleruv filter applied. The proxy returns both canned
+	// containers (the proxy is the filter boundary in production; our mock
+	// doesn't honor filters), but we verify the filter query was sent.
+	rows, err := d.ListContainers(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListContainers: %v", err)
+	}
+	if lastPath != "/containers/json" {
+		t.Errorf("ListContainers path: %s", lastPath)
+	}
+	if !strings.Contains(lastQuery, "all=true") || !strings.Contains(lastQuery, "com.docker.compose.project%3Dpixeleruv") {
+		t.Errorf("ListContainers default query missing filter/all: %s", lastQuery)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("ListContainers rows: got %d, want 2", len(rows))
+	}
+	if rows[0].Name != "pixeleruv-mcp-1" || rows[0].Image != "pixeleruv/mcp:latest" || rows[0].State != "running" {
+		t.Errorf("row[0]: %+v", rows[0])
+	}
+	if rows[0].Created != 1700000000 || rows[0].Labels["com.docker.compose.service"] != "mcp" {
+		t.Errorf("row[0] fields: %+v", rows[0])
+	}
+	if rows[1].Name != "other-app-1" || rows[1].State != "exited" {
+		t.Errorf("row[1]: %+v", rows[1])
+	}
+
+	// allProjects=true drops the filter.
+	if _, err := d.ListContainers(context.Background(), true); err != nil {
+		t.Fatalf("ListContainers allProjects: %v", err)
+	}
+	if strings.Contains(lastQuery, "com.docker.compose.project") {
+		t.Errorf("ListContainers allProjects=true should not filter: %s", lastQuery)
+	}
+
+	// Info returns raw JSON.
+	info, err := d.Info(context.Background())
+	if err != nil {
+		t.Fatalf("Info: %v", err)
+	}
+	if !strings.Contains(string(info), `"Images":10`) {
+		t.Errorf("Info body: %s", string(info))
+	}
+
+	// Empty base URL → error, not panic.
+	emptyClient := NewDockerClient("")
+	if _, err := emptyClient.ListContainers(context.Background(), false); err == nil {
+		t.Error("expected error when DOCKER_PROXY_URL unset")
+	}
+	if _, err := emptyClient.Info(context.Background()); err == nil {
+		t.Error("expected error when DOCKER_PROXY_URL unset")
+	}
+}
+
 // TestNewMCPServer constructs the full MCP server with all tools/resources/
 // prompts registered against a live in-process NATS + mock HTTP backends.
 // It catches struct-tag panics like the one that crashed production on first
@@ -312,15 +393,26 @@ func TestNewMCPServer(t *testing.T) {
 		_, _ = w.Write([]byte(`{"items":[],"totalItems":0,"page":1,"perPage":30,"totalPages":0}`))
 	}))
 	t.Cleanup(pbSrv.Close)
+	// Mock docker-proxy so DockerClient constructs and docker tools register.
+	dockerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/info" {
+			_, _ = w.Write([]byte(`{"Containers":0,"Images":0}`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	t.Cleanup(dockerSrv.Close)
 
 	deps := Deps{
 		Worldsim: NewWorldsimClient(nc, "mcp-test"),
 		Audit:    NewAuditClient(auditSrv.URL, "", "", nil),
 		PB:       NewPocketBaseClient(pbSrv.URL, ""),
+		Docker:   NewDockerClient(dockerSrv.URL),
 	}
 	logger := slog.New(slog.NewTextHandler(&discardWriter{}, nil))
 
-	// Must not panic. All 18 tools, 11 resources, 3 prompts register.
+	// Must not panic. All 20 tools, 13 resources, 3 prompts register.
 	s := NewMCPServer(deps, logger)
 	if s == nil {
 		t.Fatal("NewMCPServer returned nil")
