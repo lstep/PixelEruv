@@ -65,7 +65,7 @@ sync-assets: audit-assets sync-maps sync-sprites sync-icon sync-game-assets
 # `make dist` all fail fast on oversized tilesets. Defaults: 8192px max dim,
 # 2MiB max size. Override via AUDIT_MAX_DIM / AUDIT_MAX_BYTES env vars.
 audit-assets: build
-	$(DIST_BIN)/audit-assets maps spritesheets
+	$(DIST_BIN)/audit-assets maps spritesheets assets/sprites
 
 sync-maps:
 	@mkdir -p frontend/public/assets/maps
