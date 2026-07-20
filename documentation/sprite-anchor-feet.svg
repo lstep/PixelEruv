@@ -1,0 +1,79 @@
+<svg width="100%" viewBox="0 0 1100 620" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Anchor, origin, and feetY — where the depth-anchoring point sits on a sprite</title>
+  <desc>Side-by-side comparison of an avatar sprite (origin 0.5, 0.75 on a 32x64 frame) and a Tiled tile-object (origin 0, 1, any size). Both anchor the depth value at the feet/base, not the center or top. The feetY formula is shown for each.</desc>
+
+  <rect width="1100" height="620" fill="#fafaf9"/>
+
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Anchor, origin, and feetY</text>
+  <text x="550" y="56" text-anchor="middle" font-size="13" fill="#64748b">The depth value is keyed on the FEET / BASE of the sprite, never the center or top. This is what makes Y-sort feel right.</text>
+
+  <!-- =================== Avatar (left) =================== -->
+  <g>
+    <text x="270" y="100" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Player avatar — 32×64 frame, origin (0.5, 0.75)</text>
+
+    <!-- Tile grid: two stacked 32px tiles -->
+    <rect x="190" y="120" width="160" height="160" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <line x1="190" y1="200" x2="350" y2="200" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+    <text x="180" y="160" text-anchor="end" font-size="10" fill="#94a3b8">tile above</text>
+    <text x="180" y="240" text-anchor="end" font-size="10" fill="#94a3b8">feet tile</text>
+
+    <!-- The 32x64 sprite frame, drawn at sprite.y with origin 0.75 -->
+    <!-- sprite.y is 16px above the feet (0.25 * 64) -->
+    <rect x="220" y="136" width="100" height="200" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+    <text x="270" y="240" text-anchor="middle" font-size="40" fill="#1e40af">🧍</text>
+
+    <!-- sprite.y marker (the Phaser anchor point) -->
+    <circle cx="270" cy="136" r="5" fill="#1d4ed8"/>
+    <line x1="270" y1="136" x2="380" y2="136" stroke="#1d4ed8" stroke-dasharray="3 3"/>
+    <text x="386" y="140" font-size="11" fill="#1d4ed8" font-weight="600">sprite.y (anchor)</text>
+    <text x="386" y="156" font-size="10" fill="#64748b">originY=0.75 → 16px above feet</text>
+
+    <!-- feet marker -->
+    <line x1="190" y1="336" x2="350" y2="336" stroke="#b45309" stroke-width="2"/>
+    <circle cx="270" cy="336" r="5" fill="#b45309"/>
+    <text x="386" y="332" font-size="11" fill="#b45309" font-weight="600">feetY (used for depth)</text>
+    <text x="386" y="348" font-size="10" fill="#64748b">bottom of the sprite, on the tile's bottom edge</text>
+
+    <!-- Formula -->
+    <rect x="190" y="380" width="320" height="80" rx="8" fill="#fff7ed" stroke="#b45309"/>
+    <text x="200" y="404" font-size="12" font-weight="700" fill="#7c2d12">feetY formula</text>
+    <text x="200" y="424" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7c2d12">feetY = sprite.y + height * (1 - originY)</text>
+    <text x="200" y="442" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7c2d12">       = sprite.y + 64 * 0.25 = sprite.y + 16</text>
+
+    <text x="190" y="490" font-size="11" fill="#334155">Recomputed every frame in update() — as the player</text>
+    <text x="190" y="506" font-size="11" fill="#334155">walks up/down, feetY changes and the depth flips.</text>
+  </g>
+
+  <!-- =================== Tiled tile-object (right) =================== -->
+  <g>
+    <text x="830" y="100" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Tiled tile-object — any size, origin (0, 1)</text>
+
+    <!-- Tile grid: 4 stacked tiles (representing a 32x128 tree) -->
+    <rect x="750" y="120" width="160" height="320" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <line x1="750" y1="200" x2="910" y2="200" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+    <line x1="750" y1="280" x2="910" y2="280" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+    <line x1="750" y1="360" x2="910" y2="360" stroke="#cbd5e1" stroke-dasharray="3 3"/>
+    <text x="740" y="160" text-anchor="end" font-size="10" fill="#94a3b8">row 3</text>
+    <text x="740" y="240" text-anchor="end" font-size="10" fill="#94a3b8">row 4</text>
+    <text x="740" y="320" text-anchor="end" font-size="10" fill="#94a3b8">row 5</text>
+    <text x="740" y="400" text-anchor="end" font-size="10" fill="#94a3b8">row 6 (base)</text>
+
+    <!-- The 32x128 sprite, anchored bottom-left at obj.y=440 (row 6 bottom) -->
+    <rect x="780" y="120" width="100" height="320" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+    <text x="830" y="200" text-anchor="middle" font-size="40" fill="#166534">🌳</text>
+    <text x="830" y="290" text-anchor="middle" font-size="11" fill="#166534">32×128 sprite</text>
+    <text x="830" y="306" text-anchor="middle" font-size="11" fill="#166534">(one image, one depth)</text>
+
+    <!-- obj.y marker = base = feet -->
+    <line x1="750" y1="440" x2="910" y2="440" stroke="#b45309" stroke-width="2"/>
+    <circle cx="780" cy="440" r="5" fill="#b45309"/>
+    <text x="920" y="436" font-size="11" fill="#b45309" font-weight="600">obj.y = baseY</text>
+    <text x="920" y="452" font-size="10" fill="#64748b">Tiled anchors tile-objects at bottom-left,</text>
+    <text x="920" y="466" font-size="10" fill="#64748b">so obj.y IS the feet. No formula needed.</text>
+
+    <!-- Formula -->
+    <rect x="750" y="490" width="320" height="60" rx="8" fill="#fff7ed" stroke="#b45309"/>
+    <text x="760" y="514" font-size="12" font-weight="700" fill="#7c2d12">depth formula (object layer, sort_mode=dynamic)</text>
+    <text x="760" y="534" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7c2d12">depth = 1000 + obj.y / mapHeightPixels</text>
+  </g>
+</svg>

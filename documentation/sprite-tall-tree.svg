@@ -1,0 +1,127 @@
+<svg width="100%" viewBox="0 0 1100 720" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Tall sprite (32×128 tree) — single depth value, collision footprint narrower than visual</title>
+  <desc>A 32x128 tree authored as one object-layer tile-object. Its depth is anchored at the trunk base (row 6). Only the trunk base tile is non-traversable in the Walls layer; the canopy overhang is traversable. Player at three positions: below (in front), beside trunk (blocked by collision), above (behind, fully covered by canopy). The single-depth model is correct at every reachable position.</desc>
+
+  <rect width="1100" height="720" fill="#fafaf9"/>
+
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Tall sprite — 32×128 tree (one image, one depth)</text>
+  <text x="550" y="56" text-anchor="middle" font-size="13" fill="#64748b">No decomposition required. The collision footprint is just the trunk base; the canopy overhangs and is traversable.</text>
+
+  <!-- =================== Left: the tree + collision footprint =================== -->
+  <g>
+    <text x="220" y="100" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Tree with collision footprint</text>
+
+    <g transform="translate(60,120)">
+      <!-- 4 cols x 8 rows, 80px each (2.5x scale) -->
+      <g stroke="#e2e8f0" stroke-width="1">
+        <line x1="0"   y1="0"   x2="0"   y2="640"/>
+        <line x1="80"  y1="0"   x2="80"  y2="640"/>
+        <line x1="160" y1="0"   x2="160" y2="640"/>
+        <line x1="240" y1="0"   x2="240" y2="640"/>
+        <line x1="320" y1="0"   x2="320" y2="640"/>
+        <line x1="0" y1="0"   x2="320" y2="0"/>
+        <line x1="0" y1="80"  x2="320" y2="80"/>
+        <line x1="0" y1="160" x2="320" y2="160"/>
+        <line x1="0" y1="240" x2="320" y2="240"/>
+        <line x1="0" y1="320" x2="320" y2="320"/>
+        <line x1="0" y1="400" x2="320" y2="400"/>
+        <line x1="0" y1="480" x2="320" y2="480"/>
+        <line x1="0" y1="560" x2="320" y2="560"/>
+        <line x1="0" y1="640" x2="320" y2="640"/>
+      </g>
+      <text x="-8" y="44"  text-anchor="end" font-size="10" fill="#94a3b8">r3</text>
+      <text x="-8" y="124" text-anchor="end" font-size="10" fill="#94a3b8">r4</text>
+      <text x="-8" y="204" text-anchor="end" font-size="10" fill="#94a3b8">r5</text>
+      <text x="-8" y="284" text-anchor="end" font-size="10" fill="#94a3b8">r6</text>
+      <text x="-8" y="364" text-anchor="end" font-size="10" fill="#94a3b8">r7</text>
+
+      <!-- Tree: 32x128 sprite = 80x320 in 2.5x grid. Base at row 6 bottom (y=320). Spans rows 3-6. -->
+      <rect x="120" y="40" width="80" height="320" fill="#dcfce7" stroke="#15803d" stroke-width="2"/>
+      <text x="160" y="120" text-anchor="middle" font-size="40" fill="#166534">🌳</text>
+      <text x="160" y="220" text-anchor="middle" font-size="11" fill="#166534">32×128</text>
+      <text x="160" y="236" text-anchor="middle" font-size="11" fill="#166534">one sprite</text>
+
+      <!-- base line -->
+      <line x1="100" y1="320" x2="220" y2="320" stroke="#b45309" stroke-width="2"/>
+      <text x="226" y="316" font-size="10" fill="#b45309">baseY = 192</text>
+
+      <!-- collision tile: only the trunk base (row 6) -->
+      <rect x="120" y="240" width="80" height="80" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-dasharray="6 4"/>
+      <text x="160" y="290" text-anchor="middle" font-size="10" fill="#dc2626" font-weight="700">collision</text>
+      <text x="160" y="304" text-anchor="middle" font-size="10" fill="#dc2626" font-weight="700">(trunk only)</text>
+
+      <!-- canopy overhang label -->
+      <text x="160" y="180" text-anchor="middle" font-size="10" fill="#15803d">canopy overhang</text>
+      <text x="160" y="194" text-anchor="middle" font-size="10" fill="#15803d">(traversable)</text>
+    </g>
+  </g>
+
+  <!-- =================== Right: three player positions =================== -->
+  <g>
+    <text x="780" y="100" text-anchor="middle" font-size="14" font-weight="700" fill="#0f172a">Player at three positions</text>
+
+    <!-- Position 1: below (in front) -->
+    <g transform="translate(560,120)">
+      <rect x="0" y="0" width="480" height="160" rx="8" fill="#dcfce7" stroke="#15803d"/>
+      <text x="20" y="28" font-size="12" font-weight="700" fill="#14532d">1. Player at row 7 (below trunk)</text>
+      <!-- mini scene -->
+      <g transform="translate(20,40)">
+        <rect x="40" y="0"  width="40" height="80" fill="#dcfce7" stroke="#15803d"/>
+        <text x="60" y="48" text-anchor="middle" font-size="20">🌳</text>
+        <rect x="40" y="80" width="40" height="40" fill="none" stroke="#dc2626" stroke-dasharray="3 2"/>
+        <rect x="120" y="60" width="40" height="60" fill="#dbeafe" stroke="#1d4ed8"/>
+        <text x="140" y="100" text-anchor="middle" font-size="20">🧍</text>
+      </g>
+      <text x="220" y="60" font-size="11" fill="#1e40af">feetY = 224</text>
+      <text x="220" y="78" font-size="11" fill="#1e40af">baseY = 192</text>
+      <text x="220" y="104" font-size="11" font-weight="700" fill="#14532d">224 &gt; 192 → player IN FRONT</text>
+      <text x="220" y="124" font-size="11" fill="#14532d">Player covers the trunk. Correct.</text>
+    </g>
+
+    <!-- Position 2: at trunk (blocked) -->
+    <g transform="translate(560,300)">
+      <rect x="0" y="0" width="480" height="160" rx="8" fill="#f1f5f9" stroke="#64748b"/>
+      <text x="20" y="28" font-size="12" font-weight="700" fill="#334155">2. Player tries row 6 (trunk tile)</text>
+      <g transform="translate(20,40)">
+        <rect x="40" y="0"  width="40" height="80" fill="#dcfce7" stroke="#15803d"/>
+        <text x="60" y="48" text-anchor="middle" font-size="20">🌳</text>
+        <rect x="40" y="80" width="40" height="40" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="3 2"/>
+        <text x="60" y="108" text-anchor="middle" font-size="9" fill="#dc2626">blocked</text>
+        <!-- player pushed back to row 7 -->
+        <rect x="120" y="60" width="40" height="60" fill="#dbeafe" stroke="#1d4ed8" opacity="0.5"/>
+        <text x="140" y="100" text-anchor="middle" font-size="20" opacity="0.5">🧍</text>
+        <path d="M105 90 L120 90" stroke="#dc2626" stroke-width="2" marker-end="url(#arr)"/>
+      </g>
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0 0L10 5L0 10z" fill="#dc2626"/>
+        </marker>
+      </defs>
+      <text x="220" y="80" font-size="11" fill="#dc2626" font-weight="700">Collision rejects the move.</text>
+      <text x="220" y="100" font-size="11" fill="#334155">Player cannot stand at the trunk.</text>
+      <text x="220" y="120" font-size="11" fill="#334155">No ambiguous depth comparison happens.</text>
+    </g>
+
+    <!-- Position 3: above (behind) -->
+    <g transform="translate(560,480)">
+      <rect x="0" y="0" width="480" height="160" rx="8" fill="#fee2e2" stroke="#991b1b"/>
+      <text x="20" y="28" font-size="12" font-weight="700" fill="#7c2d12">3. Player at row 4 (above trunk, under canopy)</text>
+      <g transform="translate(20,40)">
+        <!-- tree drawn first (behind) -->
+        <rect x="40" y="0"  width="40" height="80" fill="#dcfce7" stroke="#15803d"/>
+        <text x="60" y="48" text-anchor="middle" font-size="20">🌳</text>
+        <rect x="40" y="80" width="40" height="40" fill="none" stroke="#dc2626" stroke-dasharray="3 2"/>
+        <!-- player at row 4 -->
+        <rect x="120" y="0" width="40" height="60" fill="#dbeafe" stroke="#1d4ed8"/>
+        <text x="140" y="40" text-anchor="middle" font-size="20">🧍</text>
+        <!-- canopy overhang covers player -->
+        <rect x="40" y="0"  width="40" height="80" fill="#dcfce7" stroke="#15803d" opacity="0.85"/>
+        <text x="60" y="48" text-anchor="middle" font-size="20">🌳</text>
+      </g>
+      <text x="220" y="60" font-size="11" fill="#1e40af">feetY = 128</text>
+      <text x="220" y="78" font-size="11" fill="#1e40af">baseY = 192</text>
+      <text x="220" y="104" font-size="11" font-weight="700" fill="#991b1b">128 &lt; 192 → player BEHIND tree</text>
+      <text x="220" y="124" font-size="11" fill="#7c2d12">Canopy overhang covers the player. Correct.</text>
+    </g>
+  </g>
+</svg>
