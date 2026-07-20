@@ -623,13 +623,24 @@ export class GameScene extends Phaser.Scene {
     const mapAssets = this.registry.get("mapAssets") as MapAssets;
     // Load from PocketBase — pass the parsed JSON object directly.
     this.load.tilemapTiledJSON("map", mapAssets.tiledJson);
+    // Read per-tileset tile sizes from the Tiled JSON so non-32x32
+    // tilesets (e.g. a 32x64 furniture sheet, a 32x128 tree sheet) are
+    // sliced correctly when loaded as spritesheets below. Falls back to
+    // the map's tile size for tilesets that don't override it (the
+    // common case — most tilesets match the map grid).
+    const rawJson = mapAssets.tiledJson as TiledMapJSON;
+    const mapTileW = rawJson.tilewidth || TILE_SIZE;
+    const mapTileH = rawJson.tileheight || TILE_SIZE;
     for (const ts of mapAssets.tilesets) {
       this.load.image(ts.name, ts.url);
       // Also load as a spritesheet so individual tiles can be drawn as
       // standalone sprites for object-layer decorations (see create()).
-      // Assumes a single, unspaced tileset grid matching the map's tile
-      // size — the same assumption the rest of the map pipeline makes.
-      this.load.spritesheet(`${ts.name}__tiles`, ts.url, { frameWidth: TILE_SIZE, frameHeight: TILE_SIZE });
+      // Uses the tileset's own tilewidth/tileheight if present, else the
+      // map's tile size. Assumes a single, unspaced grid per tileset.
+      const tsJson = rawJson.tilesets.find((t) => t.name === ts.name);
+      const fw = tsJson?.tilewidth ?? mapTileW;
+      const fh = tsJson?.tileheight ?? mapTileH;
+      this.load.spritesheet(`${ts.name}__tiles`, ts.url, { frameWidth: fw, frameHeight: fh });
     }
 
     // Load character sprite sheets (768x192). Frames are 32x64 so each frame
