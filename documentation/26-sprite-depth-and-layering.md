@@ -480,7 +480,53 @@ are not worth the cost here.
 
 ---
 
-## 10. What is not supported today
+## 10. Tile layers vs object layers — what each is for
+
+Tile layers in this codebase do two things, and that's it:
+
+1. **The `Walls` tile layer** (special-cased by name, case-insensitive):
+   - Collision grid — any non-zero tile = blocked. Built on both the
+     frontend (<ref_snippet file="/Users/lstep/Workspace/GIT/PixelEruv.o/frontend/src/scenes/GameScene.ts" lines="698-710" />) and the backend
+     (<ref_snippet file="/Users/lstep/Workspace/GIT/PixelEruv.o/backend/internal/worldsim/mapdata.go" lines="127-141" />).
+   - Rendered at a fixed `DEPTH_WALLS_FALLBACK = 500` — always under the
+     player (see [§8](#8-walls--when-can-the-player-render-behind-one)).
+   - No other tile-layer name gets special behavior. Just `Walls`.
+
+2. **Decoration tile layers** (`layer_type=decoration`, or the legacy bare
+   `Ground` name) — render only:
+   - `sort_mode=static` (default): fixed band from layer-list order. Used
+     for floors, rugs, shadows, ground decals, canopy/roof overlays —
+     anything that should never interleave with the player.
+   - `sort_mode=dynamic`: gets a flat `DEPTH_BAND_DYNAMIC` depth + a console
+     warning. **Per-tile Y-sort is not implemented.** Effectively useless
+     today — if you want Y-sort, use an object layer.
+
+What tile layers **cannot** do:
+
+- **Per-tile Y-sort against the player.** The whole layer is one Phaser
+  `TilemapLayer` with one depth value. There's no per-tile sprite to give
+  individual depths to. This is the fundamental limitation, and it's why the
+  chair/tree/wall examples all use object layers.
+- **Be picked up by name for any other special behavior.** Only `Walls` is
+  name-matched. (`Zones` and `Entities` are also name-matched, but they're
+  object layers, not tile layers.)
+
+### Practical split
+
+| Want | Use |
+|---|---|
+| Floor tiles, rugs, ground decals, shadows | Tile layer, `layer_type=decoration`, `sort_mode=static` |
+| Canopy / roof overlay (always on top) | Tile layer, `layer_type=decoration`, `sort_mode=static`, placed after the dynamic layer in the list |
+| Collision (boundary walls, map edge) | `Walls` tile layer |
+| Anything the player can walk in front of **and** behind (chair, tree, tall wall, fence, furniture) | **Object layer**, `layer_type=decoration`, `sort_mode=dynamic` |
+
+Tile layers are bulk, grid-aligned, no-per-tile-depth scenery + the one
+collision layer. Object layers are where anything that needs to Y-sort
+against the player has to live. That's the whole model.
+
+---
+
+## 11. What is not supported today
 
 1. **Per-tile Y-sort on tile layers.** If you set `sort_mode=dynamic` on a
    *tile* layer (not an object layer), the whole layer gets a flat
@@ -502,7 +548,7 @@ are not worth the cost here.
 
 ---
 
-## 11. Authoring checklist
+## 12. Authoring checklist
 
 For a sprite that must let the player walk in front of it and behind it:
 
@@ -516,7 +562,7 @@ For a sprite that must let the player walk in front of it and behind it:
    chunks. The frontend loader reads each tileset's `tilewidth`/`tileheight`
    from the Tiled JSON and slices the spritesheet accordingly, falling back
    to the map's tile size (32×32) when the tileset doesn't override it. See
-   [§12](#12-tileset-size-requirements) for the two supported tileset
+   [§13](#13-tileset-size-requirements) for the two supported tileset
    workflows and what does *not* work.
 5. **Mark only the collidable footprint** (e.g. the chair seat, the tree
    trunk base) as non-traversable in the `Walls` layer — not the full visual
@@ -532,7 +578,7 @@ decomposition requirement. The only hard rule is: **use an object layer with
 
 ---
 
-## 12. Tileset size requirements
+## 13. Tileset size requirements
 
 The frontend loader (`GameScene.preload`) reads each tileset's `tilewidth` and
 `tileheight` from the Tiled JSON and slices the spritesheet at that size,
@@ -577,7 +623,7 @@ size as described above.
 
 ---
 
-## 13. Where to look in the code
+## 14. Where to look in the code
 
 All of the logic lives in `frontend/src/scenes/GameScene.ts`:
 
