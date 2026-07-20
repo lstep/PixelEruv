@@ -9,7 +9,7 @@ import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
 import type { WsClient } from "../net/WsClient";
 import type { ChatPanel } from "./ChatPanel";
-import { fetchWorldOptions } from "../net/WorldOptions";
+import { fetchWorldOptions, refreshWorldOptions } from "../net/WorldOptions";
 
 const PILL_STYLE =
   "padding:8px 16px;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
@@ -33,6 +33,16 @@ export class TopMenu {
   private recGetRoom: (() => string | null) | null = null;
   private recActive = false; // true while a recording is active in the current room
   private recRecordingEnabled = true; // world_options.recording_enabled; fetched on setRecordingClient
+  // recPrevRoom tracks the last room seen by updateRecVisibility so we can
+  // re-fetch world_options (bypassing the module cache) when the player
+  // enters an A/V room — the cache otherwise holds the value from scene
+  // start forever, so toggling recording_enabled in the admin panel would
+  // never reach an already-loaded client.
+  private recPrevRoom: string | null = null;
+  // recLastFetchMs is the timestamp of the last recording_enabled refresh;
+  // used to throttle the periodic re-fetch while admin + in an A/V room.
+  private recLastFetchMs = 0;
+  private recFetchInflight = false;
   private setNameHandler: ((name: string) => void) | null = null;
   private setSpriteBaseHandler: ((spriteBase: string) => void) | null = null;
   private setPlayerOptionsHandler: ((options: string) => void) | null = null;
@@ -495,6 +505,9 @@ export class TopMenu {
     this.recIsAdmin = null;
     this.recGetRoom = null;
     this.recActive = false;
+    this.recPrevRoom = null;
+    this.recLastFetchMs = 0;
+    this.recFetchInflight = false;
     this.closeRecMenu();
   }
 
@@ -516,9 +529,35 @@ export class TopMenu {
 
   // updateRecVisibility shows/hides the record button based on admin status
   // and whether the player is in an A/V room. Called from the scene update.
+  // It also re-fetches world_options.recording_enabled on room entry and
+  // periodically (every ~10s) while an admin is in an A/V room, so that
+  // toggling the setting in the admin panel takes effect without a page
+  // reload. fetchWorldOptions caches forever otherwise.
   updateRecVisibility(): void {
     const admin = this.recIsAdmin?.() ?? false;
     const room = this.recGetRoom?.() ?? null;
+
+    // Re-fetch the gate when entering a room, and every 10s while in one.
+    // Only admins can hit the admin-gated endpoint; skip for non-admins
+    // (they never see the button anyway).
+    if (admin && room !== null && !this.recFetchInflight) {
+      const now = performance.now();
+      const enteredRoom = this.recPrevRoom !== room;
+      const due = now - this.recLastFetchMs > 10_000;
+      if (enteredRoom || due) {
+        this.recFetchInflight = true;
+        this.recLastFetchMs = now;
+        refreshWorldOptions()
+          .then((opts) => {
+            if (opts) this.recRecordingEnabled = opts.recording_enabled;
+          })
+          .finally(() => {
+            this.recFetchInflight = false;
+          });
+      }
+    }
+    this.recPrevRoom = room;
+
     const shouldShow = admin && room !== null && this.recRecordingEnabled;
     this.recBtn.style.display = shouldShow ? "block" : "none";
     if (!shouldShow) {

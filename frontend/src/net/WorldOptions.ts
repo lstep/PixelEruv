@@ -48,3 +48,14 @@ export async function fetchWorldOptions(): Promise<WorldOptionsYouTube | null> {
 export function clearWorldOptionsCache(): void {
   cached = null;
 }
+
+// refreshWorldOptions clears the cache and re-fetches the admin-gated
+// world_options subset. Use this when a field that the client gates on
+// (e.g. recording_enabled) may have changed server-side since the first
+// fetch — the normal fetchWorldOptions() returns a stale cached value
+// forever after the first success. Returns the fresh result (or null).
+export async function refreshWorldOptions(): Promise<WorldOptionsYouTube | null> {
+  cached = null;
+  inflight = null;
+  return fetchWorldOptions();
+}
