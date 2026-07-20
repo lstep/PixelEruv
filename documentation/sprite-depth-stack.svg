@@ -1,0 +1,77 @@
+<svg width="100%" viewBox="0 0 1100 760" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>Sprite Depth Stack — bands from back to front</title>
+  <desc>Vertical stack of depth bands used by GameScene: static-below decorations (0,1,2...), Walls fallback (500), shared dynamic band (1000) where avatars and dynamic decorations Y-sort by base Y, and static-above overlays (2000+). Each slab lists which Tiled properties place a layer there and what kind of content lives in it.</desc>
+
+  <rect width="1100" height="760" fill="#fafaf9"/>
+
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">Sprite Depth Stack</text>
+  <text x="550" y="56" text-anchor="middle" font-size="13" fill="#64748b">One number per sprite decides what draws on top. Smaller depth = further back; larger depth = further front.</text>
+
+  <!-- Depth axis on the left -->
+  <line x1="80" y1="100" x2="80" y2="700" stroke="#475569" stroke-width="1.5"/>
+  <text x="60" y="120" text-anchor="end" font-size="11" fill="#64748b">depth 0 (back)</text>
+  <text x="60" y="700" text-anchor="end" font-size="11" fill="#64748b">depth 2000+ (front)</text>
+  <path d="M80 700 L75 690 L85 690 Z" fill="#475569"/>
+
+  <!-- ====================== Static above (2000+) ====================== -->
+  <g>
+    <rect x="120" y="120" width="940" height="100" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
+    <text x="140" y="146" font-size="14" font-weight="700" fill="#4c1d95">Static ABOVE  ·  depth = 2000 + n</text>
+    <text x="140" y="166" font-size="12" fill="#5b21b6">Tiled: layer_type=decoration, sort_mode=static, placed AFTER the first dynamic layer in the layer list.</text>
+    <text x="140" y="184" font-size="12" fill="#5b21b6">Always drawn on top of every avatar and every dynamic object, regardless of Y position.</text>
+    <text x="140" y="204" font-size="11" fill="#7c3aed">Examples: tree canopy, roof overlay, ceiling beams.</text>
+  </g>
+
+  <!-- ====================== Dynamic band (1000) ====================== -->
+  <g>
+    <rect x="120" y="240" width="940" height="220" rx="10" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+    <text x="140" y="266" font-size="14" font-weight="700" fill="#1e3a8a">Shared DYNAMIC band  ·  depth = 1000 + (baseY / mapHeightPixels)</text>
+    <text x="140" y="286" font-size="12" fill="#1e40af">Avatars AND dynamic decorations share this band. They Y-sort against each other every frame.</text>
+    <text x="140" y="304" font-size="12" fill="#1e40af">Larger baseY (further down the map) = larger depth = drawn later = appears in FRONT.</text>
+
+    <!-- Three example tiles inside the band, sorted by baseY -->
+    <g>
+      <rect x="160" y="324" width="220" height="120" rx="6" fill="#fff" stroke="#2563eb"/>
+      <text x="270" y="346" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Tree (object)</text>
+      <text x="270" y="364" text-anchor="middle" font-size="11" fill="#64748b">baseY = 96 px</text>
+      <text x="270" y="380" text-anchor="middle" font-size="11" fill="#64748b">(row 3)</text>
+      <text x="270" y="404" text-anchor="middle" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#b45309">depth ≈ 1000.24</text>
+      <text x="270" y="424" text-anchor="middle" font-size="10" fill="#64748b">drawn first (back)</text>
+    </g>
+    <g>
+      <rect x="400" y="324" width="220" height="120" rx="6" fill="#fff" stroke="#2563eb"/>
+      <text x="510" y="346" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Player avatar</text>
+      <text x="510" y="364" text-anchor="middle" font-size="11" fill="#64748b">feetY = 160 px</text>
+      <text x="510" y="380" text-anchor="middle" font-size="11" fill="#64748b">(row 5)</text>
+      <text x="510" y="404" text-anchor="middle" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#b45309">depth ≈ 1000.40</text>
+      <text x="510" y="424" text-anchor="middle" font-size="10" fill="#64748b">drawn second</text>
+    </g>
+    <g>
+      <rect x="640" y="324" width="220" height="120" rx="6" fill="#fff" stroke="#2563eb"/>
+      <text x="750" y="346" text-anchor="middle" font-size="12" font-weight="700" fill="#0f172a">Chair (object)</text>
+      <text x="750" y="364" text-anchor="middle" font-size="11" fill="#64748b">baseY = 192 px</text>
+      <text x="750" y="380" text-anchor="middle" font-size="11" fill="#64748b">(row 6)</text>
+      <text x="750" y="404" text-anchor="middle" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#b45309">depth ≈ 1000.48</text>
+      <text x="750" y="424" text-anchor="middle" font-size="10" fill="#64748b">drawn last (front)</text>
+    </g>
+    <text x="900" y="386" font-size="11" fill="#1e40af">↑ sorted by</text>
+    <text x="900" y="402" font-size="11" fill="#1e40af">baseY ascending</text>
+  </g>
+
+  <!-- ====================== Walls fallback (500) ====================== -->
+  <g>
+    <rect x="120" y="480" width="940" height="60" rx="10" fill="#f1f5f9" stroke="#647b8b" stroke-width="1.5" stroke-dasharray="4 3"/>
+    <text x="140" y="504" font-size="13" font-weight="700" fill="#334155">Walls fallback  ·  depth = 500  (not a decoration layer)</text>
+    <text x="140" y="524" font-size="11" fill="#64748b">Reserved "Walls" tile layer. Collision fallback. Sits between static-below and the dynamic band.</text>
+  </g>
+
+  <!-- ====================== Static below (0,1,2...) ====================== -->
+  <g>
+    <rect x="120" y="560" width="940" height="130" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="1.5"/>
+    <text x="140" y="586" font-size="14" font-weight="700" fill="#14532d">Static BELOW  ·  depth = 0, 1, 2 ... (one band per layer)</text>
+    <text x="140" y="606" font-size="12" fill="#166534">Tiled: layer_type=decoration, sort_mode=static, placed BEFORE the first dynamic layer in the layer list.</text>
+    <text x="140" y="624" font-size="12" fill="#166534">Always drawn under avatars. One fixed depth per layer; objects inside do not Y-sort.</text>
+    <text x="140" y="650" font-size="11" fill="#15803d">band 0: "Ground" (base floor)   band 1: "Shadows"   band 2: "Rugs" (floor detail)</text>
+    <text x="140" y="672" font-size="11" fill="#15803d">Layer list order = altitude. Reorder layers in Tiled to change stacking.</text>
+  </g>
+</svg>

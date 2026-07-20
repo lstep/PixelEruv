@@ -1,0 +1,120 @@
+<svg width="100%" viewBox="0 0 1100 640" role="img" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, 'Segoe UI', Roboto, sans-serif">
+  <title>One 32×64 sprite vs two 32×32 sprites — the split problem</title>
+  <desc>Side-by-side comparison of authoring a chair as a single 32x64 tile-object (one depth value, never visually splits) versus two stacked 32x32 tile-objects (two depth values; the player can stand between them and render in front of the back but behind the seat, which looks broken). The single-sprite approach is recommended.</desc>
+
+  <rect width="1100" height="640" fill="#fafaf9"/>
+
+  <text x="550" y="34" text-anchor="middle" font-size="22" font-weight="700" fill="#0f172a">One 32×64 sprite vs two 32×32 sprites</text>
+  <text x="550" y="56" text-anchor="middle" font-size="13" fill="#64748b">Same chair, two authoring strategies. The single-sprite version has one depth value and can never visually split.</text>
+
+  <!-- =================== Left: one 32x64 (recommended) =================== -->
+  <g>
+    <rect x="40" y="90" width="510" height="530" rx="10" fill="#fff" stroke="#15803d" stroke-width="2"/>
+    <text x="295" y="118" text-anchor="middle" font-size="14" font-weight="700" fill="#14532d">Option A — one 32×64 sprite (recommended)</text>
+
+    <g transform="translate(70,150)">
+      <!-- grid 4x6, 64px each -->
+      <g stroke="#e2e8f0" stroke-width="1">
+        <line x1="0"  y1="0"   x2="0"  y2="384"/>
+        <line x1="64" y1="0"   x2="64" y2="384"/>
+        <line x1="128" y1="0"  x2="128" y2="384"/>
+        <line x1="192" y1="0"  x2="192" y2="384"/>
+        <line x1="256" y1="0"  x2="256" y2="384"/>
+        <line x1="0" y1="0"   x2="256" y2="0"/>
+        <line x1="0" y1="64"  x2="256" y2="64"/>
+        <line x1="0" y1="128" x2="256" y2="128"/>
+        <line x1="0" y1="192" x2="256" y2="192"/>
+        <line x1="0" y1="256" x2="256" y2="256"/>
+        <line x1="0" y1="320" x2="256" y2="320"/>
+        <line x1="0" y1="384" x2="256" y2="384"/>
+      </g>
+      <text x="-8" y="160" text-anchor="end" font-size="10" fill="#94a3b8">r5</text>
+      <text x="-8" y="224" text-anchor="end" font-size="10" fill="#94a3b8">r6</text>
+      <text x="-8" y="288" text-anchor="end" font-size="10" fill="#94a3b8">r7</text>
+
+      <!-- chair: 32x64 = 64x128 in 2x grid. base at row 6 bottom (y=256). spans rows 5-6 -->
+      <rect x="96" y="128" width="64" height="128" fill="#fde68a" stroke="#b45309" stroke-width="2"/>
+      <text x="128" y="180" text-anchor="middle" font-size="11" fill="#7c2d12">chair back</text>
+      <text x="128" y="230" text-anchor="middle" font-size="11" fill="#7c2d12">chair seat</text>
+      <line x1="80" y1="256" x2="176" y2="256" stroke="#b45309" stroke-width="2"/>
+      <text x="180" y="252" font-size="10" fill="#b45309">baseY=192</text>
+
+      <!-- one depth label -->
+      <rect x="180" y="160" width="120" height="40" rx="4" fill="#fff7ed" stroke="#b45309"/>
+      <text x="240" y="178" text-anchor="middle" font-size="10" font-weight="700" fill="#7c2d12">ONE depth</text>
+      <text x="240" y="194" text-anchor="middle" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7c2d12">1000.48</text>
+
+      <!-- player at row 5.5 (between) — no split possible -->
+      <rect x="160" y="160" width="64" height="64" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+      <text x="192" y="200" text-anchor="middle" font-size="24">🧍</text>
+      <text x="192" y="148" text-anchor="middle" font-size="9" fill="#1d4ed8">player at row 5.5</text>
+
+      <!-- collision tile -->
+      <rect x="96" y="192" width="64" height="64" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3"/>
+    </g>
+
+    <text x="60" y="560" font-size="12" font-weight="700" fill="#14532d">✓ One depth value — can never visually split.</text>
+    <text x="60" y="578" font-size="11" fill="#166534">✓ One object to author, one collision tile.</text>
+    <text x="60" y="596" font-size="11" fill="#166534">✓ Player at any reachable Y compares against one number.</text>
+  </g>
+
+  <!-- =================== Right: two 32x32 (split risk) =================== -->
+  <g>
+    <rect x="570" y="90" width="510" height="530" rx="10" fill="#fff" stroke="#991b1b" stroke-width="2"/>
+    <text x="825" y="118" text-anchor="middle" font-size="14" font-weight="700" fill="#7c2d12">Option B — two 32×32 sprites (split risk)</text>
+
+    <g transform="translate(600,150)">
+      <g stroke="#e2e8f0" stroke-width="1">
+        <line x1="0"  y1="0"   x2="0"  y2="384"/>
+        <line x1="64" y1="0"   x2="64" y2="384"/>
+        <line x1="128" y1="0"  x2="128" y2="384"/>
+        <line x1="192" y1="0"  x2="192" y2="384"/>
+        <line x1="256" y1="0"  x2="256" y2="384"/>
+        <line x1="0" y1="0"   x2="256" y2="0"/>
+        <line x1="0" y1="64"  x2="256" y2="64"/>
+        <line x1="0" y1="128" x2="256" y2="128"/>
+        <line x1="0" y1="192" x2="256" y2="192"/>
+        <line x1="0" y1="256" x2="256" y2="256"/>
+        <line x1="0" y1="320" x2="256" y2="320"/>
+        <line x1="0" y1="384" x2="256" y2="384"/>
+      </g>
+      <text x="-8" y="160" text-anchor="end" font-size="10" fill="#94a3b8">r5</text>
+      <text x="-8" y="224" text-anchor="end" font-size="10" fill="#94a3b8">r6</text>
+      <text x="-8" y="288" text-anchor="end" font-size="10" fill="#94a3b8">r7</text>
+
+      <!-- back tile: 32x32 at row 5, baseY=160 -->
+      <rect x="96" y="128" width="64" height="64" fill="#fde68a" stroke="#b45309" stroke-width="2"/>
+      <text x="128" y="166" text-anchor="middle" font-size="11" fill="#7c2d12">back</text>
+      <line x1="80" y1="192" x2="176" y2="192" stroke="#b45309" stroke-width="1.5" stroke-dasharray="3 2"/>
+      <text x="180" y="188" font-size="9" fill="#b45309">baseY=160</text>
+
+      <!-- seat tile: 32x32 at row 6, baseY=192 -->
+      <rect x="96" y="192" width="64" height="64" fill="#fde68a" stroke="#b45309" stroke-width="2"/>
+      <text x="128" y="230" text-anchor="middle" font-size="11" fill="#7c2d12">seat</text>
+      <line x1="80" y1="256" x2="176" y2="256" stroke="#b45309" stroke-width="2"/>
+      <text x="180" y="252" font-size="9" fill="#b45309">baseY=192</text>
+
+      <!-- two depth labels -->
+      <rect x="180" y="136" width="120" height="32" rx="4" fill="#fff7ed" stroke="#b45309"/>
+      <text x="240" y="156" text-anchor="middle" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7c2d12">back: 1000.40</text>
+      <rect x="180" y="200" width="120" height="32" rx="4" fill="#fff7ed" stroke="#b45309"/>
+      <text x="240" y="220" text-anchor="middle" font-size="10" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#7c2d12">seat: 1000.48</text>
+
+      <!-- player at row 5.5 (feetY=176) — SPLIT -->
+      <rect x="160" y="160" width="64" height="64" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+      <text x="192" y="200" text-anchor="middle" font-size="24">🧍</text>
+      <text x="192" y="148" text-anchor="middle" font-size="9" fill="#dc2626" font-weight="700">player feetY=176</text>
+
+      <!-- arrows showing comparison -->
+      <text x="250" y="178" font-size="9" fill="#14532d">176 &gt; 160 → in front of back</text>
+      <text x="250" y="244" font-size="9" fill="#991b1b">176 &lt; 192 → behind seat</text>
+
+      <!-- collision tile on seat only -->
+      <rect x="96" y="192" width="64" height="64" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="4 3"/>
+    </g>
+
+    <text x="590" y="560" font-size="12" font-weight="700" fill="#991b1b">✗ Two depth values — player can stand between them.</text>
+    <text x="590" y="578" font-size="11" fill="#7c2d12">✗ At feetY=176: in front of back, behind seat → looks broken.</text>
+    <text x="590" y="596" font-size="11" fill="#7c2d12">✗ Requires blocking row 5.5 to hide the artifact (more collision work).</text>
+  </g>
+</svg>
