@@ -52,7 +52,6 @@ build: proto
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/seed-sprites ./cmd/seed-sprites
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/pb-collections ./cmd/pb-collections
 	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/validate-map ./cmd/validate-map
-	cd backend && GOOS=$(GOOS) GOARCH=$(GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/audit-assets ./cmd/audit-assets
 
 # Sync root assets into frontend/public/ so Vite serves them in dev and bundles
 # them into dist/web/. The root maps/ and spritesheets/ directories are the
@@ -64,7 +63,14 @@ sync-assets: audit-assets sync-maps sync-sprites sync-icon sync-game-assets
 # budget. Runs before sync-maps/sync-sprites so `make up`, `make web`, and
 # `make dist` all fail fast on oversized tilesets. Defaults: 8192px max dim,
 # 2MiB max size. Override via AUDIT_MAX_DIM / AUDIT_MAX_BYTES env vars.
-audit-assets: build
+#
+# Builds natively (via `go env` at recipe time) so it always runs on the dev
+# host regardless of the GOOS/GOARCH override on dist-x86. Not part of `build`
+# because it's a dev-time check, not a deployable binary (no Docker image uses
+# it).
+audit-assets:
+	@mkdir -p $(DIST_BIN)
+	cd backend && GOOS=$$(go env GOOS) GOARCH=$$(go env GOARCH) go build -ldflags="$(LDFLAGS)" -o ../$(DIST_BIN)/audit-assets ./cmd/audit-assets
 	$(DIST_BIN)/audit-assets maps spritesheets assets/sprites
 
 sync-maps:
