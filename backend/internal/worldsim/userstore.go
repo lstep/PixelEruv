@@ -2,6 +2,7 @@ package worldsim
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -259,12 +260,38 @@ func (s *UserStore) create(user *UserRecord) error {
 	if user.LastSeenAt != 0 {
 		record.Set("last_seen_at", user.LastSeenAt)
 	}
+	// Re-promote to admin if this player belongs to the configured admin
+	// user (PB_ADMIN_EMAIL). Mirrors the seeding in migration
+	// 1753400000_seed_admin_player.go so that deleting one's players row and
+	// reconnecting restores is_admin=true instead of silently dropping it.
+	if user.IsAdmin || s.isAdminUser(user.UserID) {
+		record.Set("is_admin", true)
+		user.IsAdmin = true
+	}
 	if err := s.app.Save(record); err != nil {
 		return err
 	}
 
 	user.ID = record.Id
 	return nil
+}
+
+// isAdminUser returns true if the users-collection record with the given ID
+// has an email matching PB_ADMIN_EMAIL (default admin@pixeleruv.local). Used
+// to re-promote a deleted admin player row on reconnect.
+func (s *UserStore) isAdminUser(userID string) bool {
+	if userID == "" {
+		return false
+	}
+	adminEmail := os.Getenv("PB_ADMIN_EMAIL")
+	if adminEmail == "" {
+		adminEmail = "admin@pixeleruv.local"
+	}
+	u, err := s.app.FindRecordById("users", userID)
+	if err != nil || u == nil {
+		return false
+	}
+	return u.GetString("email") == adminEmail
 }
 
 func recordToUser(r *core.Record) *UserRecord {
