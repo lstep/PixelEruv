@@ -94,9 +94,7 @@ func main() {
 
 	// Subscribe to extension.demo.options for hot-reloadable config.
 	if err := extkit.SubscribeOptions(nc, extID, &opts, &mu, logger, func() {
-		mu.Lock()
 		logger.Info("options updated", "log_zone_events", opts.LogZoneEvents)
-		mu.Unlock()
 	}); err != nil {
 		logger.Error("subscribe options", "err", err)
 		os.Exit(1)
