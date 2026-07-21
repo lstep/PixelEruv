@@ -291,7 +291,7 @@ func (s *UserStore) isAdminUser(userID string) bool {
 	if err != nil || u == nil {
 		return false
 	}
-	return u.GetString("email") == adminEmail
+	return u.Email() == adminEmail
 }
 
 func recordToUser(r *core.Record) *UserRecord {
