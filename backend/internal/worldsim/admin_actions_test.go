@@ -25,14 +25,16 @@ func TestClientKick_Despawn(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
-		nc:              nc,
-		defaultMap:      "main",
-		logger:          logger,
-		tracer:          otel.Tracer("test"),
-		entities:        map[string]*Entity{},
-		clients:         map[string]*Entity{},
-		entityIDToClient: map[string]string{},
-		lastSavedPos:    map[string]savedPos{},
+		World: World{
+			entities:        map[string]*Entity{},
+			clients:         map[string]*Entity{},
+			entityIDToClient: map[string]string{},
+		},
+		nc:           nc,
+		defaultMap:   "main",
+		logger:       logger,
+		tracer:       otel.Tracer("test"),
+		lastSavedPos: map[string]savedPos{},
 	}
 	a := &Entity{
 		ID:             "e_a",
@@ -114,8 +116,10 @@ func TestClientKick_NotConnected(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{}, clients: map[string]*Entity{},
+		},
 		nc: nc, defaultMap: "main", logger: logger, tracer: otel.Tracer("test"),
-		entities: map[string]*Entity{}, clients: map[string]*Entity{},
 	}
 	if err := sim.subscribeClientKick(); err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -153,8 +157,10 @@ func TestAdminSetName(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{}, clients: map[string]*Entity{},
+		},
 		nc: nc, defaultMap: "main", logger: logger, tracer: otel.Tracer("test"),
-		entities: map[string]*Entity{}, clients: map[string]*Entity{},
 	}
 	sim.entities["e1"] = &Entity{
 		ID:       "e1",
@@ -195,8 +201,10 @@ func TestAdminSetStatus_Invalid(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{}, clients: map[string]*Entity{},
+		},
 		nc: nc, defaultMap: "main", logger: logger, tracer: otel.Tracer("test"),
-		entities: map[string]*Entity{}, clients: map[string]*Entity{},
 	}
 	sim.entities["e1"] = &Entity{ID: "e1", Position: &pb.Position{X: 1, Y: 1, MapId: "main"}, Status: statusAvailable}
 	if err := sim.subscribeAdminSetStatus(); err != nil {
@@ -222,10 +230,12 @@ func TestAdminChat_Global(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities:        map[string]*Entity{},
+			clients:         map[string]*Entity{},
+			entityIDToClient: map[string]string{},
+		},
 		nc: nc, defaultMap: "main", logger: logger, tracer: otel.Tracer("test"),
-		entities:        map[string]*Entity{},
-		clients:         map[string]*Entity{},
-		entityIDToClient: map[string]string{},
 	}
 	sim.entities["e_npc"] = &Entity{
 		ID:          "e_npc",
@@ -272,8 +282,10 @@ func TestAdminChat_UnknownChannel(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{}, clients: map[string]*Entity{},
+		},
 		nc: nc, defaultMap: "main", logger: logger, tracer: otel.Tracer("test"),
-		entities: map[string]*Entity{}, clients: map[string]*Entity{},
 	}
 	sim.entities["e1"] = &Entity{ID: "e1", Position: &pb.Position{X: 1, Y: 1, MapId: "main"}}
 	if err := sim.subscribeAdminChat(); err != nil {
@@ -300,8 +312,10 @@ func TestAdminChat_MissingEntity(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{}, clients: map[string]*Entity{},
+		},
 		nc: nc, defaultMap: "main", logger: logger, tracer: otel.Tracer("test"),
-		entities: map[string]*Entity{}, clients: map[string]*Entity{},
 	}
 	if err := sim.subscribeAdminChat(); err != nil {
 		t.Fatalf("subscribe: %v", err)

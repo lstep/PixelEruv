@@ -78,8 +78,10 @@ func TestMovement_PlayerRadius(t *testing.T) {
 
 func newMovementSim(zones []*Zone) *Simulator {
 	s := &Simulator{
-		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
-		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		World: World{
+			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		},
 		extMgr: NewExtensionManager(slog.Default()),
 	}
 	for y := range s.maps["map1"].Collision {

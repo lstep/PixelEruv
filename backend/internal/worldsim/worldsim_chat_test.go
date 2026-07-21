@@ -33,15 +33,17 @@ func newChatTestSim(t *testing.T) (*Simulator, *nats.Conn) {
 	t.Cleanup(subNc.Close)
 
 	sim := &Simulator{
-		nc:              pubNc,
-		defaultMap:      "test-map",
-		zones:           map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:          NewExtensionManager(logger),
-		logger:          logger,
-		tracer:          otel.Tracer("test"),
-		entities:        map[string]*Entity{},
-		clients:         map[string]*Entity{},
-		entityIDToClient: map[string]string{},
+		World: World{
+			zones:            map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities:         map[string]*Entity{},
+			clients:          map[string]*Entity{},
+			entityIDToClient: map[string]string{},
+		},
+		nc:         pubNc,
+		defaultMap: "test-map",
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 	return sim, subNc
 }

@@ -15,8 +15,10 @@ func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 	// Wall 0.2 tiles thick at feet-Y [5.0, 5.2], spanning X.
 	zones := []*Zone{{ID: "thin", Shape: ShapeRect, X: 0, Y: 5, W: 20, H: 0.2}}
 	s := &Simulator{
-		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
-		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		World: World{
+			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		},
 		extMgr: NewExtensionManager(slog.Default()),
 	}
 	for y := range s.maps["map1"].Collision {
@@ -63,8 +65,10 @@ func TestTick_ThinWallBlocksMovement(t *testing.T) {
 	// Wall 0.1 tiles thick at feet-Y [5.05, 5.15], spanning X.
 	zones := []*Zone{{ID: "razor", Shape: ShapeRect, X: 0, Y: 5.05, W: 20, H: 0.1}}
 	s := &Simulator{
-		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
-		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		World: World{
+			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		},
 		extMgr: NewExtensionManager(slog.Default()),
 	}
 	for y := range s.maps["map1"].Collision {

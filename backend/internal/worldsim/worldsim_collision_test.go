@@ -19,8 +19,10 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 	// playerCollisionRadius (0.1) → effective X[4.9,6.1], Y[4.9,6.1].
 	zones := []*Zone{{ID: "w1", Shape: ShapeRect, X: 5, Y: 5, W: 1, H: 1}}
 	s := &Simulator{
-		zones:  map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
-		maps:   map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		World: World{
+			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
+			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
+		},
 		extMgr: NewExtensionManager(slog.Default()),
 	}
 	for y := range s.maps["map1"].Collision {

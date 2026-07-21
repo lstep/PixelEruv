@@ -11,25 +11,25 @@ import (
 // statsResponse is the JSON shape returned by the worldsim.stats.get
 // request-reply handler. The audit service renders it in the /world page.
 type statsResponse struct {
-	TickHz        int            `json:"tick_hz"`
-	TickCount     uint64         `json:"tick_count"`
-	Uptime        string         `json:"uptime"`
-	TotalEntities int            `json:"total_entities"`
-	TotalPlayers  int            `json:"total_players"`
-	Maps          []mapStats     `json:"maps"`
-	Players       []playerStats  `json:"players"`
-	Extensions    []extStats     `json:"extensions"`
+	TickHz        int           `json:"tick_hz"`
+	TickCount     uint64        `json:"tick_count"`
+	Uptime        string        `json:"uptime"`
+	TotalEntities int           `json:"total_entities"`
+	TotalPlayers  int           `json:"total_players"`
+	Maps          []mapStats    `json:"maps"`
+	Players       []playerStats `json:"players"`
+	Extensions    []extStats    `json:"extensions"`
 }
 
 type mapStats struct {
-	Name         string      `json:"name"`
-	Width        int         `json:"width"`
-	Height       int         `json:"height"`
-	PlayerCount  int         `json:"player_count"`
-	EntityCount  int         `json:"entity_count"`
-	ZoneCount    int         `json:"zone_count"`
-	SpawnZones   int         `json:"spawn_zones"`
-	Zones        []zoneStats `json:"zones"`
+	Name        string      `json:"name"`
+	Width       int         `json:"width"`
+	Height      int         `json:"height"`
+	PlayerCount int         `json:"player_count"`
+	EntityCount int         `json:"entity_count"`
+	ZoneCount   int         `json:"zone_count"`
+	SpawnZones  int         `json:"spawn_zones"`
+	Zones       []zoneStats `json:"zones"`
 }
 
 type zoneStats struct {
@@ -55,11 +55,11 @@ type playerStats struct {
 }
 
 type extStats struct {
-	ID               string `json:"id"`
-	HeartbeatAge     string `json:"heartbeat_age"`
-	Alive            bool   `json:"alive"`
-	InputTriggers    int    `json:"input_triggers"`
-	GateTriggers     int    `json:"gate_triggers"`
+	ID            string `json:"id"`
+	HeartbeatAge  string `json:"heartbeat_age"`
+	Alive         bool   `json:"alive"`
+	InputTriggers int    `json:"input_triggers"`
+	GateTriggers  int    `json:"gate_triggers"`
 }
 
 // subscribeStats sets up the worldsim.stats.get request-reply handler.
@@ -212,7 +212,7 @@ func (s *Simulator) buildStatsResponse() ([]byte, error) {
 
 	resp := statsResponse{
 		TickHz:        s.tickHz,
-		TickCount:     s.tickCount,
+		TickCount:     s.Tick.TickCount,
 		Uptime:        now.Sub(s.startTime).Round(time.Second).String(),
 		TotalEntities: len(s.entities),
 		TotalPlayers:  len(s.clients),

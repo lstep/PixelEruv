@@ -25,12 +25,14 @@ func TestEntitiesQuery_Filter(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
 		nc:         nc,
 		defaultMap: "main",
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
-		entities:   map[string]*Entity{},
-		clients:    map[string]*Entity{},
 	}
 	// Two maps, three base entities, two players.
 	sim.entities["e_wall1"] = &Entity{
@@ -144,12 +146,14 @@ func TestEntityGet(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
 		nc:         nc,
 		defaultMap: "main",
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
-		entities:   map[string]*Entity{},
-		clients:    map[string]*Entity{},
 	}
 	sim.entities["e1"] = &Entity{
 		ID:         "e1",

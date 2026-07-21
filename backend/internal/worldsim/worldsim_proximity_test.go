@@ -33,14 +33,16 @@ func TestMobileZone_FollowsAvatar(t *testing.T) {
 
 	// No static zones — only mobile proximity zones.
 	sim := &Simulator{
-		nc:      pubNc,
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:  NewExtensionManager(logger),
-		logger:  logger,
-		tracer:  otel.Tracer("test"),
-		entities: map[string]*Entity{},
-		clients:  map[string]*Entity{},
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	// Player A at (5, 5), player B at (10, 10) — far apart.
@@ -195,23 +197,25 @@ func TestProximityClustering_TwoPlayersJoin(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:      pubNc,
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:  NewExtensionManager(logger),
-		logger:  logger,
-		tracer:  otel.Tracer("test"),
-		entities: map[string]*Entity{},
-		clients:  map[string]*Entity{},
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
-			ID:             id,
-			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
-			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
-			currentZones:   make(map[string]bool),
-			spawnedTo:      make(map[string]bool),
+			ID:              id,
+			Position:        &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession:  &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:    make(map[string]bool),
+			spawnedTo:       make(map[string]bool),
 			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
@@ -321,23 +325,25 @@ func TestProximityClustering_ThreePlayerChain(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:      pubNc,
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:  NewExtensionManager(logger),
-		logger:  logger,
-		tracer:  otel.Tracer("test"),
-		entities: map[string]*Entity{},
-		clients:  map[string]*Entity{},
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
-			ID:             id,
-			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
-			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
-			currentZones:   make(map[string]bool),
-			spawnedTo:      make(map[string]bool),
+			ID:              id,
+			Position:        &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession:  &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:    make(map[string]bool),
+			spawnedTo:       make(map[string]bool),
 			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
@@ -425,23 +431,25 @@ func TestProximityClustering_ZoneOverride(t *testing.T) {
 	// One static av_enabled zone covering (5,5) area, plus mobile zones.
 	avZone := &Zone{ID: "av1", Shape: ShapeRect, X: 4, Y: 4, W: 4, H: 4, AvEnabled: true}
 	sim := &Simulator{
-		nc:      pubNc,
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry([]*Zone{avZone}, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry([]*Zone{avZone}, 20, 20)},
-		extMgr:  NewExtensionManager(logger),
-		logger:  logger,
-		tracer:  otel.Tracer("test"),
-		entities: map[string]*Entity{},
-		clients:  map[string]*Entity{},
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
-			ID:             id,
-			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
-			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
-			currentZones:   make(map[string]bool),
-			spawnedTo:      make(map[string]bool),
+			ID:              id,
+			Position:        &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession:  &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:    make(map[string]bool),
+			spawnedTo:       make(map[string]bool),
 			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
@@ -525,23 +533,25 @@ func TestProximityClustering_StableGroupID(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:      pubNc,
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:  NewExtensionManager(logger),
-		logger:  logger,
-		tracer:  otel.Tracer("test"),
-		entities: map[string]*Entity{},
-		clients:  map[string]*Entity{},
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
-			ID:             id,
-			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
-			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
-			currentZones:   make(map[string]bool),
-			spawnedTo:      make(map[string]bool),
+			ID:              id,
+			Position:        &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession:  &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:    make(map[string]bool),
+			spawnedTo:       make(map[string]bool),
 			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
@@ -713,23 +723,25 @@ func TestProximityClustering_Hysteresis(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:          pubNc,
-		defaultMap:  "test-map",
-		zones:       map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 30, 30)},
-		extMgr:      NewExtensionManager(logger),
-		logger:      logger,
-		tracer:      otel.Tracer("test"),
-		entities:    map[string]*Entity{},
-		clients:     map[string]*Entity{},
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 30, 30)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
+		defaultMap: "test-map",
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
-			ID:             id,
-			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
-			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
-			currentZones:   make(map[string]bool),
-			spawnedTo:      make(map[string]bool),
+			ID:              id,
+			Position:        &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession:  &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:    make(map[string]bool),
+			spawnedTo:       make(map[string]bool),
 			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{
@@ -854,23 +866,25 @@ func TestProximityClustering_MovementGating(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:          pubNc,
-		defaultMap:  "test-map",
-		zones:       map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 30, 30)},
-		extMgr:      NewExtensionManager(logger),
-		logger:      logger,
-		tracer:      otel.Tracer("test"),
-		entities:    map[string]*Entity{},
-		clients:     map[string]*Entity{},
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 30, 30)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
+		defaultMap: "test-map",
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
-			ID:             id,
-			Position:       &pb.Position{X: x, Y: y, MapId: "test-map"},
-			NetworkSession: &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
-			currentZones:   make(map[string]bool),
-			spawnedTo:      make(map[string]bool),
+			ID:              id,
+			Position:        &pb.Position{X: x, Y: y, MapId: "test-map"},
+			NetworkSession:  &NetworkSession{ClientID: cid, Input: &pb.InputState{}},
+			currentZones:    make(map[string]bool),
+			spawnedTo:       make(map[string]bool),
 			stationaryTicks: proximityStationaryThreshold,
 		}
 		e.mobileZone = &Zone{

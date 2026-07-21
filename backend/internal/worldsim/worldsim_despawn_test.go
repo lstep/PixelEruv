@@ -40,14 +40,16 @@ func TestDespawnClient_NotifiesOthersViaDestroyEntity(t *testing.T) {
 	t.Cleanup(subNc.Close)
 
 	sim := &Simulator{
-		nc:      pubNc,
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
+		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:   map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:  NewExtensionManager(logger),
-		logger:  logger,
-		tracer:  otel.Tracer("test"),
-		entities: map[string]*Entity{},
-		clients:  map[string]*Entity{},
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	a := &Entity{

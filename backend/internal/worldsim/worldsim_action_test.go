@@ -11,8 +11,10 @@ import (
 // dependency (nc is left nil — not used by the functions under test).
 func newTestSimulator() *Simulator {
 	s := &Simulator{
-		entities: make(map[string]*Entity),
-		clients:  make(map[string]*Entity),
+		World: World{
+			entities: make(map[string]*Entity),
+			clients:  make(map[string]*Entity),
+		},
 	}
 	s.entities["player-1"] = &Entity{
 		ID:       "player-1",

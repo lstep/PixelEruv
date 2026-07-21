@@ -27,14 +27,16 @@ func TestReapStaleClients_DespawnsOrphans(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
 		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:      map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
 		extMgr:     NewExtensionManager(logger),
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
-		entities:   map[string]*Entity{},
-		clients:    map[string]*Entity{},
 	}
 
 	now := time.Now()

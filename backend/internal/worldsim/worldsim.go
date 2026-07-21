@@ -187,55 +187,32 @@ type NetworkSession struct {
 // --- World Sim ---
 
 type Simulator struct {
-	nc            *nats.Conn
-	app           core.App
-	defaultMap    string
-	maps          map[string]*MapData       // mapName → MapData
-	zones         map[string]*ZoneRegistry  // mapName → ZoneRegistry
-	mapFilenames  map[string]string         // mapName → last known tiled_json filename
-	mapErrors     map[string]string           // mapName → fatal validation message (map not loaded)
-	mapWarnings   map[string][]*pb.MapWarning // mapName → non-fatal validation warnings (map loaded)
-	mapStore      *MapStore
-	userStore     *UserStore
-	banStore      *BanStore
-	recordingStore *RecordingStore
-	spriteStore    *SpriteStore
-	extMgr         *ExtensionManager
-	worldOpts      *WorldOptionsManager
+	World // embedded — s.entities, s.maps, s.zones, etc. promoted
+
+	nc                *nats.Conn
+	app               core.App
+	defaultMap        string
+	mapFilenames      map[string]string // mapName → last known tiled_json filename
+	mapStore          *MapStore
+	userStore         *UserStore
+	banStore          *BanStore
+	recordingStore    *RecordingStore
+	spriteStore       *SpriteStore
+	extMgr            *ExtensionManager
+	worldOpts         *WorldOptionsManager
 	worldOptsOnUpdate []func(WorldOptions)
-	tickHz        int
-	tickDur       time.Duration
-	tickCount     uint64
-	startTime     time.Time
-	logger        *slog.Logger
-	tracer        trace.Tracer
-	rng           *rand.Rand
+	tickHz            int
+	tickDur           time.Duration
+	startTime         time.Time
+	logger            *slog.Logger
+	tracer            trace.Tracer
 
-	mu       sync.Mutex
-	entities map[string]*Entity // entity_id -> entity
-	clients  map[string]*Entity // client_id -> entity (player avatar)
-	// entityIDToClient maps player entity_id -> client_id, used by handleChat
-	// to address proximity chat recipients. Maintained alongside s.clients.
-	entityIDToClient map[string]string
-	// destroyedEntities queues entity IDs removed since the last tick (base
-	// entities removed during a map reload, or player avatars despawned on
-	// disconnect), so the next replication tick can send DestroyEntity frames
-	// to all connected clients. Drained after each tick's replication loop.
-	destroyedEntities []string
-
-	// pendingPortalTransitions queues portal zone transitions detected during
-	// the tick's zone-enter scan. They cannot be applied inline because
-	// transitionEntity re-locks s.mu, which tick already holds (sync.Mutex is
-	// not reentrant — applying inline self-deadlocks the tick goroutine).
-	// Drained after tick() releases s.mu.
-	pendingPortalTransitions []portalTransitionReq
+	mu sync.Mutex
 
 	// lastSavedPos records the last position/map persisted to PocketBase per
 	// player entity, so startPositionPersister can skip writes for entities
 	// that haven't moved since the last 30s tick. Cleared in despawnClient.
 	lastSavedPos map[string]savedPos
-
-	snapshotSeq uint32
 }
 
 // savedPos is the last position persisted to PocketBase for a player entity,
@@ -373,30 +350,32 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	}
 
 	s := &Simulator{
-		nc:               nc,
-		app:              app,
-		defaultMap:       defaultMap,
-		maps:             maps,
-		zones:            zones,
-		mapFilenames:     mapFilenames,
-		mapErrors:        mapErrors,
-		mapWarnings:      mapWarnings,
-		mapStore:         mapStore,
-		userStore:        userStore,
-		banStore:         banStore,
-		recordingStore:   recordingStore,
-		spriteStore:      spriteStore,
-		extMgr:           NewExtensionManager(logger),
-		tickHz:           tickHz,
-		tickDur:          time.Second / time.Duration(tickHz),
-		startTime:        time.Now(),
-		logger:           logger,
-		tracer:           otel.Tracer("worldsim"),
-		rng:              rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)),
-		entities:         make(map[string]*Entity),
-		clients:          make(map[string]*Entity),
-		entityIDToClient: make(map[string]string),
-		lastSavedPos:     make(map[string]savedPos),
+		World: World{
+			maps:             maps,
+			zones:            zones,
+			mapErrors:        mapErrors,
+			mapWarnings:      mapWarnings,
+			rng:              rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0)),
+			entities:         make(map[string]*Entity),
+			clients:          make(map[string]*Entity),
+			entityIDToClient: make(map[string]string),
+		},
+		nc:             nc,
+		app:            app,
+		defaultMap:     defaultMap,
+		mapFilenames:   mapFilenames,
+		mapStore:       mapStore,
+		userStore:      userStore,
+		banStore:       banStore,
+		recordingStore: recordingStore,
+		spriteStore:    spriteStore,
+		extMgr:         NewExtensionManager(logger),
+		tickHz:         tickHz,
+		tickDur:        time.Second / time.Duration(tickHz),
+		startTime:      time.Now(),
+		logger:         logger,
+		tracer:         otel.Tracer("worldsim"),
+		lastSavedPos:   make(map[string]savedPos),
 	}
 
 	// Load base entities for all maps.
@@ -1306,18 +1285,18 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			ClientID: clientID,
 			Input:    &pb.InputState{},
 		},
-		DisplayName:   displayName,
-		IsGuest:       sub == "" || sub == "dev",
-		IP:            ip,
-		DeviceID:      deviceID,
-		IsAdmin:       isAdmin,
+		DisplayName:    displayName,
+		IsGuest:        sub == "" || sub == "dev",
+		IP:             ip,
+		DeviceID:       deviceID,
+		IsAdmin:        isAdmin,
 		HideAdminBadge: hideAdminBadge,
-		SpriteBase:    spriteBase,
-		PlayerOptions: playerOptions,
-		Status:        entityStatus,
-		spawnedTo:     make(map[string]bool),
-		currentZones:  make(map[string]bool),
-		lastHeartbeat: time.Now(),
+		SpriteBase:     spriteBase,
+		PlayerOptions:  playerOptions,
+		Status:         entityStatus,
+		spawnedTo:      make(map[string]bool),
+		currentZones:   make(map[string]bool),
+		lastHeartbeat:  time.Now(),
 	}
 	// Create a mobile proximity zone that follows this avatar. Other players
 	// entering it triggers zone.enter, which the proximity clustering step
@@ -1563,11 +1542,11 @@ func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, t
 		frame := &pb.ServerFrame{
 			Payload: &pb.ServerFrame_MapTransition{
 				MapTransition: &pb.MapTransitionFrame{
-					MapId:        targetMap,
-					SpawnX:       spawnX,
-					SpawnY:       spawnY,
-					MapOptions:   mapOpts,
-					MapWarnings:  mapWarns,
+					MapId:       targetMap,
+					SpawnX:      spawnX,
+					SpawnY:      spawnY,
+					MapOptions:  mapOpts,
+					MapWarnings: mapWarns,
 				},
 			},
 		}
@@ -1619,7 +1598,7 @@ type adjacentEntityInfo struct {
 	OwnerExtension   string              `json:"owner_extension,omitempty"`
 	State            string              `json:"state,omitempty"`
 	Gid              uint32              `json:"gid,omitempty"`
-	GidOff            uint32              `json:"gid_off,omitempty"`
+	GidOff           uint32              `json:"gid_off,omitempty"`
 	GidOn            uint32              `json:"gid_on,omitempty"`
 	OnInteractAction string              `json:"on_interact_action,omitempty"`
 	Actions          string              `json:"actions,omitempty"`
@@ -1667,10 +1646,10 @@ type actionReplyMsg struct {
 		Gid      uint32 `json:"gid"`
 	} `json:"appearance_updates,omitempty"`
 	LightUpdates []struct {
-		EntityID string  `json:"entity_id"`
-		Intensity uint32 `json:"intensity"`
-		Color    uint32  `json:"color,omitempty"`
-		Radius   float32 `json:"radius,omitempty"`
+		EntityID  string  `json:"entity_id"`
+		Intensity uint32  `json:"intensity"`
+		Color     uint32  `json:"color,omitempty"`
+		Radius    float32 `json:"radius,omitempty"`
 	} `json:"light_updates,omitempty"`
 	Animations []struct {
 		EntityID    string `json:"entity_id"`
@@ -2212,7 +2191,7 @@ func (s *Simulator) tick() {
 
 	s.mu.Lock()
 
-	s.snapshotSeq++
+	s.Tick.SnapshotSeq++
 
 	s.runMovementSystem()
 
@@ -2302,7 +2281,7 @@ func (s *Simulator) tick() {
 	}
 
 	// --- Proximity clustering (throttled to ~4Hz) ---
-	if s.tickCount%5 == 0 {
+	if s.Tick.TickCount%5 == 0 {
 		s.runProximityClustering(ctx)
 	}
 
@@ -2339,17 +2318,17 @@ func (s *Simulator) tick() {
 		attribute.Int("tick.duration_ms", int(durMs)),
 		attribute.Int("tick.entity_count", len(s.entities)),
 		attribute.Int("tick.replicated_clients", replicated),
-		attribute.Int("tick.snapshot_seq", int(s.snapshotSeq)),
+		attribute.Int("tick.snapshot_seq", int(s.Tick.SnapshotSeq)),
 	)
 	// Log tick summary every 5 seconds (every 300th tick at 60Hz) to avoid
 	// flooding the logs. Span attributes are always set for tracing.
-	s.tickCount++
-	if s.tickCount%300 == 0 {
+	s.Tick.TickCount++
+	if s.Tick.TickCount%300 == 0 {
 		s.logger.InfoContext(ctx, "tick",
 			"duration_ms", durMs,
 			"entity_count", len(s.entities),
 			"replicated_clients", replicated,
-			"snapshot_seq", s.snapshotSeq,
+			"snapshot_seq", s.Tick.SnapshotSeq,
 		)
 	}
 
@@ -2414,7 +2393,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compPosition,
 					Data:        posBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			// Echo DisplayName updates (which carry presence status) back to
@@ -2428,7 +2407,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
 					Data:        nameBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			s.appendAnimations(batch, e)
@@ -2463,7 +2442,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
 				EntityId:    e.ID,
-				SnapshotSeq: s.snapshotSeq,
+				SnapshotSeq: s.Tick.SnapshotSeq,
 				Components:  components,
 			})
 			e.spawnedTo[clientID] = true
@@ -2475,7 +2454,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compPosition,
 					Data:        posBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			if e.dirtyState {
@@ -2484,7 +2463,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compEntityState,
 					Data:        stateBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			if e.dirtyName {
@@ -2493,7 +2472,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
 					Data:        nameBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			if e.dirtyAppearance {
@@ -2503,7 +2482,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compAppearance,
 					Data:        appBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			if e.dirtyLightEmitter {
@@ -2512,7 +2491,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 					EntityId:    e.ID,
 					ComponentId: compLightEmitter,
 					Data:        lightBytes,
-					SnapshotSeq: s.snapshotSeq,
+					SnapshotSeq: s.Tick.SnapshotSeq,
 				})
 			}
 			s.appendAnimations(batch, e)
@@ -2532,7 +2511,7 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 		}
 		batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
 			EntityId:    id,
-			SnapshotSeq: s.snapshotSeq,
+			SnapshotSeq: s.Tick.SnapshotSeq,
 		})
 	}
 
