@@ -1718,6 +1718,29 @@
                  "width":63.6755485893416,
                  "x":1432,
                  "y":1072
+                }, 
+                {
+                 "height":32,
+                 "id":205,
+                 "name":"portal-1",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"target_map",
+                         "type":"string",
+                         "value":"main"
+                        }, 
+                        {
+                         "name":"zone_type",
+                         "type":"string",
+                         "value":"portal"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":1504,
+                 "y":1216
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -1726,7 +1749,7 @@
          "y":0
         }],
  "nextlayerid":7,
- "nextobjectid":205,
+ "nextobjectid":206,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",
