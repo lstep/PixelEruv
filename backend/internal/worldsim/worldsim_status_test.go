@@ -34,14 +34,16 @@ func TestHandleSetStatus(t *testing.T) {
 	t.Cleanup(subNc.Close)
 
 	sim := &Simulator{
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
 		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:      map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
 		extMgr:     NewExtensionManager(logger),
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
-		entities:   map[string]*Entity{},
-		clients:    map[string]*Entity{},
 	}
 
 	a := &Entity{
@@ -121,14 +123,16 @@ func TestProximityClustering_DNDExcluded(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
+		World: World{
+			zones:    map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities: map[string]*Entity{},
+			clients:  map[string]*Entity{},
+		},
 		nc:         pubNc,
 		defaultMap: "test-map",
-		zones:      map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
 		extMgr:     NewExtensionManager(logger),
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
-		entities:   map[string]*Entity{},
-		clients:    map[string]*Entity{},
 	}
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {

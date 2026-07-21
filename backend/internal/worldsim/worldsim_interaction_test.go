@@ -36,15 +36,17 @@ func newInteractionTestSim(t *testing.T) (*Simulator, *nats.Conn) {
 	t.Cleanup(subNc.Close)
 
 	sim := &Simulator{
-		nc:               pubNc,
-		defaultMap:       "test-map",
-		zones:            map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
-		extMgr:           NewExtensionManager(logger),
-		logger:           logger,
-		tracer:           otel.Tracer("test"),
-		entities:         map[string]*Entity{},
-		clients:          map[string]*Entity{},
-		entityIDToClient: map[string]string{},
+		World: World{
+			zones:            map[string]*ZoneRegistry{"test-map": NewZoneRegistry(nil, 20, 20)},
+			entities:         map[string]*Entity{},
+			clients:          map[string]*Entity{},
+			entityIDToClient: map[string]string{},
+		},
+		nc:         pubNc,
+		defaultMap: "test-map",
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 	return sim, subNc
 }
@@ -324,8 +326,10 @@ func buildPopupActionFake(actionID, currentState string) (string, bool) {
 // (State, Gid, GidOff, GidOn, OnInteractAction, Actions, Interactions).
 func TestAdjacentEntitiesLocked_IncludesInteractionFields(t *testing.T) {
 	s := &Simulator{
-		entities: make(map[string]*Entity),
-		clients:  make(map[string]*Entity),
+		World: World{
+			entities: make(map[string]*Entity),
+			clients:  make(map[string]*Entity),
+		},
 	}
 	s.entities["player-1"] = &Entity{
 		ID:       "player-1",
@@ -389,8 +393,10 @@ func TestAdjacentEntitiesLocked_IncludesInteractionFields(t *testing.T) {
 // from an extension reply set the entity's Gid and mark dirtyAppearance.
 func TestApplyActionReply_AppearanceUpdates(t *testing.T) {
 	s := &Simulator{
-		entities: make(map[string]*Entity),
-		clients:  make(map[string]*Entity),
+		World: World{
+			entities: make(map[string]*Entity),
+			clients:  make(map[string]*Entity),
+		},
 	}
 	s.entities["light-1"] = &Entity{
 		ID:       "light-1",
@@ -426,8 +432,10 @@ func TestApplyActionReply_AppearanceUpdates(t *testing.T) {
 // set Gid back to GidOff, not to the current Gid (which is GidOn).
 func TestApplyActionReply_GidOffBug(t *testing.T) {
 	s := &Simulator{
-		entities: make(map[string]*Entity),
-		clients:  make(map[string]*Entity),
+		World: World{
+			entities: make(map[string]*Entity),
+			clients:  make(map[string]*Entity),
+		},
 	}
 	s.entities["light-1"] = &Entity{
 		ID:       "light-1",
@@ -466,8 +474,10 @@ func TestApplyActionReply_GidOffBug(t *testing.T) {
 // color/radius are preserved.
 func TestApplyActionReply_LightUpdates(t *testing.T) {
 	s := &Simulator{
-		entities: make(map[string]*Entity),
-		clients:  make(map[string]*Entity),
+		World: World{
+			entities: make(map[string]*Entity),
+			clients:  make(map[string]*Entity),
+		},
 	}
 	s.entities["light-1"] = &Entity{
 		ID:             "light-1",

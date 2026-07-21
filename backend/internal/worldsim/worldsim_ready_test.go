@@ -59,11 +59,11 @@ func TestWorldsimReady_PublishedAfterSubscribe(t *testing.T) {
 	// setup time (nc, extMgr, defaultMap, logger, tracer). This avoids the
 	// LoadMap PocketBase retry (30s) that New() would trigger.
 	sim := &Simulator{
-		nc:      nc,
+		nc:         nc,
 		defaultMap: "test-map",
-		extMgr:  NewExtensionManager(logger),
-		logger: logger,
-		tracer: otel.Tracer("test"),
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	// Simulate an extension: subscribe to worldsim.ready BEFORE worldsim

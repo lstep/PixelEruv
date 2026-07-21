@@ -25,21 +25,23 @@ func TestZoneMetadata_RequestReply(t *testing.T) {
 
 	// Build a Simulator with two maps and known zones.
 	sim := &Simulator{
+		World: World{
+			zones: map[string]*ZoneRegistry{
+				"main": NewZoneRegistry([]*Zone{
+					{ID: "wall1", ZoneType: "wall"},
+					{ID: "meeting1", ZoneType: "meeting", AvEnabled: true, IsExclusive: true},
+					{ID: "portal1", ZoneType: "portal", PortalTargetMap: "second", PortalTargetEntity: "beacon"},
+				}, 50, 50),
+				"second": NewZoneRegistry([]*Zone{
+					{ID: "wall2", ZoneType: "wall"},
+					{ID: "av1", ZoneType: "meeting", AvEnabled: true},
+				}, 30, 30),
+			},
+		},
 		nc:         nc,
 		defaultMap: "main",
-		zones: map[string]*ZoneRegistry{
-			"main": NewZoneRegistry([]*Zone{
-				{ID: "wall1", ZoneType: "wall"},
-				{ID: "meeting1", ZoneType: "meeting", AvEnabled: true, IsExclusive: true},
-				{ID: "portal1", ZoneType: "portal", PortalTargetMap: "second", PortalTargetEntity: "beacon"},
-			}, 50, 50),
-			"second": NewZoneRegistry([]*Zone{
-				{ID: "wall2", ZoneType: "wall"},
-				{ID: "av1", ZoneType: "meeting", AvEnabled: true},
-			}, 30, 30),
-		},
-		logger: logger,
-		tracer: otel.Tracer("test"),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	if err := sim.subscribe(); err != nil {
@@ -105,16 +107,18 @@ func TestZoneMetadata_Broadcast(t *testing.T) {
 	t.Cleanup(nc.Close)
 
 	sim := &Simulator{
+		World: World{
+			zones: map[string]*ZoneRegistry{
+				"main": NewZoneRegistry([]*Zone{
+					{ID: "wall1", ZoneType: "wall"},
+					{ID: "av1", ZoneType: "meeting", AvEnabled: true},
+				}, 50, 50),
+			},
+		},
 		nc:         nc,
 		defaultMap: "main",
-		zones: map[string]*ZoneRegistry{
-			"main": NewZoneRegistry([]*Zone{
-				{ID: "wall1", ZoneType: "wall"},
-				{ID: "av1", ZoneType: "meeting", AvEnabled: true},
-			}, 50, 50),
-		},
-		logger: logger,
-		tracer: otel.Tracer("test"),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 
 	gotBroadcast := make(chan []byte, 1)

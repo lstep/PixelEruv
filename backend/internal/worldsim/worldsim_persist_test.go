@@ -11,7 +11,9 @@ import (
 // the last saved value, so idle players don't generate PocketBase writes.
 func TestCollectChangedPositionsLocked_SkipsUnchanged(t *testing.T) {
 	s := &Simulator{
-		clients:      make(map[string]*Entity),
+		World: World{
+			clients: make(map[string]*Entity),
+		},
 		lastSavedPos: make(map[string]savedPos),
 	}
 
