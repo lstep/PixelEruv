@@ -202,6 +202,8 @@ type Simulator struct {
 	zoneSink          ZoneSink
 	proximity         *ProximitySystem
 	proximitySink     ProximitySink
+	replication       *ReplicationSystem
+	replicationSink   ReplicationSink
 	worldOpts         *WorldOptionsManager
 	worldOptsOnUpdate []func(WorldOptions)
 	tickHz            int
@@ -415,6 +417,10 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	// Construct the proximity system (needs a ProximitySink for publishing events).
 	s.proximitySink = NewNatProximitySink(nc, logger)
 	s.proximity = NewProximitySystem(s.proximitySink, logger)
+
+	// Construct the replication system (needs a ReplicationSink for publishing).
+	s.replicationSink = NewNatReplicationSink(nc, logger, s.tracer)
+	s.replication = NewReplicationSystem(s.replicationSink, s.tracer)
 
 	// Wire up the world options manager (NATS KV bucket "world_options").
 	// PUBLIC_HOST and LIVEKIT_PUBLIC_URL are mirrored read-only from env.
@@ -2184,28 +2190,7 @@ func (s *Simulator) tick() {
 
 	// --- Replication ---
 	// Lite MVP: replicate everything to everyone (no AOI filter).
-	replicated := 0
-	for _, e := range s.entities {
-		if e.NetworkSession == nil {
-			continue
-		}
-		if s.replicateToClient(ctx, e) {
-			replicated++
-		}
-	}
-
-	// Clear dirty flags
-	for _, e := range s.entities {
-		e.dirtyPosition = false
-		e.dirtyState = false
-		e.dirtyName = false
-		e.dirtyAppearance = false
-		e.dirtyLightEmitter = false
-		e.pendingAnimations = nil
-	}
-
-	// Drain the destroyed entities queue — all clients have been replicated.
-	s.destroyedEntities = nil
+	replicated := s.replicationOrInit().Step(ctx, &s.World)
 
 	// Metric-as-log-attrs: tick duration, entity count, replication batches.
 	// motel has no /v1/metrics endpoint, so we emit these as span attributes +
@@ -2242,245 +2227,22 @@ func (s *Simulator) tick() {
 	}
 }
 
-// appendAnimations queues any pending PlayAnimation events for an
-// already-spawned entity onto the batch.
-func (s *Simulator) appendAnimations(batch *pb.ReplicationBatch, e *Entity) {
-	for _, animID := range e.pendingAnimations {
-		batch.Animations = append(batch.Animations, &pb.PlayAnimation{
-			EntityId:    e.ID,
-			AnimationId: animID,
-		})
-	}
-}
-
-// replicateToClient builds and publishes a replication batch for one client.
-// Returns true if a batch was published. The published NATS message carries
-// this span's context so pusher's ws.write_replication span parents here.
+// replicateToClient is a thin wrapper around ReplicationSystem.replicateToClient
+// for backward compatibility with tests that call s.replicateToClient() directly.
 func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity) bool {
-	rctx, span := s.tracer.Start(ctx, "worldsim.replicate")
-	defer span.End()
-
-	clientID := clientEntity.NetworkSession.ClientID
-	span.SetAttributes(attribute.String("client.id", clientID))
-
-	batch := &pb.ReplicationBatch{
-		LastInputSeq: clientEntity.NetworkSession.Seq,
-	}
-	// Track entities spawned in this batch so we can send admin info for
-	// them if the client is an admin.
-	var spawnedEntities []*Entity
-
-	for _, e := range s.entities {
-		// Multi-map filtering: only replicate entities on the same map as the
-		// client. The client's own entity is always included.
-		if e != clientEntity && e.Position != nil && e.Position.MapId != clientEntity.Position.MapId {
-			continue
-		}
-
-		alreadySpawned := e.spawnedTo[clientID]
-
-		// Don't replicate the client's own entity via SpawnEntity/UpdateComponent
-		// in the full spec (predicted locally). But for the lite MVP with no
-		// prediction, we DO send the client's own position so it can render.
-		if e == clientEntity && alreadySpawned {
-			// Send own position updates too (no client-side prediction in lite MVP)
-			if e.dirtyPosition {
-				posBytes, _ := proto.Marshal(e.Position)
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compPosition,
-					Data:        posBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			// Echo DisplayName updates (which carry presence status) back to
-			// the originating client so it can sync its AvClient DND flag and
-			// update its own nametag pill color. Without this, a status change
-			// is replicated to OTHER clients but never to the player who
-			// changed it.
-			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compDisplayName,
-					Data:        nameBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			s.appendAnimations(batch, e)
-			continue
-		}
-
-		if !alreadySpawned {
-			// Spawn
-			posBytes, _ := proto.Marshal(e.Position)
-			components := []*pb.ComponentData{
-				{ComponentId: compPosition, Data: posBytes},
-			}
-			// Player avatars (NetworkSession != nil) always get an Appearance
-			// component with their SpriteBase, even when it's empty — otherwise
-			// the client would fall back to a client-side hash and desync.
-			if e.Gid != 0 || e.NetworkSession != nil {
-				interactable := e.EntityType != "" || e.OwnerExtension != ""
-				appearanceBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase, Interactable: interactable})
-				components = append(components, &pb.ComponentData{ComponentId: compAppearance, Data: appearanceBytes})
-			}
-			if e.State != "" {
-				stateBytes, _ := proto.Marshal(&pb.EntityState{State: e.State})
-				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
-			}
-			if e.NetworkSession != nil && e.DisplayName != "" {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
-				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
-			}
-			if e.LightIntensity > 0 {
-				lightBytes, _ := proto.Marshal(&pb.LightEmitter{Intensity: e.LightIntensity, Color: e.LightColor, Radius: e.LightRadius})
-				components = append(components, &pb.ComponentData{ComponentId: compLightEmitter, Data: lightBytes})
-			}
-			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
-				EntityId:    e.ID,
-				SnapshotSeq: s.Tick.SnapshotSeq,
-				Components:  components,
-			})
-			e.spawnedTo[clientID] = true
-			spawnedEntities = append(spawnedEntities, e)
-		} else {
-			if e.dirtyPosition {
-				posBytes, _ := proto.Marshal(e.Position)
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compPosition,
-					Data:        posBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			if e.dirtyState {
-				stateBytes, _ := proto.Marshal(&pb.EntityState{State: e.State})
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compEntityState,
-					Data:        stateBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compDisplayName,
-					Data:        nameBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			if e.dirtyAppearance {
-				interactable := e.EntityType != "" || e.OwnerExtension != ""
-				appBytes, _ := proto.Marshal(&pb.Appearance{Gid: e.Gid, SpriteBase: e.SpriteBase, Interactable: interactable})
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compAppearance,
-					Data:        appBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			if e.dirtyLightEmitter {
-				lightBytes, _ := proto.Marshal(&pb.LightEmitter{Intensity: e.LightIntensity, Color: e.LightColor, Radius: e.LightRadius})
-				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
-					EntityId:    e.ID,
-					ComponentId: compLightEmitter,
-					Data:        lightBytes,
-					SnapshotSeq: s.Tick.SnapshotSeq,
-				})
-			}
-			s.appendAnimations(batch, e)
-		}
-	}
-
-	// Send destroy notifications for entities removed since the last tick
-	// (base entities removed during a map reload, or player avatars despawned
-	// on disconnect). Skip entities that still exist and are on the client's
-	// map — those are map transitions, not real destroys, and the client
-	// gets a SpawnEntity for them in this same batch. Without this filter,
-	// the client receives both Spawn and Destroy for the same entity, and
-	// the Destroy wins (entity disappears).
-	for _, id := range s.destroyedEntities {
-		if e, ok := s.entities[id]; ok && e.Position != nil && e.Position.MapId == clientEntity.Position.MapId {
-			continue
-		}
-		batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
-			EntityId:    id,
-			SnapshotSeq: s.Tick.SnapshotSeq,
-		})
-	}
-
-	// Only publish if there's something to send
-	if len(batch.Spawns) == 0 && len(batch.Updates) == 0 && len(batch.Destroys) == 0 && len(batch.Animations) == 0 {
-		return false
-	}
-
-	span.SetAttributes(
-		attribute.Int("batch.spawns", len(batch.Spawns)),
-		attribute.Int("batch.updates", len(batch.Updates)),
-		attribute.Int("batch.destroys", len(batch.Destroys)),
-	)
-
-	// Wrap in a ServerFrame so the pusher can forward bytes unchanged to the
-	// client (the pusher is a pure WS<->NATS passthrough; it must not know the
-	// replication wire format).
-	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_Replication{Replication: batch}}
-	frameBytes, err := proto.Marshal(frame)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "marshal")
-		s.logger.WarnContext(rctx, "replication marshal", "client", clientID, "err", err)
-		return false
-	}
-
-	subject := fmt.Sprintf("client.%s.replication", clientID)
-	msg := &nats.Msg{Subject: subject, Data: frameBytes}
-	otelinternal.Inject(rctx, msg) // pusher's forward span will parent here
-	if err := s.nc.PublishMsg(msg); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "publish")
-		s.logger.WarnContext(rctx, "replication publish", "client", clientID, "err", err)
-		return false
-	}
-
-	// If the client is an admin and we spawned new entities in this batch,
-	// send admin-only info (IP, guest status, OIDC sub) for those entities
-	// via the admin-only NATS channel. Non-admin clients never receive this.
-	if clientEntity.IsAdmin && len(spawnedEntities) > 0 {
-		s.publishAdminInfo(rctx, clientID, spawnedEntities)
-	}
-	return true
+	return s.replicationOrInit().replicateToClient(ctx, &s.World, clientEntity)
 }
 
-// publishAdminInfo sends an AdminInfoFrame for the given entities to the
-// admin client's admin-only NATS subject (client.<id>.admin). Only called
-// for admin clients — the pusher subscribes to this subject only for admin
-// sessions, so the data never reaches non-admin browsers.
-func (s *Simulator) publishAdminInfo(ctx context.Context, adminClientID string, entities []*Entity) {
-	infos := make([]*pb.AdminInfoFrame_EntityAdminInfo, 0, len(entities))
-	for _, e := range entities {
-		infos = append(infos, &pb.AdminInfoFrame_EntityAdminInfo{
-			EntityId: e.ID,
-			Ip:       e.IP,
-			IsGuest:  e.IsGuest,
-			UserId:   "", // user_id is not stored on the Entity; available in PB
-			DeviceId: e.DeviceID,
-		})
+// replicationOrInit returns the replication system, constructing a default one
+// if it wasn't set (e.g. in tests that build &Simulator{} directly).
+func (s *Simulator) replicationOrInit() *ReplicationSystem {
+	if s.replication == nil {
+		if s.replicationSink == nil {
+			s.replicationSink = NewNatReplicationSink(s.nc, s.logger, s.tracer)
+		}
+		s.replication = NewReplicationSystem(s.replicationSink, s.tracer)
 	}
-	frame := &pb.ServerFrame{Payload: &pb.ServerFrame_AdminInfo{AdminInfo: &pb.AdminInfoFrame{Entities: infos}}}
-	frameBytes, err := proto.Marshal(frame)
-	if err != nil {
-		s.logger.WarnContext(ctx, "admin info marshal", "client", adminClientID, "err", err)
-		return
-	}
-	subject := fmt.Sprintf("client.%s.admin", adminClientID)
-	msg := &nats.Msg{Subject: subject, Data: frameBytes}
-	otelinternal.Inject(ctx, msg)
-	if err := s.nc.PublishMsg(msg); err != nil {
-		s.logger.WarnContext(ctx, "admin info publish", "client", adminClientID, "err", err)
-	}
+	return s.replication
 }
 
 // runIntegrityCheck validates all loaded maps and logs any issues.
