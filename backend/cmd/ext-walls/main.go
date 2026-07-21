@@ -15,23 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lstep/pixeleruv/backend/internal/extkit"
 	"github.com/lstep/pixeleruv/backend/internal/otel"
-	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
-
-type registerMsg struct {
-	ExtensionID        string           `json:"extension_id"`
-	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
-	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
-}
-
-// optionFieldDef declares a single configurable option.
-type optionFieldDef struct {
-	Name    string          `json:"name"`
-	Type    string          `json:"type"`
-	Default json.RawMessage `json:"default"`
-}
 
 // wallsOptions holds the current option values for ext-walls.
 type wallsOptions struct {
@@ -93,8 +80,7 @@ type zoneMetadataMsg struct {
 }
 
 func main() {
-	startTime := time.Now()
-	natsURL := envOr("NATS_URL", "nats://localhost:4222")
+	natsURL := extkit.EnvOr("NATS_URL", "nats://localhost:4222")
 	extID := "walls"
 	heartbeatS := 10
 
@@ -110,11 +96,7 @@ func main() {
 	}
 	defer otelShutdown(context.Background())
 
-	nc, err := nats.Connect(natsURL,
-		nats.Name("ext-"+extID),
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(-1),
-	)
+	nc, err := extkit.ConnectNATS(natsURL, extID)
 	if err != nil {
 		logger.Error("nats connect", "err", err)
 		os.Exit(1)
@@ -123,7 +105,6 @@ func main() {
 
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	trigSubject := fmt.Sprintf("extension.%s.register_triggers", extID)
-	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
 
 	var mu sync.Mutex
 	wallZones := make(map[string]bool) // zone_id -> true
@@ -173,10 +154,10 @@ func main() {
 		}
 		mu.Unlock()
 
-		regData, _ := json.Marshal(registerMsg{
+		regData, _ := json.Marshal(extkit.RegisterMsg{
 			ExtensionID:        extID,
 			HeartbeatIntervalS: heartbeatS,
-			OptionsSchema: []optionFieldDef{
+			OptionsSchema: []extkit.OptionFieldDef{
 				{Name: "enabled", Type: "bool", Default: json.RawMessage("true")},
 			},
 		})
@@ -219,17 +200,12 @@ func main() {
 	// re-register (every 3rd heartbeat). We don't call register() here
 	// because that would create a feedback loop: register → PublishOptions
 	// → options handler → register → ...
-	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
-		mu.Lock()
-		before := opts
-		if err := json.Unmarshal(m.Data, &opts); err != nil {
-			logger.Warn("parse options", "err", err)
-			opts = before
-		} else {
-			logger.Info("options updated", "enabled", opts.Enabled)
-		}
-		mu.Unlock()
-	})
+	if err := extkit.SubscribeOptions(nc, extID, &opts, &mu, logger, func() {
+		logger.Info("options updated", "enabled", opts.Enabled)
+	}); err != nil {
+		logger.Error("subscribe options", "err", err)
+		os.Exit(1)
+	}
 
 	// extension.walls.action — dispatched for "key:E" and "action:execute".
 	// ext-walls handles the "toggle_wall" action verb: it adds/removes the
@@ -293,65 +269,12 @@ func main() {
 
 	// worldsim.ready fires when worldsim's subscriptions are live (on startup
 	// and on restart). Fetch zone metadata and register.
-	readyCh := make(chan struct{}, 1)
-	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
-		logger.Info("worldsim ready, fetching zone metadata", "map", string(m.Data))
+	extkit.WaitForReady(nc, logger, 10*time.Second, func(_ string) {
 		fetchZoneMetadata()
 		register()
-		select {
-		case readyCh <- struct{}{}:
-		default:
-		}
 	})
 
-	// Wait for worldsim.ready before the initial registration. Fall back to
-	// requesting zone metadata directly after a timeout (e.g. worldsim was
-	// already up and we missed the broadcast on extension restart).
-	select {
-	case <-readyCh:
-	case <-time.After(10 * time.Second):
-		logger.Warn("worldsim.ready not received, fetching zone metadata anyway", "id", extID)
-		fetchZoneMetadata()
-		register()
-	}
-
 	// Heartbeat + re-register loop.
-	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
-	defer ticker.Stop()
-
-	var ticks int
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("shutting down")
-			return
-		case <-ticker.C:
-			nc.Publish(hbSubject, []byte(extID))
-			// Re-register every 3rd heartbeat.
-			if ticks%3 == 0 {
-				register()
-			}
-			publishHealth(nc, "ext-"+extID, startTime)
-			ticks++
-		}
-	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func publishHealth(nc *nats.Conn, service string, startTime time.Time) {
-	health := map[string]any{
-		"service": service,
-		"status":  "OK",
-		"version": version.Version,
-		"uptime":  time.Since(startTime).Round(time.Second).String(),
-		"extras":  map[string]any{},
-	}
-	data, _ := json.Marshal(health)
-	nc.Publish("healthz", data)
+	extkit.HeartbeatLoop(ctx, nc, extID, heartbeatS, register)
+	logger.Info("shutting down")
 }

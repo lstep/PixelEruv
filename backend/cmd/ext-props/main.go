@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/lstep/pixeleruv/backend/internal/audit"
+	"github.com/lstep/pixeleruv/backend/internal/extkit"
 	"github.com/lstep/pixeleruv/backend/internal/otel"
-	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
 
@@ -40,19 +40,6 @@ const (
 	animationOff  = 2
 	animationClick = 3
 )
-
-type registerMsg struct {
-	ExtensionID        string           `json:"extension_id"`
-	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
-	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
-}
-
-// optionFieldDef declares a single configurable option.
-type optionFieldDef struct {
-	Name    string          `json:"name"`
-	Type    string          `json:"type"`
-	Default json.RawMessage `json:"default"`
-}
 
 // propsOptions holds the current option values for ext-props.
 type propsOptions struct {
@@ -135,8 +122,7 @@ type actionReplyMsg struct {
 }
 
 func main() {
-	startTime := time.Now()
-	natsURL := envOr("NATS_URL", "nats://localhost:4222")
+	natsURL := extkit.EnvOr("NATS_URL", "nats://localhost:4222")
 	heartbeatS := 10
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -151,11 +137,7 @@ func main() {
 	}
 	defer otelShutdown(context.Background())
 
-	nc, err := nats.Connect(natsURL,
-		nats.Name("ext-"+extID),
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(-1),
-	)
+	nc, err := extkit.ConnectNATS(natsURL, extID)
 	if err != nil {
 		logger.Error("nats connect", "err", err)
 		os.Exit(1)
@@ -169,17 +151,12 @@ func main() {
 	opts := propsOptions{InteractionRadius: 1.5}
 
 	// Subscribe to extension.props.options for hot-reloadable config.
-	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
-		mu.Lock()
-		before := opts
-		if err := json.Unmarshal(m.Data, &opts); err != nil {
-			logger.Warn("parse options", "err", err)
-			opts = before
-		} else {
-			logger.Info("options updated", "interaction_radius", opts.InteractionRadius)
-		}
-		mu.Unlock()
-	})
+	if err := extkit.SubscribeOptions(nc, extID, &opts, &mu, logger, func() {
+		logger.Info("options updated", "interaction_radius", opts.InteractionRadius)
+	}); err != nil {
+		logger.Error("subscribe options", "err", err)
+		os.Exit(1)
+	}
 
 	// extension.props.action — dispatched for "key:E" and "action:execute".
 	// The handler reads the entity's interactions data and processes the
@@ -270,10 +247,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	regData, _ := json.Marshal(registerMsg{
+	regData, _ := json.Marshal(extkit.RegisterMsg{
 		ExtensionID:        extID,
 		HeartbeatIntervalS: heartbeatS,
-		OptionsSchema: []optionFieldDef{
+		OptionsSchema: []extkit.OptionFieldDef{
 			{Name: "interaction_radius", Type: "number", Default: json.RawMessage("1.5")},
 		},
 	})
@@ -300,46 +277,18 @@ func main() {
 	// worldsim.ready fires when worldsim's subscriptions are live (on startup
 	// and on restart). Re-register whenever it fires so we never race the
 	// initial publish.
-	readyCh := make(chan struct{}, 1)
-	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
-		logger.Info("worldsim ready, registering", "map", string(m.Data))
+	extkit.WaitForReady(nc, logger, 10*time.Second, func(_ string) {
 		publishReg()
-		select {
-		case readyCh <- struct{}{}:
-		default:
-		}
 	})
-
-	// Wait for worldsim.ready before the initial registration. Fall back to
-	// registering directly after a timeout (e.g. worldsim was already up and
-	// we missed the broadcast on extension restart).
-	select {
-	case <-readyCh:
-	case <-time.After(10 * time.Second):
-		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
-		publishReg()
-	}
 	logger.Info("registered props extension", "inputs", []string{inputKeyE, inputExecute})
 
-	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
-	defer ticker.Stop()
-	var ticks int
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("shutting down")
-			return
-		case <-ticker.C:
-			nc.Publish(hbSubject, []byte(extID))
-			// Re-register every 3rd heartbeat (idempotent on worldsim side).
-			if ticks%3 == 0 {
-				nc.Publish(regSubject, regData)
-				nc.Publish(trigSubject, trigData)
-			}
-			publishHealth(nc, "ext-"+extID, startTime)
-			ticks++
-		}
-	}
+	// Heartbeat + re-register loop. onReRegister publishes reg+trig only
+	// (HeartbeatLoop handles the heartbeat + health publish).
+	extkit.HeartbeatLoop(ctx, nc, extID, heartbeatS, func() {
+		nc.Publish(regSubject, regData)
+		nc.Publish(trigSubject, trigData)
+	})
+	logger.Info("shutting down")
 }
 
 // processEffect handles a single effect from an entity's interactions
@@ -597,23 +546,4 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return result
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func publishHealth(nc *nats.Conn, service string, startTime time.Time) {
-	health := map[string]any{
-		"service": service,
-		"status":  "OK",
-		"version": version.Version,
-		"uptime":  time.Since(startTime).Round(time.Second).String(),
-		"extras":  map[string]any{},
-	}
-	data, _ := json.Marshal(health)
-	nc.Publish("healthz", data)
 }
