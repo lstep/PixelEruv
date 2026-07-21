@@ -21,8 +21,9 @@ type ProximitySink interface {
 // system builds the batch and tracks spawned entities; the sink handles
 // marshaling, publishing to client.<id>.replication, and the admin
 // side-channel (publishAdminInfo) when isAdmin and spawned is non-empty.
+// Returns true if a batch was published.
 type ReplicationSink interface {
-	PublishReplication(ctx context.Context, clientID string, batch *pb.ReplicationBatch, spawned []*Entity, isAdmin bool)
+	PublishReplication(ctx context.Context, clientID string, batch *pb.ReplicationBatch, spawned []*Entity, isAdmin bool) bool
 }
 
 // PortalSink is the side-effect interface for PortalSystem. The system
