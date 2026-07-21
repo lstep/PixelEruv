@@ -200,6 +200,8 @@ type Simulator struct {
 	spriteStore       *SpriteStore
 	extMgr            *ExtensionManager
 	movement          *MovementSystem
+	zone              *ZoneSystem
+	zoneSink          ZoneSink
 	worldOpts         *WorldOptionsManager
 	worldOptsOnUpdate []func(WorldOptions)
 	tickHz            int
@@ -405,6 +407,10 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 
 	// Construct the movement system (needs extMgr for gate-trigger checks).
 	s.movement = NewMovementSystem(s.extMgr)
+
+	// Construct the zone system (needs a ZoneSink for publishing events).
+	s.zoneSink = NewNatZoneSink(nc, logger)
+	s.zone = NewZoneSystem(s.zoneSink, logger)
 
 	// Wire up the world options manager (NATS KV bucket "world_options").
 	// PUBLIC_HOST and LIVEKIT_PUBLIC_URL are mirrored read-only from env.
@@ -1416,42 +1422,6 @@ type portalTransitionReq struct {
 	targetEntity string
 }
 
-// handlePortalZone checks if the entered zone is a portal and queues a map
-// transition if so. Portal zones are defined in Tiled with zone_type="portal",
-// target_map, and target_entity properties. The actual transition is applied
-// after the tick releases s.mu (see tick); calling transitionEntity inline
-// would self-deadlock on the non-reentrant s.mu. Caller must hold s.mu.
-func (s *Simulator) handlePortalZone(ctx context.Context, e *Entity, zoneID, clientID string) {
-	if e.NetworkSession == nil {
-		return // only player avatars can transition
-	}
-	zr := s.zones[e.Position.MapId]
-	if zr == nil {
-		return
-	}
-	// Find the zone in the registry to check its properties.
-	for _, z := range zr.zones {
-		if z.ID != zoneID {
-			continue
-		}
-		if z.PortalTargetMap == "" {
-			return // not a portal zone
-		}
-		// Validate the target map exists.
-		if _, ok := s.maps[z.PortalTargetMap]; !ok {
-			s.logger.WarnContext(ctx, "portal target map not found",
-				"entity", e.ID, "zone", zoneID, "target_map", z.PortalTargetMap)
-			return
-		}
-		s.pendingPortalTransitions = append(s.pendingPortalTransitions, portalTransitionReq{
-			entityID:     e.ID,
-			targetMap:    z.PortalTargetMap,
-			targetEntity: z.PortalTargetEntity,
-		})
-		return
-	}
-}
-
 // transitionEntity moves an entity to a different map. The spawn position on
 // the target map is resolved as follows:
 //   - If targetEntity is set, teleport to that named base entity's position
@@ -2198,65 +2168,10 @@ func (s *Simulator) tick() {
 
 	s.Tick.SnapshotSeq++
 
-	s.movement.Step(ctx, &s.World)
+	s.movementOrInit().Step(ctx, &s.World)
 
 	// --- Zone enter/exit detection ---
-	for _, e := range s.entities {
-		if e.currentZones == nil {
-			e.currentZones = make(map[string]bool)
-		}
-		// Look up the zone registry for this entity's current map.
-		zr := s.zones[e.Position.MapId]
-		if zr == nil {
-			e.currentZones = make(map[string]bool)
-			continue
-		}
-		// Evaluate zone membership at the avatar's feet (see
-		// avatarFeetYOffset) so enter/exit transitions match where the
-		// player visually crosses a zone boundary.
-		newZones := zr.ZonesAtPoint(e.Position.X, e.Position.Y+avatarFeetYOffset)
-		newSet := make(map[string]bool, len(newZones))
-		for _, zid := range newZones {
-			newSet[zid] = true
-		}
-		clientID := ""
-		if e.NetworkSession != nil {
-			clientID = e.NetworkSession.ClientID
-		}
-		for zid := range newSet {
-			if !e.currentZones[zid] {
-				s.publishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid, e.Position.MapId)
-				// Check for portal zones — handle map transition.
-				s.handlePortalZone(ctx, e, zid, clientID)
-			}
-		}
-		for zid := range e.currentZones {
-			if !newSet[zid] {
-				// Hysteresis for proximity zones: delay exit until the
-				// player is beyond proximityExitRadius from the zone
-				// owner's feet. Without this, players standing near the
-				// 2-tile boundary oscillate in/out every tick, causing
-				// A/V thrashing. See issue #88.
-				if strings.HasPrefix(zid, "prox-") {
-					ownerID := zid[len("prox-"):]
-					if owner, ok := s.entities[ownerID]; ok && owner.Position != nil {
-						feetX := e.Position.X
-						feetY := e.Position.Y + avatarFeetYOffset
-						ownerFeetX := owner.Position.X
-						ownerFeetY := owner.Position.Y + avatarFeetYOffset
-						dx := feetX - ownerFeetX
-						dy := feetY - ownerFeetY
-						if dx*dx+dy*dy <= proximityExitRadius*proximityExitRadius {
-							newSet[zid] = true
-							continue
-						}
-					}
-				}
-				s.publishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid, e.Position.MapId)
-			}
-		}
-		e.currentZones = newSet
-	}
+	s.zoneOrInit().Step(ctx, &s.World)
 
 	// --- Proximity clustering (throttled to ~4Hz) ---
 	if s.Tick.TickCount%5 == 0 {
@@ -2826,22 +2741,28 @@ func (s *Simulator) movementOrInit() *MovementSystem {
 	return s.movement
 }
 
-// publishZoneEvent publishes a zone.enter or zone.exit event to NATS.
-// Extensions subscribe to these subjects to observe zone transitions.
-// clientID is the player's client_id (empty for base entities without a
-// NetworkSession); extensions like ext-av use it to address token replies.
-// mapID is the map the entity is on when the zone event fires.
+// publishZoneEvent publishes a zone.enter or zone.exit event via the zone
+// sink. Thin wrapper for backward compatibility (despawnClient calls this).
 func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID string) {
-	subject := event // event already contains the full subject (e.g. "zone.enter")
-	data := fmt.Sprintf(`{"entity_id":"%s","client_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, clientID, zoneID, mapID)
-	if err := s.nc.Publish(subject, []byte(data)); err != nil {
-		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
+	s.zoneSinkOrInit().PublishZoneEvent(ctx, event, entityID, clientID, zoneID, mapID)
+}
+
+// zoneSinkOrInit returns the zone sink, constructing a default one if it
+// wasn't set (e.g. in tests that build &Simulator{} directly).
+func (s *Simulator) zoneSinkOrInit() ZoneSink {
+	if s.zoneSink == nil {
+		s.zoneSink = NewNatZoneSink(s.nc, s.logger)
 	}
-	s.logger.InfoContext(ctx, "zone event", "event", event, "entity", entityID, "zone", zoneID)
-	audit.Emit(s.nc, event, audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
-		audit.Details{"zone": zoneID, "map": mapID},
-		"")
+	return s.zoneSink
+}
+
+// zoneOrInit returns the zone system, constructing a default one if it
+// wasn't set (e.g. in tests that build &Simulator{} directly).
+func (s *Simulator) zoneOrInit() *ZoneSystem {
+	if s.zone == nil {
+		s.zone = NewZoneSystem(s.zoneSinkOrInit(), s.logger)
+	}
+	return s.zone
 }
 
 // proximityEventPayload is the NATS payload for proximity.join/leave events.
