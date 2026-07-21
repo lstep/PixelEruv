@@ -39,22 +39,10 @@ import (
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
 	"github.com/lstep/pixeleruv/backend/internal/audit"
+	"github.com/lstep/pixeleruv/backend/internal/extkit"
 	"github.com/lstep/pixeleruv/backend/internal/otel"
-	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
-
-type registerMsg struct {
-	ExtensionID        string           `json:"extension_id"`
-	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
-	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
-}
-
-type optionFieldDef struct {
-	Name    string          `json:"name"`
-	Type    string          `json:"type"`
-	Default json.RawMessage `json:"default"`
-}
 
 // recordingStartMsg is the NATS payload of recording.start. The pusher adds
 // client_id and entity_id from the session; room and target come from the
@@ -175,13 +163,12 @@ type activeRec struct {
 }
 
 func main() {
-	startTime := time.Now()
-	natsURL := envOr("NATS_URL", "nats://localhost:4222")
-	extID := envOr("EXTENSION_ID", "rec")
-	livekitURL := envOr("LIVEKIT_URL", "ws://localhost:7880")
+	natsURL := extkit.EnvOr("NATS_URL", "nats://localhost:4222")
+	extID := extkit.EnvOr("EXTENSION_ID", "rec")
+	livekitURL := extkit.EnvOr("LIVEKIT_URL", "ws://localhost:7880")
 	livekitAPIKey := os.Getenv("LIVEKIT_API_KEY")
 	livekitAPISecret := os.Getenv("LIVEKIT_API_SECRET")
-	recordingsDir := envOr("RECORDINGS_DIR", "./recordings")
+	recordingsDir := extkit.EnvOr("RECORDINGS_DIR", "./recordings")
 	heartbeatS := 10
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -201,11 +188,7 @@ func main() {
 	}
 	defer otelShutdown(context.Background())
 
-	nc, err := nats.Connect(natsURL,
-		nats.Name("ext-"+extID),
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(-1),
-	)
+	nc, err := extkit.ConnectNATS(natsURL, extID)
 	if err != nil {
 		logger.Error("nats connect", "err", err)
 		os.Exit(1)
@@ -1138,33 +1121,24 @@ func main() {
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
 
+	regData, _ := json.Marshal(extkit.RegisterMsg{
+		ExtensionID:        extID,
+		HeartbeatIntervalS: heartbeatS,
+		OptionsSchema:      nil, // no hot-reloadable options in v1
+	})
+
+	// publishReg sends the registration + heartbeat pair (for initial
+	// registration on worldsim.ready). The heartbeat loop's re-register
+	// callback only publishes the registration since HeartbeatLoop already
+	// publishes heartbeats.
 	publishReg := func() {
-		regData, _ := json.Marshal(registerMsg{
-			ExtensionID:        extID,
-			HeartbeatIntervalS: heartbeatS,
-			OptionsSchema:      nil, // no hot-reloadable options in v1
-		})
 		nc.Publish(regSubject, regData)
 		nc.Publish(hbSubject, []byte(extID))
 	}
 
-	readyCh := make(chan struct{}, 1)
-	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
-		logger.Info("worldsim ready", "map", string(m.Data))
+	extkit.WaitForReady(nc, logger, 10*time.Second, func(_ string) {
 		publishReg()
-		select {
-		case readyCh <- struct{}{}:
-		default:
-		}
 	})
-
-	// Wait for worldsim.ready before initial registration.
-	select {
-	case <-readyCh:
-	case <-time.After(10 * time.Second):
-		logger.Warn("worldsim.ready not received, registering anyway", "id", extID)
-		publishReg()
-	}
 
 	// Reconcile orphan egresses: recover activeRecs state lost on restart.
 	// Runs after worldsim is ready (so recording.list_active is available).
@@ -1236,44 +1210,12 @@ func main() {
 		}
 	}()
 
-	// Heartbeat + re-register loop.
-	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
-	defer ticker.Stop()
-
-	var ticks int
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("shutting down")
-			return
-		case <-ticker.C:
-			nc.Publish(hbSubject, []byte(extID))
-			if ticks%3 == 0 {
-				publishReg()
-			}
-			publishHealth(nc, "ext-"+extID, startTime)
-			ticks++
-		}
-	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func publishHealth(nc *nats.Conn, service string, startTime time.Time) {
-	health := map[string]any{
-		"service": service,
-		"status":  "OK",
-		"version": version.Version,
-		"uptime":  time.Since(startTime).Round(time.Second).String(),
-		"extras":  map[string]any{},
-	}
-	data, _ := json.Marshal(health)
-	nc.Publish("healthz", data)
+	// Heartbeat + re-register loop. onReRegister publishes only the
+	// registration (HeartbeatLoop handles the heartbeat + health publish).
+	extkit.HeartbeatLoop(ctx, nc, extID, heartbeatS, func() {
+		nc.Publish(regSubject, regData)
+	})
+	logger.Info("shutting down")
 }
 
 // dynamicSemaphore is a counting semaphore whose limit can be changed at

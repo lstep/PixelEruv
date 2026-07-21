@@ -26,24 +26,10 @@ import (
 
 	"github.com/livekit/protocol/auth"
 	"github.com/lstep/pixeleruv/backend/internal/audit"
+	"github.com/lstep/pixeleruv/backend/internal/extkit"
 	"github.com/lstep/pixeleruv/backend/internal/otel"
-	"github.com/lstep/pixeleruv/backend/internal/version"
 	"github.com/nats-io/nats.go"
 )
-
-type registerMsg struct {
-	ExtensionID        string           `json:"extension_id"`
-	HeartbeatIntervalS int              `json:"heartbeat_interval_s"`
-	OptionsSchema      []optionFieldDef `json:"options_schema,omitempty"`
-}
-
-// optionFieldDef declares a single configurable option. Type is "bool",
-// "number", or "text". Default is the JSON-encoded default value.
-type optionFieldDef struct {
-	Name    string          `json:"name"`
-	Type    string          `json:"type"`
-	Default json.RawMessage `json:"default"`
-}
 
 // avOptions holds the current option values for ext-av.
 type avOptions struct {
@@ -99,15 +85,14 @@ type playerStatusMsg struct {
 }
 
 func main() {
-	startTime := time.Now()
-	natsURL := envOr("NATS_URL", "nats://localhost:4222")
-	extID := envOr("EXTENSION_ID", "av")
-	livekitURL := envOr("LIVEKIT_URL", "ws://localhost:7880")
+	natsURL := extkit.EnvOr("NATS_URL", "nats://localhost:4222")
+	extID := extkit.EnvOr("EXTENSION_ID", "av")
+	livekitURL := extkit.EnvOr("LIVEKIT_URL", "ws://localhost:7880")
 	// LIVEKIT_PUBLIC_URL is the URL the browser uses to reach LiveKit.
 	// Defaults to LIVEKIT_URL (fine when the browser and ext-av share the
 	// same network). In Docker, set this to the host-exposed URL (e.g.
 	// ws://localhost:7880) since LIVEKIT_URL is the Docker-internal address.
-	livekitPublicURL := envOr("LIVEKIT_PUBLIC_URL", livekitURL)
+	livekitPublicURL := extkit.EnvOr("LIVEKIT_PUBLIC_URL", livekitURL)
 	livekitAPIKey := os.Getenv("LIVEKIT_API_KEY")
 	livekitAPISecret := os.Getenv("LIVEKIT_API_SECRET")
 	heartbeatS := 10
@@ -129,11 +114,7 @@ func main() {
 	}
 	defer otelShutdown(context.Background())
 
-	nc, err := nats.Connect(natsURL,
-		nats.Name("ext-"+extID),
-		nats.ReconnectWait(2*time.Second),
-		nats.MaxReconnects(-1),
-	)
+	nc, err := extkit.ConnectNATS(natsURL, extID)
 	if err != nil {
 		logger.Error("nats connect", "err", err)
 		os.Exit(1)
@@ -387,74 +368,46 @@ func main() {
 	})
 
 	// --- Subscribe to extension.av.options for hot-reloadable config ---
-	nc.Subscribe(fmt.Sprintf("extension.%s.options", extID), func(m *nats.Msg) {
-		mu.Lock()
-		before := opts
-		if err := json.Unmarshal(m.Data, &opts); err != nil {
-			logger.Warn("parse options", "err", err)
-			opts = before
-		} else {
-			logger.Info("options updated", "proximity_audio", opts.ProximityAudioEnabled, "zone_audio", opts.ZoneAudioEnabled)
-		}
-		mu.Unlock()
-	})
+	if err := extkit.SubscribeOptions(nc, extID, &opts, &mu, logger, func() {
+		logger.Info("options updated", "proximity_audio", opts.ProximityAudioEnabled, "zone_audio", opts.ZoneAudioEnabled)
+	}); err != nil {
+		logger.Error("subscribe options", "err", err)
+		os.Exit(1)
+	}
 
 	// --- Extension registration protocol ---
 	regSubject := fmt.Sprintf("extension.%s.register", extID)
 	hbSubject := fmt.Sprintf("extension.%s.heartbeat", extID)
 
+	regData, _ := json.Marshal(extkit.RegisterMsg{
+		ExtensionID:        extID,
+		HeartbeatIntervalS: heartbeatS,
+		OptionsSchema: []extkit.OptionFieldDef{
+			{Name: "proximity_audio_enabled", Type: "bool", Default: json.RawMessage("true")},
+			{Name: "zone_audio_enabled", Type: "bool", Default: json.RawMessage("true")},
+		},
+	})
+
+	// publishReg sends the registration + heartbeat pair (for initial
+	// registration on worldsim.ready). The heartbeat loop's re-register
+	// callback only publishes the registration since HeartbeatLoop already
+	// publishes heartbeats.
 	publishReg := func() {
-		regData, _ := json.Marshal(registerMsg{
-			ExtensionID:        extID,
-			HeartbeatIntervalS: heartbeatS,
-			OptionsSchema: []optionFieldDef{
-				{Name: "proximity_audio_enabled", Type: "bool", Default: json.RawMessage("true")},
-				{Name: "zone_audio_enabled", Type: "bool", Default: json.RawMessage("true")},
-			},
-		})
 		nc.Publish(regSubject, regData)
 		nc.Publish(hbSubject, []byte(extID))
 	}
 
-	readyCh := make(chan struct{}, 1)
-	nc.Subscribe("worldsim.ready", func(m *nats.Msg) {
-		logger.Info("worldsim ready, fetching zone metadata", "map", string(m.Data))
+	extkit.WaitForReady(nc, logger, 10*time.Second, func(_ string) {
 		fetchZoneMetadata()
 		publishReg()
-		select {
-		case readyCh <- struct{}{}:
-		default:
-		}
 	})
 
-	// Wait for worldsim.ready before initial registration.
-	select {
-	case <-readyCh:
-	case <-time.After(10 * time.Second):
-		logger.Warn("worldsim.ready not received, fetching zone metadata anyway", "id", extID)
-		fetchZoneMetadata()
-		publishReg()
-	}
-
-	// Heartbeat + re-register loop.
-	ticker := time.NewTicker(time.Duration(heartbeatS) * time.Second)
-	defer ticker.Stop()
-
-	var ticks int
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("shutting down")
-			return
-		case <-ticker.C:
-			nc.Publish(hbSubject, []byte(extID))
-			if ticks%3 == 0 {
-				publishReg()
-			}
-			publishHealth(nc, "ext-"+extID, startTime)
-			ticks++
-		}
-	}
+	// Heartbeat + re-register loop. onReRegister publishes only the
+	// registration (HeartbeatLoop handles the heartbeat + health publish).
+	extkit.HeartbeatLoop(ctx, nc, extID, heartbeatS, func() {
+		nc.Publish(regSubject, regData)
+	})
+	logger.Info("shutting down")
 }
 
 // slugify replaces non-alphanumeric characters with hyphens, since LiveKit
@@ -469,23 +422,4 @@ func slugify(s string) string {
 		}
 	}
 	return b.String()
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func publishHealth(nc *nats.Conn, service string, startTime time.Time) {
-	health := map[string]any{
-		"service": service,
-		"status":  "OK",
-		"version": version.Version,
-		"uptime":  time.Since(startTime).Round(time.Second).String(),
-		"extras":  map[string]any{},
-	}
-	data, _ := json.Marshal(health)
-	nc.Publish("healthz", data)
 }
