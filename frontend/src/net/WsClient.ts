@@ -131,6 +131,13 @@ export class WsClient {
     this.url = url;
   }
 
+  // getState returns the current connection state. Used by GameScene on
+  // scene.restart() (map transition) to initialize the disconnect overlay
+  // without re-registering handlers — connect() is skipped on restart.
+  getState(): ConnectionState {
+    return this.state;
+  }
+
   connect(handlers: ConnectHandlers): void {
     this.handlers = handlers;
     this.closed = false;

@@ -56,6 +56,7 @@ interface TiledLayerJSON {
   type: string; // "tilelayer" | "objectgroup"
   properties?: TiledPropertyJSON[];
   objects?: TiledObjectJSON[];
+  visible?: boolean;
 }
 interface TiledMapJSON {
   tilewidth: number;
@@ -446,6 +447,13 @@ export class GameScene extends Phaser.Scene {
   // Un-acked inputs for the local avatar, newest last. Replayed against the
   // server's authoritative position on each reconciliation.
   private pendingInputs: InputEvent[] = [];
+  // True while a map transition is in progress (between receiving
+  // MapTransitionFrame and the scene restart completing). Spawns arriving
+  // during this window are buffered in pendingSpawns and processed after the
+  // restart — otherwise the spawn would create an avatar that SHUTDOWN
+  // immediately destroys, and the server won't re-send (spawnedTo=true).
+  private transitioning = false;
+  private pendingSpawns: ReplicationBatchView["spawns"] = [];
   // Collision grid from the Tiled "Walls" layer. [y][x] = true means blocked.
   private collisionGrid: boolean[][] = [];
   // Wall zones from the Tiled "Zones" object layer with zone_type=wall.
@@ -695,9 +703,14 @@ export class GameScene extends Phaser.Scene {
     if (validTilesets.length > 0 && rawJson) {
       // "Walls" is a reserved collision-fallback layer, matched by name —
       // not a decoration layer (see 21-map-design-guide.md).
-      const wallsLayerName = rawJson.layers.find((l) => l.type === "tilelayer" && l.name.toLowerCase() === "walls")?.name;
+      const wallsLayerDef = rawJson.layers.find((l) => l.type === "tilelayer" && l.name.toLowerCase() === "walls");
+      const wallsLayerName = wallsLayerDef?.name;
       const walls = wallsLayerName ? map.createLayer(wallsLayerName, validTilesets, 0, 0) : null;
       walls?.setDepth(DEPTH_WALLS_FALLBACK);
+      // Walls is a collision-only layer — never render its tiles, regardless
+      // of the Tiled "visible" property. The collision grid is built from the
+      // tile data below, which is independent of visibility.
+      walls?.setVisible(false);
 
       if (walls) {
         this.collisionGrid = [];
@@ -980,7 +993,15 @@ export class GameScene extends Phaser.Scene {
       ? `${wsScheme}://${window.location.hostname}:8081/ws`
       : `${wsScheme}://${window.location.host}/ws`;
     console.log("connecting to", wsUrl);
-    this.ws = new WsClient(wsUrl);
+    // Only create the WsClient on the first create() call. On scene.restart()
+    // (e.g. map transition), the WsClient persists across the restart —
+    // SHUTDOWN doesn't close or null it. Recreating it would open a new
+    // WebSocket, mint a new client/entity ID, and the server would provision
+    // the new entity on the default map, bouncing the player back.
+    const isFirstCreate = !this.ws;
+    if (isFirstCreate) {
+      this.ws = new WsClient(wsUrl);
+    }
     // A/V client + VideoBar for participant video tiles. Mic/camera HUD
     // controls live in the TopMenu (created once in main.ts, stored in the
     // registry). The VideoBar is a fixed DOM bar below the TopMenu.
@@ -998,7 +1019,7 @@ export class GameScene extends Phaser.Scene {
     const topMenu = this.game.registry.get("topMenu") as TopMenu | undefined;
     topMenu?.attachAvControls(this.avClient);
     topMenu?.attachRecordingControl(
-      this.ws,
+      this.ws!,
       () => this.ws?.isAdmin() ?? false,
       () => this.avClient?.currentRoomName() ?? null,
     );
@@ -1031,15 +1052,27 @@ export class GameScene extends Phaser.Scene {
     // The overlay starts visible (we boot in "connecting"), so mirror that on
     // the DOM: dim and disable floating DOM UI until the WS reaches "open".
     document.body.classList.add("server-unavailable");
+    // On restart (map transition), the ws is already connected — hide the
+    // overlay immediately since onStateChange won't fire (connect is skipped).
+    if (!isFirstCreate && this.ws?.getState() === "open") {
+      this.disconnectOverlay.setVisible(false);
+      document.body.classList.remove("server-unavailable");
+    }
     // Day/night tint overlay — cosmetic, client-side, follows the local
     // clock. Sits below the disconnect overlay (depth 9997 vs 9998).
     this.dayNightOverlay = new DayNightOverlay(this);
     this.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
       this.dayNightOverlay?.resize(gameSize.width, gameSize.height);
     });
-    // Freeze the scene until the first successful auth.
-    this.scene.pause("GameScene");
-    this.ws.connect({
+    // Freeze the scene until the first successful auth (first create only).
+    // On restart (map transition), the ws is already connected and onReady
+    // won't fire again, so pausing would freeze the scene permanently.
+    if (isFirstCreate) {
+      this.scene.pause("GameScene");
+    }
+    // Only connect on the first create() — see isFirstCreate above.
+    if (isFirstCreate) {
+    this.ws!.connect({
       onReady: () => {
         // Use the entity ID from the server's AuthResult. The server may
         // assign a different entity ID than "e_"+clientId[2:] when a
@@ -1203,6 +1236,20 @@ export class GameScene extends Phaser.Scene {
         }
       },
     });
+    } // end isFirstCreate
+
+    // Process buffered spawns from a map transition. During the transition,
+    // handleReplication buffers spawns instead of creating avatars (which
+    // SHUTDOWN would destroy). Now that the new map is loaded, process them.
+    if (this.transitioning && this.pendingSpawns.length > 0) {
+      this.transitioning = false;
+      const pending = this.pendingSpawns;
+      this.pendingSpawns = [];
+      this.processSpawns(pending);
+    } else {
+      this.transitioning = false;
+    }
+
     chatPanel?.setSendHandler((channel, text) => this.ws?.sendChat(channel, text));
     topMenu?.setSetNameHandler((name) => this.ws?.setName(name));
     topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
@@ -1561,12 +1608,31 @@ export class GameScene extends Phaser.Scene {
   // restart and re-spawned by the server's replication loop.
   private handleMapTransition(mapId: string, spawnX: number, spawnY: number, mapOptions?: string): void {
     console.log(`map transition: ${mapId} (${spawnX}, ${spawnY})`);
+    // Mark transitioning so handleReplication buffers spawns instead of
+    // creating avatars that SHUTDOWN would immediately destroy.
+    this.transitioning = true;
+    this.pendingSpawns = [];
     // Apply map options (e.g. day_night_enabled) before loading assets so the
     // overlay is correct when the scene restarts.
     if (mapOptions !== undefined) this.applyMapOptions(mapOptions);
     // Load the new map assets from PocketBase, then restart the scene.
     loadMapAssets(mapId)
       .then((mapAssets) => {
+        // Clear old map assets from Phaser caches so the loader accepts the
+        // new ones on restart. Phaser's loader skips keys that already exist
+        // in the cache — without this, scene.restart() reuses the old map's
+        // tilemap data and the new map's tilesets don't match.
+        const oldAssets = this.registry.get("mapAssets") as MapAssets | undefined;
+        if (oldAssets) {
+          if (this.cache.tilemap.has("map")) {
+            this.cache.tilemap.remove("map");
+          }
+          for (const ts of oldAssets.tilesets) {
+            if (this.textures.exists(ts.name)) this.textures.remove(ts.name);
+            const tilesKey = `${ts.name}__tiles`;
+            if (this.textures.exists(tilesKey)) this.textures.remove(tilesKey);
+          }
+        }
         // Stash the new map assets for the restarted scene.
         this.registry.set("mapAssets", mapAssets);
         this.registry.set("loadedMapName", mapId);
@@ -1680,8 +1746,28 @@ export class GameScene extends Phaser.Scene {
   }
 
   private handleReplication(batch: ReplicationBatchView): void {
-    // Spawn new entities
-    for (const spawn of batch.spawns) {
+    // While a map transition is in progress, buffer spawns — the scene is
+    // about to restart and SHUTDOWN would destroy any avatars created now.
+    // The server sets spawnedTo=true after sending, so without buffering the
+    // spawn would be lost and never re-sent. Buffered spawns are processed
+    // in create() after the restart completes.
+    if (this.transitioning) {
+      for (const spawn of batch.spawns) {
+        if (!this.pendingSpawns.some((s) => s.entityId === spawn.entityId)) {
+          this.pendingSpawns.push(spawn);
+        }
+      }
+      return;
+    }
+    this.processSpawns(batch.spawns);
+    this.processUpdatesAndDestroys(batch);
+  }
+
+  // processSpawns creates avatars for entities in the given spawn list.
+  // Extracted from handleReplication so it can be called both during normal
+  // replication and after a map transition (from buffered pendingSpawns).
+  private processSpawns(spawns: ReplicationBatchView["spawns"]): void {
+    for (const spawn of spawns) {
       if (this.avatars.has(spawn.entityId)) continue;
 
       let x = 10 * TILE_SIZE;
@@ -1847,7 +1933,12 @@ export class GameScene extends Phaser.Scene {
       }
       console.log(`spawned ${spawn.entityId} at (${x}, ${y})`);
     }
+  }
 
+  // processUpdatesAndDestroys handles UpdateComponent, DestroyEntity, and
+  // PlayAnimation messages from a replication batch. Called from
+  // handleReplication after processSpawns, and skipped during map transitions.
+  private processUpdatesAndDestroys(batch: ReplicationBatchView): void {
     // Update components
     for (const upd of batch.updates) {
       const avatar = this.avatars.get(upd.entityId);
