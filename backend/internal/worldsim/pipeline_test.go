@@ -128,7 +128,8 @@ func TestPipeline_Order(t *testing.T) {
 
 	movement.Step(ctx, &w)
 	zoneSys.Step(ctx, &w)
-	// Proximity runs every 5th tick; TickCount%5 == 0 on first tick.
+	// In production tick() gates proximity on TickCount%5 == 0; here we call
+	// it directly to exercise the ordering unconditionally.
 	proxSys.Step(ctx, &w)
 	repSys.Step(ctx, &w)
 
