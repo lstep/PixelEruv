@@ -2521,8 +2521,15 @@ func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity)
 
 	// Send destroy notifications for entities removed since the last tick
 	// (base entities removed during a map reload, or player avatars despawned
-	// on disconnect).
+	// on disconnect). Skip entities that still exist and are on the client's
+	// map — those are map transitions, not real destroys, and the client
+	// gets a SpawnEntity for them in this same batch. Without this filter,
+	// the client receives both Spawn and Destroy for the same entity, and
+	// the Destroy wins (entity disappears).
 	for _, id := range s.destroyedEntities {
+		if e, ok := s.entities[id]; ok && e.Position != nil && e.Position.MapId == clientEntity.Position.MapId {
+			continue
+		}
 		batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
 			EntityId:    id,
 			SnapshotSeq: s.snapshotSeq,
