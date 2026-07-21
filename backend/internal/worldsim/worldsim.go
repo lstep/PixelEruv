@@ -204,6 +204,8 @@ type Simulator struct {
 	proximitySink     ProximitySink
 	replication       *ReplicationSystem
 	replicationSink   ReplicationSink
+	portal            *PortalSystem
+	portalSink        PortalSink
 	worldOpts         *WorldOptionsManager
 	worldOptsOnUpdate []func(WorldOptions)
 	tickHz            int
@@ -421,6 +423,10 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	// Construct the replication system (needs a ReplicationSink for publishing).
 	s.replicationSink = NewNatReplicationSink(nc, logger, s.tracer)
 	s.replication = NewReplicationSystem(s.replicationSink, s.tracer)
+
+	// Construct the portal system (needs a PortalSink + the world mutex).
+	s.portalSink = NewNatPortalSink(nc, logger, userStore)
+	s.portal = NewPortalSystem(s.portalSink, logger, &s.mu)
 
 	// Wire up the world options manager (NATS KV bucket "world_options").
 	// PUBLIC_HOST and LIVEKIT_PUBLIC_URL are mirrored read-only from env.
@@ -823,7 +829,7 @@ func (s *Simulator) subscribe() error {
 			s.logger.WarnContext(ctx, "teleport unmarshal", "err", err)
 			return
 		}
-		s.transitionEntity(ctx, req.EntityID, req.MapID, req.TargetEntity)
+		s.portalOrInit().transition(ctx, &s.World, req.EntityID, req.MapID, req.TargetEntity)
 		audit.Emit(s.nc, "player.teleport", audit.SeverityInfo,
 			audit.Actor{EntityID: req.EntityID},
 			audit.Details{"target_map": req.MapID, "target_entity": req.TargetEntity},
@@ -1432,130 +1438,22 @@ type portalTransitionReq struct {
 	targetEntity string
 }
 
-// transitionEntity moves an entity to a different map. The spawn position on
-// the target map is resolved as follows:
-//   - If targetEntity is set, teleport to that named base entity's position
-//     (a "beacon"). Fails if the entity doesn't exist on the target map.
-//   - Otherwise, pick a random "spawn" zone on the target map (FindSpawnPoint).
-//
-// It:
-// 1. Resolves the spawn position (beacon or random spawn point).
-// 2. Removes the entity's mobile zone from the old map's zone registry.
-// 3. Changes Position.MapId, X, Y to the target.
-// 4. Re-adds the mobile zone to the new map's zone registry.
-// 5. Resets spawnedTo so the entity re-spawns for clients on the new map.
-// 6. Sends a MapTransitionFrame to the client so the frontend loads the new map.
-// 7. Persists the new map_id to PocketBase.
+// transitionEntity is a thin wrapper around PortalSystem.transition for
+// backward compatibility. Delegates to the portal system.
 func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, targetEntity string) {
-	s.mu.Lock()
-	e, ok := s.entities[entityID]
-	if !ok {
-		s.mu.Unlock()
-		return
-	}
+	s.portalOrInit().transition(ctx, &s.World, entityID, targetMap, targetEntity)
+}
 
-	targetMD := s.maps[targetMap]
-	if targetMD == nil {
-		s.logger.WarnContext(ctx, "transition target map not loaded",
-			"entity", entityID, "target_map", targetMap)
-		s.mu.Unlock()
-		return
-	}
-
-	// Resolve spawn position on the target map.
-	var spawnX, spawnY float32
-	if targetEntity != "" {
-		beacon := targetMD.FindEntityByName(targetEntity)
-		if beacon == nil {
-			s.logger.WarnContext(ctx, "transition target entity not found on target map",
-				"entity", entityID, "target_map", targetMap, "target_entity", targetEntity)
-			s.mu.Unlock()
-			return
+// portalOrInit returns the portal system, constructing a default one if it
+// wasn't set (e.g. in tests that build &Simulator{} directly).
+func (s *Simulator) portalOrInit() *PortalSystem {
+	if s.portal == nil {
+		if s.portalSink == nil {
+			s.portalSink = NewNatPortalSink(s.nc, s.logger, s.userStore)
 		}
-		spawnX, spawnY = beacon.X, beacon.Y
-	} else {
-		spawnX, spawnY = targetMD.FindSpawnPoint(s.rng)
+		s.portal = NewPortalSystem(s.portalSink, s.logger, &s.mu)
 	}
-
-	oldMap := e.Position.MapId
-
-	// Remove mobile zone from old map's zone registry.
-	if e.mobileZone != nil {
-		if zr := s.zones[oldMap]; zr != nil {
-			zr.RemoveZone(e.mobileZone.ID)
-		}
-	}
-
-	// Update position to the new map.
-	e.Position.MapId = targetMap
-	e.Position.X = spawnX
-	e.Position.Y = spawnY
-	e.dirtyPosition = true
-
-	// Clear current zones — the entity is on a new map with different zones.
-	e.currentZones = make(map[string]bool)
-
-	// Reset spawnedTo so the entity re-spawns for all clients on the new map.
-	e.spawnedTo = make(map[string]bool)
-
-	// Re-add mobile zone to the new map's zone registry.
-	if e.mobileZone != nil {
-		if zr := s.zones[targetMap]; zr != nil {
-			e.mobileZone.X = spawnX - proximityRadius
-			e.mobileZone.Y = spawnY + avatarFeetYOffset - proximityRadius
-			zr.AddZone(e.mobileZone)
-		}
-	}
-
-	// Queue a DestroyEntity for clients on the old map. Clients on the new
-	// map will get a SpawnEntity via the normal replication loop.
-	s.destroyedEntities = append(s.destroyedEntities, entityID)
-
-	clientID := ""
-	if e.NetworkSession != nil {
-		clientID = e.NetworkSession.ClientID
-	}
-	mapOpts := ""
-	if md := s.maps[targetMap]; md != nil {
-		mapOpts = string(md.Options)
-	}
-	mapWarns := s.mapWarnings[targetMap]
-	s.mu.Unlock()
-
-	// Send MapTransitionFrame to the client so the frontend loads the new map.
-	if clientID != "" {
-		frame := &pb.ServerFrame{
-			Payload: &pb.ServerFrame_MapTransition{
-				MapTransition: &pb.MapTransitionFrame{
-					MapId:       targetMap,
-					SpawnX:      spawnX,
-					SpawnY:      spawnY,
-					MapOptions:  mapOpts,
-					MapWarnings: mapWarns,
-				},
-			},
-		}
-		frameBytes, _ := proto.Marshal(frame)
-		subject := fmt.Sprintf("client.%s.replication", clientID)
-		if err := s.nc.Publish(subject, frameBytes); err != nil {
-			s.logger.WarnContext(ctx, "map transition publish", "err", err, "client", clientID)
-		}
-	}
-
-	// Persist the new map_id to PocketBase.
-	if s.userStore != nil {
-		if err := s.userStore.SaveMapID(entityID, targetMap); err != nil {
-			s.logger.WarnContext(ctx, "failed to save user map_id", "err", err, "entity", entityID)
-		}
-	}
-
-	s.logger.InfoContext(ctx, "entity transitioned to new map",
-		"entity", entityID, "old_map", oldMap, "new_map", targetMap,
-		"target_entity", targetEntity, "x", spawnX, "y", spawnY)
-	audit.Emit(s.nc, "player.map_transition", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID},
-		audit.Details{"old_map": oldMap, "new_map": targetMap, "target_entity": targetEntity, "x": spawnX, "y": spawnY},
-		"")
+	return s.portal
 }
 
 func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {
@@ -2219,12 +2117,8 @@ func (s *Simulator) tick() {
 	// (sync.Mutex is not reentrant). No recover wraps tick(), so a panic
 	// here crashes the process (Docker restarts it) — explicit unlock is
 	// safe because the lock is never observed held after the process dies.
-	pending := s.pendingPortalTransitions
-	s.pendingPortalTransitions = nil
 	s.mu.Unlock()
-	for _, t := range pending {
-		s.transitionEntity(ctx, t.entityID, t.targetMap, t.targetEntity)
-	}
+	s.portalOrInit().Step(ctx, &s.World)
 }
 
 // replicateToClient is a thin wrapper around ReplicationSystem.replicateToClient
