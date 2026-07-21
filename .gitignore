@@ -60,3 +60,6 @@ assets/Modern_Office_Revamped_v1/
 frontend/public/assets/
 frontend/public/sprites/
 maps/main.tiled-session
+
+# Local analysis artifacts (deepening reports, scratch)
+deepening-report.html
