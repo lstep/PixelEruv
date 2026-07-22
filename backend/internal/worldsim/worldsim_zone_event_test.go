@@ -43,10 +43,11 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 	sim.initTestSystems()
 
 	type zoneEventPayload struct {
-		EntityID string `json:"entity_id"`
-		ClientID string `json:"client_id"`
-		ZoneID   string `json:"zone_id"`
-		MapID    string `json:"map_id"`
+		EntityID    string `json:"entity_id"`
+		ClientID    string `json:"client_id"`
+		ZoneID      string `json:"zone_id"`
+		MapID       string `json:"map_id"`
+		DisplayName string `json:"display_name"`
 	}
 
 	sub, err := subNc.SubscribeSync("zone.enter")
@@ -56,8 +57,11 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 	subNc.Flush()
 
 	// Publish a zone.enter for a player (with client_id) and a base entity
-	// (without client_id).
-	sim.publishZoneEvent(context.Background(), "zone.enter", "e_player", "c_abc", "z1", "test-map", "PlayerName")
+	// (without client_id). The player name includes a double quote to verify
+	// the payload is JSON-encoded (not fmt.Sprintf-interpolated), since
+	// display_name is user-controlled and sanitized to ASCII printable only
+	// (which permits " and \).
+	sim.publishZoneEvent(context.Background(), "zone.enter", "e_player", "c_abc", "z1", "test-map", `Player"Name`)
 	sim.publishZoneEvent(context.Background(), "zone.enter", "e_base", "", "z1", "test-map", "")
 	pubNc.Flush()
 
@@ -81,9 +85,15 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 	if playerEv.ZoneID != "z1" {
 		t.Errorf("player zone.enter zone_id = %q, want z1", playerEv.ZoneID)
 	}
+	if playerEv.DisplayName != `Player"Name` {
+		t.Errorf("player zone.enter display_name = %q, want %q", playerEv.DisplayName, `Player"Name`)
+	}
 
 	baseEv := got["e_base"]
 	if baseEv.ClientID != "" {
 		t.Errorf("base entity zone.enter client_id = %q, want empty", baseEv.ClientID)
+	}
+	if baseEv.DisplayName != "" {
+		t.Errorf("base entity zone.enter display_name = %q, want empty", baseEv.DisplayName)
 	}
 }
