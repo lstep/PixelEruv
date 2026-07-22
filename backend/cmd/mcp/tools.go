@@ -211,14 +211,15 @@ func registerControlTools(s *mcp.Server, w *WorldsimClient) {
 	})
 
 	type KickArgs struct {
-		ClientID string `json:"client_id" jsonschema:"Pusher session ID (client_id from get_world_stats) to kick"`
-		Reason   string `json:"reason,omitempty" jsonschema:"Human-readable kick reason (recorded in audit)"`
+		ClientID string `json:"client_id,omitempty" jsonschema:"Pusher session ID (client_id from get_world_stats) to kick. Either client_id or entity_id must be provided."`
+		EntityID string `json:"entity_id,omitempty" jsonschema:"Player entity ID to kick (e.g. e_abc123). Resolved to client_id by worldsim. Either client_id or entity_id must be provided."`
+		Reason   string `json:"reason,omitempty" jsonschema:"Human-readable kick reason (recorded in audit and shown to the player)"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "kick_player",
-		Description: "Force-disconnect a currently-connected player by client_id. Saves their position, emits zone.exit, publishes player.kicked audit. No-op (with audit) if the client is not currently connected.",
+		Description: "Force-disconnect a currently-connected player by client_id or entity_id. Saves their position, emits zone.exit, force-closes their WebSocket (browser shows 'You have been kicked' overlay), and publishes player.kicked audit. No-op (with audit) if the client is not currently connected.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args KickArgs) (*mcp.CallToolResult, any, error) {
-		resp, err := w.Kick(ctx, args.ClientID, args.Reason)
+		resp, err := w.Kick(ctx, args.ClientID, args.EntityID, args.Reason)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -234,7 +235,7 @@ func registerControlTools(s *mcp.Server, w *WorldsimClient) {
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ban_player",
-		Description: "Insert a ban record into PocketBase (target_type: user_id / ip / device_id) and kick any currently-connected client matching the ban. Emits player.banned audit. banned_until=0 means permanent.",
+		Description: "Insert a ban record into PocketBase (target_type: user_id / ip / device_id) and kick any currently-connected client matching the ban. Force-closes their WebSocket (browser shows 'You have been kicked' overlay), emits player.banned audit. banned_until=0 means permanent.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args BanArgs) (*mcp.CallToolResult, any, error) {
 		resp, err := w.Ban(ctx, args.TargetType, args.TargetValue, args.Reason, args.BannedUntil, args.BannedBy)
 		if err != nil {
