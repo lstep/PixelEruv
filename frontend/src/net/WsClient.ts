@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema, PingPlayerFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -81,6 +81,11 @@ export interface ConnectHandlers {
   // displacement). The client will not attempt to reconnect. reason is
   // human-readable.
   onKicked?: (reason: string) => void;
+  // Fired when a PlayerPingFrame is received — another player pinged this
+  // client to get their attention. The client should play a notification
+  // sound. DND targets never receive this (worldsim drops the ping
+  // server-side). entityId + displayName identify the sender.
+  onPlayerPing?: (msg: { entityId: string; displayName: string }) => void;
 }
 
 export interface SpawnEntityView {
@@ -404,6 +409,14 @@ export class WsClient {
           });
           break;
         }
+        case "playerPing": {
+          const pp = serverFrame.payload.value;
+          this.handlers.onPlayerPing?.({
+            entityId: pp.entityId,
+            displayName: pp.displayName,
+          });
+          break;
+        }
       }
     };
 
@@ -695,6 +708,17 @@ export class WsClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const kick = create(KickFrameSchema, { entityId, reason });
     const frame = create(ClientFrameSchema, { payload: { case: "kick", value: kick } });
+    this.ws.send(toBinary(ClientFrameSchema, frame));
+  }
+
+  // sendPing sends a PingPlayerFrame to ping another player by entity_id,
+  // playing a notification sound on the target's browser. The server drops
+  // the ping silently if the target is in Do Not Disturb mode. Fire-and-
+  // forget; no ack is sent back.
+  sendPing(entityId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const ping = create(PingPlayerFrameSchema, { entityId });
+    const frame = create(ClientFrameSchema, { payload: { case: "pingPlayer", value: ping } });
     this.ws.send(toBinary(ClientFrameSchema, frame));
   }
 
