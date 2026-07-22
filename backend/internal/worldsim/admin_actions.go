@@ -69,8 +69,10 @@ func (s *Simulator) subscribeClientKick() error {
 		s.mu.Lock()
 		e, ok := s.clients[req.ClientID]
 		entityID := ""
+		displayName := ""
 		if ok {
 			entityID = e.ID
+			displayName = e.DisplayName
 		}
 		s.mu.Unlock()
 
@@ -87,7 +89,7 @@ func (s *Simulator) subscribeClientKick() error {
 
 		s.despawnClient(ctx, req.ClientID)
 		audit.Emit(s.nc, "player.kicked", audit.SeverityWarn,
-			mergeActor(req.Actor, audit.Actor{EntityID: entityID, ClientID: req.ClientID}),
+			mergeActor(req.Actor, audit.Actor{EntityID: entityID, ClientID: req.ClientID, DisplayName: displayName}),
 			audit.Details{"reason": req.Reason},
 			"")
 		respondAdmin(m, adminResponse{OK: true})
@@ -150,10 +152,12 @@ func (s *Simulator) subscribeClientBan() error {
 		// Kick any currently-connected client matching the ban. We look up
 		// the entity by the same three identifiers CheckBan uses.
 		kickedClientID := ""
+		kickedDisplayName := ""
 		s.mu.Lock()
 		for clientID, e := range s.clients {
 			if matchesBanTarget(e, req.TargetType, req.TargetValue) {
 				kickedClientID = clientID
+				kickedDisplayName = e.DisplayName
 				break
 			}
 		}
@@ -164,7 +168,7 @@ func (s *Simulator) subscribeClientBan() error {
 		}
 
 		audit.Emit(s.nc, "player.banned", audit.SeverityWarn,
-			mergeActor(req.Actor, audit.Actor{}),
+			mergeActor(req.Actor, audit.Actor{DisplayName: kickedDisplayName}),
 			audit.Details{
 				"target_type":  req.TargetType,
 				"target_value": req.TargetValue,
@@ -299,7 +303,7 @@ func (s *Simulator) subscribeAdminChat() error {
 		s.mu.Unlock()
 
 		audit.Emit(s.nc, "chat.message", audit.SeverityInfo,
-			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID}),
+			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID, DisplayName: displayName}),
 			audit.Details{
 				"channel":      req.Channel,
 				"text":         text,
@@ -367,7 +371,7 @@ func (s *Simulator) subscribeAdminSetName() error {
 		s.mu.Unlock()
 
 		audit.Emit(s.nc, "player.set_name", audit.SeverityInfo,
-			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID}),
+			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID, DisplayName: name}),
 			audit.Details{"name": name, "admin": true},
 			"")
 
@@ -426,6 +430,7 @@ func (s *Simulator) subscribeAdminSetStatus() error {
 		e.Status = req.Status
 		e.dirtyName = true
 		isPlayer := e.NetworkSession != nil
+		displayName := e.DisplayName
 		s.mu.Unlock()
 
 		if isPlayer && s.userStore != nil {
@@ -436,7 +441,7 @@ func (s *Simulator) subscribeAdminSetStatus() error {
 		}
 
 		audit.Emit(s.nc, "player.set_status", audit.SeverityInfo,
-			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID}),
+			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID, DisplayName: displayName}),
 			audit.Details{"status": req.Status, "admin": true},
 			"")
 
@@ -501,10 +506,11 @@ func (s *Simulator) subscribeAdminSetSprite() error {
 		e.SpriteBase = req.SpriteBase
 		e.dirtyAppearance = true
 		isPlayer := e.NetworkSession != nil
+		displayName := e.DisplayName
 		s.mu.Unlock()
 
 		audit.Emit(s.nc, "player.set_sprite_base", audit.SeverityInfo,
-			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID}),
+			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID, DisplayName: displayName}),
 			audit.Details{"sprite_base": req.SpriteBase, "admin": true},
 			"")
 
@@ -551,10 +557,11 @@ func (s *Simulator) subscribeAdminSetPlayerOptions() error {
 		}
 		e.PlayerOptions = req.Options
 		isPlayer := e.NetworkSession != nil
+		displayName := e.DisplayName
 		s.mu.Unlock()
 
 		audit.Emit(s.nc, "player.set_player_options", audit.SeverityInfo,
-			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID}),
+			mergeActor(req.Actor, audit.Actor{EntityID: req.EntityID, DisplayName: displayName}),
 			audit.Details{"options": req.Options, "admin": true},
 			"")
 
@@ -620,6 +627,9 @@ func mergeActor(a, b audit.Actor) audit.Actor {
 	}
 	if out.Extension == "" {
 		out.Extension = b.Extension
+	}
+	if out.DisplayName == "" {
+		out.DisplayName = b.DisplayName
 	}
 	return out
 }

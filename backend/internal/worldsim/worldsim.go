@@ -829,6 +829,12 @@ func (s *Simulator) subscribe() error {
 			s.logger.WarnContext(ctx, "teleport unmarshal", "err", err)
 			return
 		}
+		s.mu.Lock()
+		displayName := ""
+		if e, ok := s.entities[req.EntityID]; ok {
+			displayName = e.DisplayName
+		}
+		s.mu.Unlock()
 		s.portal.transition(ctx, PortalInput{
 			Entities:                 s.entities,
 			Maps:                     s.maps,
@@ -839,7 +845,7 @@ func (s *Simulator) subscribe() error {
 			DestroyedEntities:        &s.destroyedEntities,
 		}, req.EntityID, req.MapID, req.TargetEntity)
 		audit.Emit(s.nc, "player.teleport", audit.SeverityInfo,
-			audit.Actor{EntityID: req.EntityID},
+			audit.Actor{EntityID: req.EntityID, DisplayName: displayName},
 			audit.Details{"target_map": req.MapID, "target_entity": req.TargetEntity},
 			"")
 	}); err != nil {
@@ -1136,21 +1142,25 @@ func (s *Simulator) startClientReaper(ctx context.Context) {
 func (s *Simulator) reapStaleClients() {
 	s.mu.Lock()
 	now := time.Now()
-	var stale []string
+	type staleClient struct {
+		clientID    string
+		displayName string
+	}
+	var stale []staleClient
 	for clientID, e := range s.clients {
 		if now.Sub(e.lastHeartbeat) > clientHeartbeatTimeout {
-			stale = append(stale, clientID)
+			stale = append(stale, staleClient{clientID: clientID, displayName: e.DisplayName})
 		}
 	}
 	s.mu.Unlock()
 
-	for _, clientID := range stale {
-		s.logger.Warn("reaping stale client", "client", clientID)
+	for _, sc := range stale {
+		s.logger.Warn("reaping stale client", "client", sc.clientID)
 		audit.Emit(s.nc, "client.reaped", audit.SeverityWarn,
-			audit.Actor{ClientID: clientID},
+			audit.Actor{ClientID: sc.clientID, DisplayName: sc.displayName},
 			audit.Details{"timeout": clientHeartbeatTimeout.String()},
 			"")
-		s.despawnClient(context.Background(), clientID)
+		s.despawnClient(context.Background(), sc.clientID)
 	}
 }
 
@@ -1387,7 +1397,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		"entity", entityID, "client", clientID, "sub", sub,
 		"map", mapName, "x", e.Position.X, "y", e.Position.Y)
 	audit.Emit(s.nc, "player.provisioned", audit.SeverityInfo,
-		audit.Actor{Sub: sub, EntityID: entityID, ClientID: clientID, IP: ip, DeviceID: deviceID},
+		audit.Actor{Sub: sub, EntityID: entityID, ClientID: clientID, IP: ip, DeviceID: deviceID, DisplayName: e.DisplayName},
 		audit.Details{"map": mapName, "x": e.Position.X, "y": e.Position.Y, "is_admin": isAdmin},
 		"")
 	return provisionResult{
@@ -1419,7 +1429,7 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 		mapIDForEvent = e.Position.MapId
 	}
 	for zid := range e.currentZones {
-		s.publishZoneEvent(ctx, "zone.exit", e.ID, clientIDForEvent, zid, mapIDForEvent)
+		s.publishZoneEvent(ctx, "zone.exit", e.ID, clientIDForEvent, zid, mapIDForEvent, e.DisplayName)
 	}
 	// Leave proximity group if any.
 	if e.currentProximityGroup != "" {
@@ -1445,7 +1455,7 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 			"new_client", s.entityIDToClient[e.ID])
 		s.mu.Unlock()
 		audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
-			audit.Actor{EntityID: e.ID, ClientID: clientID},
+			audit.Actor{EntityID: e.ID, ClientID: clientID, DisplayName: e.DisplayName},
 			audit.Details{"replaced_by_newer": true},
 			"")
 		return
@@ -1467,6 +1477,7 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	posX, posY := e.Position.X, e.Position.Y
 	mapID := e.Position.MapId
 	entityID := e.ID
+	displayName := e.DisplayName
 	s.mu.Unlock()
 
 	// Save position and map_id to PocketBase outside the lock (network I/O).
@@ -1481,7 +1492,7 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 
 	s.logger.InfoContext(ctx, "despawned entity", "entity", entityID, "client", clientID)
 	audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
 		audit.Details{"map": mapID, "x": posX, "y": posY},
 		"")
 }
@@ -1855,7 +1866,7 @@ func (s *Simulator) handleChat(ctx context.Context, clientID string, chat *pb.Ch
 	s.mu.Unlock()
 
 	audit.Emit(s.nc, "chat.message", audit.SeverityInfo,
-		audit.Actor{EntityID: sender.ID, ClientID: clientID},
+		audit.Actor{EntityID: sender.ID, ClientID: clientID, DisplayName: sender.DisplayName},
 		audit.Details{"channel": chat.GetChannel(), "text": text, "display_name": sender.DisplayName},
 		"")
 
@@ -1916,7 +1927,7 @@ func (s *Simulator) handleSetName(ctx context.Context, clientID string, frame *p
 	s.mu.Unlock()
 
 	audit.Emit(s.nc, "player.set_name", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: name},
 		audit.Details{"name": name},
 		"")
 
@@ -1965,6 +1976,7 @@ func (s *Simulator) handleSetStatus(ctx context.Context, clientID string, frame 
 	entity.Status = status
 	entity.dirtyName = true // status rides on the DisplayName component
 	entityID := entity.ID
+	displayName := entity.DisplayName
 	s.mu.Unlock()
 
 	// Persist to PocketBase so the status survives page reloads. No-op for
@@ -1978,7 +1990,7 @@ func (s *Simulator) handleSetStatus(ctx context.Context, clientID string, frame 
 	}
 
 	audit.Emit(s.nc, "player.set_status", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
 		audit.Details{"status": status},
 		"")
 
@@ -2038,10 +2050,11 @@ func (s *Simulator) handleSetSpriteBase(ctx context.Context, clientID string, fr
 	entity.SpriteBase = spriteBase
 	entity.dirtyAppearance = true
 	entityID := entity.ID
+	displayName := entity.DisplayName
 	s.mu.Unlock()
 
 	audit.Emit(s.nc, "player.set_sprite_base", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
 		audit.Details{"sprite_base": spriteBase},
 		"")
 
@@ -2077,10 +2090,11 @@ func (s *Simulator) handleSetPlayerOptions(ctx context.Context, clientID string,
 	}
 	entity.PlayerOptions = options
 	entityID := entity.ID
+	displayName := entity.DisplayName
 	s.mu.Unlock()
 
 	audit.Emit(s.nc, "player.set_player_options", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
 		audit.Details{"options": options},
 		"")
 	// Persist to PocketBase for logged-in users. Guests have no
@@ -2426,8 +2440,8 @@ const playerCollisionRadius float32 = 0.1
 // publishZoneEvent publishes a zone.enter or zone.exit event via the zone
 // sink. Called by despawnClient to emit zone.exit for all zones a departing
 // player was inside.
-func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID string) {
-	s.zoneSink.PublishZoneEvent(ctx, event, entityID, clientID, zoneID, mapID)
+func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID, displayName string) {
+	s.zoneSink.PublishZoneEvent(ctx, event, entityID, clientID, zoneID, mapID, displayName)
 }
 
 // publishProximityEvent publishes a proximity.join or proximity.leave event

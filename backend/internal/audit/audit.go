@@ -41,8 +41,9 @@ type Actor struct {
 	EntityID  string `json:"entity_id,omitempty"`  // World entity ID
 	ClientID  string `json:"client_id,omitempty"`  // Pusher session ID
 	IP        string `json:"ip,omitempty"`         // Client IP
-	DeviceID  string `json:"device_id,omitempty"`  // Browser device ID
-	Extension string `json:"extension,omitempty"`  // Extension ID (for ext events)
+	DeviceID    string `json:"device_id,omitempty"`    // Browser device ID
+	Extension   string `json:"extension,omitempty"`     // Extension ID (for ext events)
+	DisplayName string `json:"display_name,omitempty"`  // Player display name (when actor is a player)
 }
 
 // Details holds event-specific key/value pairs serialized as JSON.

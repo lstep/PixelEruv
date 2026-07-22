@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS audit_events (
     actor_ip     TEXT    NOT NULL DEFAULT '',
     actor_device TEXT    NOT NULL DEFAULT '',
     actor_ext    TEXT    NOT NULL DEFAULT '',
+    actor_name   TEXT    NOT NULL DEFAULT '',
     details      TEXT    NOT NULL DEFAULT '',
     trace_id     TEXT    NOT NULL DEFAULT '',
     occurred_at  TEXT    NOT NULL
@@ -107,7 +108,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_actor_sub  ON audit_events(actor_sub);
 CREATE INDEX IF NOT EXISTS idx_audit_actor_entity ON audit_events(actor_entity);
 CREATE INDEX IF NOT EXISTS idx_audit_occurred   ON audit_events(occurred_at);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	// Migration: add actor_name column for existing databases created before
+	// this column existed. SQLite returns "duplicate column name" error if it
+	// already exists — safe to ignore.
+	_, _ = s.db.Exec("ALTER TABLE audit_events ADD COLUMN actor_name TEXT NOT NULL DEFAULT ''")
+	return nil
 }
 
 func (s *SQLiteStore) Insert(ev audit.Event) error {
@@ -115,11 +123,11 @@ func (s *SQLiteStore) Insert(ev audit.Event) error {
 	_, err := s.db.Exec(
 		`INSERT INTO audit_events
 		   (event_type, severity, actor_sub, actor_entity, actor_client,
-		    actor_ip, actor_device, actor_ext, details, trace_id, occurred_at)
-		 VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		    actor_ip, actor_device, actor_ext, actor_name, details, trace_id, occurred_at)
+		 VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		ev.EventType, ev.Severity,
 		ev.Actor.Sub, ev.Actor.EntityID, ev.Actor.ClientID,
-		ev.Actor.IP, ev.Actor.DeviceID, ev.Actor.Extension,
+		ev.Actor.IP, ev.Actor.DeviceID, ev.Actor.Extension, ev.Actor.DisplayName,
 		string(details), ev.TraceID, ev.Timestamp,
 	)
 	return err
@@ -127,7 +135,7 @@ func (s *SQLiteStore) Insert(ev audit.Event) error {
 
 func (s *SQLiteStore) Query(f QueryFilter) ([]StoredEvent, error) {
 	q := `SELECT id, event_type, severity, actor_sub, actor_entity, actor_client,
-	             actor_ip, actor_device, actor_ext, details, trace_id, occurred_at
+	             actor_ip, actor_device, actor_ext, actor_name, details, trace_id, occurred_at
 	      FROM audit_events WHERE 1=1`
 	var args []any
 	if f.EventType != "" {
@@ -169,7 +177,7 @@ func (s *SQLiteStore) Query(f QueryFilter) ([]StoredEvent, error) {
 		var tsStr string
 		if err := rows.Scan(&se.ID, &se.EventType, &se.Severity,
 			&se.Actor.Sub, &se.Actor.EntityID, &se.Actor.ClientID,
-			&se.Actor.IP, &se.Actor.DeviceID, &se.Actor.Extension,
+			&se.Actor.IP, &se.Actor.DeviceID, &se.Actor.Extension, &se.Actor.DisplayName,
 			&detailsStr, &se.TraceID, &tsStr); err != nil {
 			return nil, err
 		}
@@ -186,11 +194,11 @@ func (s *SQLiteStore) GetByID(id int64) (StoredEvent, error) {
 	var tsStr string
 	err := s.db.QueryRow(
 		`SELECT id, event_type, severity, actor_sub, actor_entity, actor_client,
-		        actor_ip, actor_device, actor_ext, details, trace_id, occurred_at
+		        actor_ip, actor_device, actor_ext, actor_name, details, trace_id, occurred_at
 		 FROM audit_events WHERE id = ?`, id,
 	).Scan(&se.ID, &se.EventType, &se.Severity,
 		&se.Actor.Sub, &se.Actor.EntityID, &se.Actor.ClientID,
-		&se.Actor.IP, &se.Actor.DeviceID, &se.Actor.Extension,
+		&se.Actor.IP, &se.Actor.DeviceID, &se.Actor.Extension, &se.Actor.DisplayName,
 		&detailsStr, &se.TraceID, &tsStr)
 	se.Details = json.RawMessage(detailsStr)
 	se.Timestamp, _ = time.Parse(time.RFC3339, tsStr)
