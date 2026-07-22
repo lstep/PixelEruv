@@ -53,7 +53,11 @@ func TestAdminInfo_SentOnSpawnToAdmin(t *testing.T) {
 	// Trigger replication for the admin client. Entities have not been
 	// spawned to the admin yet (spawnedTo is empty), so this tick will
 	// spawn them and publish admin info.
-	sim.replicateToClient(context.Background(), admin)
+	sim.replication.replicateToClient(context.Background(), ReplicationInput{
+		Entities:          sim.entities,
+		TickSnapshotSeq:   sim.Tick.SnapshotSeq,
+		DestroyedEntities: &sim.destroyedEntities,
+	}, admin)
 
 	// Wait for the admin info frame.
 	select {
@@ -115,7 +119,11 @@ func TestAdminInfo_NotSentToNonAdmin(t *testing.T) {
 	}
 
 	// Trigger replication for the non-admin client.
-	sim.replicateToClient(context.Background(), regular)
+	sim.replication.replicateToClient(context.Background(), ReplicationInput{
+		Entities:          sim.entities,
+		TickSnapshotSeq:   sim.Tick.SnapshotSeq,
+		DestroyedEntities: &sim.destroyedEntities,
+	}, regular)
 
 	// Give it a moment to ensure nothing arrives.
 	time.Sleep(100 * time.Millisecond)
@@ -170,7 +178,11 @@ func TestProvisionClient_SetsDeviceID(t *testing.T) {
 	}
 	subNc.Flush()
 
-	sim.replicateToClient(context.Background(), admin)
+	sim.replication.replicateToClient(context.Background(), ReplicationInput{
+		Entities:          sim.entities,
+		TickSnapshotSeq:   sim.Tick.SnapshotSeq,
+		DestroyedEntities: &sim.destroyedEntities,
+	}, admin)
 
 	select {
 	case ai := <-adminCh:

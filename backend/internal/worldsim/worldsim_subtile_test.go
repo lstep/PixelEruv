@@ -1,6 +1,7 @@
 package worldsim
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -14,12 +15,14 @@ import (
 func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 	// Wall 0.2 tiles thick at feet-Y [5.0, 5.2], spanning X.
 	zones := []*Zone{{ID: "thin", Shape: ShapeRect, X: 0, Y: 5, W: 20, H: 0.2}}
+	extMgr := NewExtensionManager(slog.Default())
 	s := &Simulator{
 		World: World{
 			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
 			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
 		},
-		extMgr: NewExtensionManager(slog.Default()),
+		extMgr:   extMgr,
+		movement: NewMovementSystem(extMgr),
 	}
 	for y := range s.maps["map1"].Collision {
 		s.maps["map1"].Collision[y] = make([]bool, 20)
@@ -49,7 +52,7 @@ func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 		{"segment above expanded wall (feet 5.4->5.6)", 4.4, 4.6, false},
 	}
 	for _, c := range cases {
-		got := s.isMoveBlocked(s.zones["map1"], s.maps["map1"], 5.0, c.oldY, 5.0, c.newY)
+		got := s.movement.isMoveBlocked(s.zones["map1"], s.maps["map1"], 5.0, c.oldY, 5.0, c.newY)
 		if got != c.wantBlock {
 			t.Errorf("%s: isMoveBlocked(5.0, %v, 5.0, %v) = %v, want %v (feet %v->%v, wall [5.0,5.2] expanded to [4.9,5.3])",
 				c.name, c.oldY, c.newY, got, c.wantBlock, c.oldY+1.0, c.newY+1.0)
@@ -64,12 +67,14 @@ func TestIsMoveBlocked_SubTileWall(t *testing.T) {
 func TestTick_ThinWallBlocksMovement(t *testing.T) {
 	// Wall 0.1 tiles thick at feet-Y [5.05, 5.15], spanning X.
 	zones := []*Zone{{ID: "razor", Shape: ShapeRect, X: 0, Y: 5.05, W: 20, H: 0.1}}
+	extMgr2 := NewExtensionManager(slog.Default())
 	s := &Simulator{
 		World: World{
 			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
 			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
 		},
-		extMgr: NewExtensionManager(slog.Default()),
+		extMgr:   extMgr2,
+		movement: NewMovementSystem(extMgr2),
 	}
 	for y := range s.maps["map1"].Collision {
 		s.maps["map1"].Collision[y] = make([]bool, 20)
@@ -103,7 +108,11 @@ func TestTick_ThinWallBlocksMovement(t *testing.T) {
 	s.entities = map[string]*Entity{"e_test": e}
 
 	// Call the movement system directly (bypasses replication, which needs NATS).
-	s.runMovementSystem()
+	s.movement.Step(context.Background(), MovementInput{
+		Entities: s.entities,
+		Maps:     s.maps,
+		Zones:    s.zones,
+	})
 
 	// The wall is at feet-Y [5.05, 5.15]. The player started at feet-Y 5.2
 	// (just below the wall) and tried to move up. With point-sampling at the

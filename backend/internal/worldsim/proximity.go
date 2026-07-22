@@ -11,6 +11,12 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
+// ProximityInput is the narrow read-view of World that ProximitySystem needs.
+type ProximityInput struct {
+	Entities map[string]*Entity
+	Zones    map[string]*ZoneRegistry
+}
+
 // ProximitySystem groups nearby players (not in av_enabled zones) into
 // proximity A/V groups via connected components on the "who is near whom"
 // graph, then publishes edge-triggered proximity.join/proximity.leave events
@@ -31,11 +37,11 @@ func NewProximitySystem(sink ProximitySink, logger *slog.Logger) *ProximitySyste
 
 // Step runs proximity clustering. It is throttled by the caller (tick runs
 // it every 5th tick). Caller must hold s.mu.
-func (p *ProximitySystem) Step(ctx context.Context, w *World) {
+func (p *ProximitySystem) Step(ctx context.Context, in ProximityInput) {
 	// Build a set of av_enabled zone IDs across all maps. Players inside
 	// these zones get zone-based A/V instead of proximity A/V.
 	avZones := make(map[string]bool)
-	for _, zr := range w.zones {
+	for _, zr := range in.Zones {
 		if zr == nil {
 			continue
 		}
@@ -55,7 +61,7 @@ func (p *ProximitySystem) Step(ctx context.Context, w *World) {
 	// and rejoin without synthetic events.
 	var players []*Entity
 	inAVZone := make(map[string]bool)
-	for _, e := range w.entities {
+	for _, e := range in.Entities {
 		if e.NetworkSession == nil {
 			continue
 		}
@@ -138,7 +144,7 @@ func (p *ProximitySystem) Step(ctx context.Context, w *World) {
 		// This keeps the LiveKit room stable when members join/leave.
 		var gid string
 		for _, id := range sorted {
-			if e, ok := w.entities[id]; ok && e.currentProximityGroup != "" {
+			if e, ok := in.Entities[id]; ok && e.currentProximityGroup != "" {
 				gid = e.currentProximityGroup
 				break
 			}
@@ -149,7 +155,7 @@ func (p *ProximitySystem) Step(ctx context.Context, w *World) {
 			// walks past another without stopping. See issue #88.
 			allStationary := true
 			for _, id := range sorted {
-				if e, ok := w.entities[id]; ok && e.stationaryTicks < proximityStationaryThreshold {
+				if e, ok := in.Entities[id]; ok && e.stationaryTicks < proximityStationaryThreshold {
 					allStationary = false
 					break
 				}
@@ -203,7 +209,7 @@ func (p *ProximitySystem) Step(ctx context.Context, w *World) {
 	}
 
 	// Players in av_enabled zones leave any proximity group they were in.
-	for _, e := range w.entities {
+	for _, e := range in.Entities {
 		if e.NetworkSession == nil || !inAVZone[e.ID] {
 			continue
 		}

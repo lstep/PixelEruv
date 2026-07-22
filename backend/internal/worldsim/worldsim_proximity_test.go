@@ -44,6 +44,7 @@ func TestMobileZone_FollowsAvatar(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	// Player A at (5, 5), player B at (10, 10) — far apart.
 	a := &Entity{
@@ -208,6 +209,7 @@ func TestProximityClustering_TwoPlayersJoin(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
@@ -336,6 +338,7 @@ func TestProximityClustering_ThreePlayerChain(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
@@ -442,6 +445,7 @@ func TestProximityClustering_ZoneOverride(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
@@ -544,6 +548,7 @@ func TestProximityClustering_StableGroupID(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
@@ -734,6 +739,7 @@ func TestProximityClustering_Hysteresis(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{
@@ -877,6 +883,7 @@ func TestProximityClustering_MovementGating(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{

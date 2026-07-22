@@ -1,6 +1,7 @@
 package worldsim
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -28,7 +29,11 @@ func TestMovement_CornerSkipThinWall(t *testing.T) {
 		currentZones: make(map[string]bool),
 	}
 	s.entities = map[string]*Entity{"e_test": e}
-	s.runMovementSystem()
+	s.movement.Step(context.Background(), MovementInput{
+		Entities: s.entities,
+		Maps:     s.maps,
+		Zones:    s.zones,
+	})
 
 	// Without the diagonal guard, the player tunnels to (5.183, 4.183)
 	// (feet 5.183, 5.183) — past the wall. With the guard, the player must
@@ -62,7 +67,11 @@ func TestMovement_PlayerRadius(t *testing.T) {
 		currentZones: make(map[string]bool),
 	}
 	s.entities = map[string]*Entity{"e_test": e}
-	s.runMovementSystem()
+	s.movement.Step(context.Background(), MovementInput{
+		Entities: s.entities,
+		Maps:     s.maps,
+		Zones:    s.zones,
+	})
 
 	// Player moves right by 0.4 → X would be 4.9. With a radius r, the
 	// player should stop at X = 5.0 - r (feet center can't get closer than
@@ -77,12 +86,14 @@ func TestMovement_PlayerRadius(t *testing.T) {
 }
 
 func newMovementSim(zones []*Zone) *Simulator {
+	extMgr := NewExtensionManager(slog.Default())
 	s := &Simulator{
 		World: World{
 			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
 			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
 		},
-		extMgr: NewExtensionManager(slog.Default()),
+		extMgr:   extMgr,
+		movement: NewMovementSystem(extMgr),
 	}
 	for y := range s.maps["map1"].Collision {
 		s.maps["map1"].Collision[y] = make([]bool, 20)

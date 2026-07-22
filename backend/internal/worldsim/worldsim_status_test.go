@@ -45,6 +45,7 @@ func TestHandleSetStatus(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	a := &Entity{
 		ID:             "e_a",
@@ -134,6 +135,7 @@ func TestProximityClustering_DNDExcluded(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	makePlayer := func(id, cid string, x, y float32) *Entity {
 		e := &Entity{

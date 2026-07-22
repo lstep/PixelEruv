@@ -39,6 +39,7 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 		logger:  logger,
 		tracer: otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	type zoneEventPayload struct {
 		EntityID string `json:"entity_id"`

@@ -126,12 +126,28 @@ func TestPipeline_Order(t *testing.T) {
 	// Run the locked phase in pipeline order, matching tick().
 	w.Tick.SnapshotSeq++
 
-	movement.Step(ctx, &w)
-	zoneSys.Step(ctx, &w)
+	movement.Step(ctx, MovementInput{
+		Entities: w.entities,
+		Maps:     w.maps,
+		Zones:    w.zones,
+	})
+	zoneSys.Step(ctx, ZoneInput{
+		Entities:                 w.entities,
+		Zones:                    w.zones,
+		Maps:                     w.maps,
+		PendingPortalTransitions: &w.pendingPortalTransitions,
+	})
 	// In production tick() gates proximity on TickCount%5 == 0; here we call
 	// it directly to exercise the ordering unconditionally.
-	proxSys.Step(ctx, &w)
-	repSys.Step(ctx, &w)
+	proxSys.Step(ctx, ProximityInput{
+		Entities: w.entities,
+		Zones:    w.zones,
+	})
+	repSys.Step(ctx, ReplicationInput{
+		Entities:          w.entities,
+		TickSnapshotSeq:   w.Tick.SnapshotSeq,
+		DestroyedEntities: &w.destroyedEntities,
+	})
 
 	calls := sink.calls_snapshot()
 
@@ -218,8 +234,17 @@ func TestPipeline_MovementBeforeZone(t *testing.T) {
 	ctx := context.Background()
 	w.Tick.SnapshotSeq++
 
-	movement.Step(ctx, &w)
-	zoneSys.Step(ctx, &w)
+	movement.Step(ctx, MovementInput{
+		Entities: w.entities,
+		Maps:     w.maps,
+		Zones:    w.zones,
+	})
+	zoneSys.Step(ctx, ZoneInput{
+		Entities:                 w.entities,
+		Zones:                    w.zones,
+		Maps:                     w.maps,
+		PendingPortalTransitions: &w.pendingPortalTransitions,
+	})
 
 	// After movement, the player should have moved right into the zone.
 	// Zone detection should have fired zone.enter.

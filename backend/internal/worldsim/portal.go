@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 
 	"github.com/nats-io/nats.go"
@@ -12,6 +13,20 @@ import (
 	"github.com/lstep/pixeleruv/backend/internal/audit"
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 )
+
+// PortalInput is the narrow read-view of World that PortalSystem needs.
+// PendingPortalTransitions is drained by Step (pointer so the drain is visible
+// to the caller). DestroyedEntities is appended to by transition (pointer so
+// the append is visible to the caller).
+type PortalInput struct {
+	Entities                 map[string]*Entity
+	Maps                     map[string]*MapData
+	Zones                    map[string]*ZoneRegistry
+	MapWarnings              map[string][]*pb.MapWarning
+	RNG                      *rand.Rand
+	PendingPortalTransitions *[]portalTransitionReq
+	DestroyedEntities        *[]string
+}
 
 // PortalSystem applies deferred portal transitions queued by ZoneSystem during
 // the tick's locked phase. It runs after the tick releases the world mutex
@@ -39,11 +54,11 @@ func NewPortalSystem(sink PortalSink, logger *slog.Logger, mu *sync.Mutex) *Port
 
 // Step drains pending portal transitions and applies each one. Called after
 // the tick releases s.mu — each transition re-locks s.mu for its locked phase.
-func (p *PortalSystem) Step(ctx context.Context, w *World) {
-	pending := w.pendingPortalTransitions
-	w.pendingPortalTransitions = nil
+func (p *PortalSystem) Step(ctx context.Context, in PortalInput) {
+	pending := *in.PendingPortalTransitions
+	*in.PendingPortalTransitions = nil
 	for _, t := range pending {
-		p.transition(ctx, w, t.entityID, t.targetMap, t.targetEntity)
+		p.transition(ctx, in, t.entityID, t.targetMap, t.targetEntity)
 	}
 }
 
@@ -63,15 +78,15 @@ func (p *PortalSystem) Step(ctx context.Context, w *World) {
 //  7. Sends a MapTransitionFrame to the client (via sink).
 //  8. Persists the new map_id to PocketBase (via sink).
 //  9. Emits an audit event (via sink).
-func (p *PortalSystem) transition(ctx context.Context, w *World, entityID, targetMap, targetEntity string) {
+func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID, targetMap, targetEntity string) {
 	p.mu.Lock()
-	e, ok := w.entities[entityID]
+	e, ok := in.Entities[entityID]
 	if !ok {
 		p.mu.Unlock()
 		return
 	}
 
-	targetMD := w.maps[targetMap]
+	targetMD := in.Maps[targetMap]
 	if targetMD == nil {
 		p.logger.WarnContext(ctx, "transition target map not loaded",
 			"entity", entityID, "target_map", targetMap)
@@ -91,14 +106,14 @@ func (p *PortalSystem) transition(ctx context.Context, w *World, entityID, targe
 		}
 		spawnX, spawnY = beacon.X, beacon.Y
 	} else {
-		spawnX, spawnY = targetMD.FindSpawnPoint(w.rng)
+		spawnX, spawnY = targetMD.FindSpawnPoint(in.RNG)
 	}
 
 	oldMap := e.Position.MapId
 
 	// Remove mobile zone from old map's zone registry.
 	if e.mobileZone != nil {
-		if zr := w.zones[oldMap]; zr != nil {
+		if zr := in.Zones[oldMap]; zr != nil {
 			zr.RemoveZone(e.mobileZone.ID)
 		}
 	}
@@ -117,7 +132,7 @@ func (p *PortalSystem) transition(ctx context.Context, w *World, entityID, targe
 
 	// Re-add mobile zone to the new map's zone registry.
 	if e.mobileZone != nil {
-		if zr := w.zones[targetMap]; zr != nil {
+		if zr := in.Zones[targetMap]; zr != nil {
 			e.mobileZone.X = spawnX - proximityRadius
 			e.mobileZone.Y = spawnY + avatarFeetYOffset - proximityRadius
 			zr.AddZone(e.mobileZone)
@@ -126,17 +141,17 @@ func (p *PortalSystem) transition(ctx context.Context, w *World, entityID, targe
 
 	// Queue a DestroyEntity for clients on the old map. Clients on the new
 	// map will get a SpawnEntity via the normal replication loop.
-	w.destroyedEntities = append(w.destroyedEntities, entityID)
+	*in.DestroyedEntities = append(*in.DestroyedEntities, entityID)
 
 	clientID := ""
 	if e.NetworkSession != nil {
 		clientID = e.NetworkSession.ClientID
 	}
 	mapOpts := ""
-	if md := w.maps[targetMap]; md != nil {
+	if md := in.Maps[targetMap]; md != nil {
 		mapOpts = string(md.Options)
 	}
-	mapWarns := w.mapWarnings[targetMap]
+	mapWarns := in.MapWarnings[targetMap]
 	p.mu.Unlock()
 
 	// Send MapTransitionFrame, persist map_id, emit audit — all via sink.

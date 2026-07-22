@@ -15,6 +15,14 @@ import (
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 )
 
+// ReplicationInput is the narrow read-view of World that ReplicationSystem needs.
+// DestroyedEntities is a pointer so Step can drain it after replication.
+type ReplicationInput struct {
+	Entities          map[string]*Entity
+	TickSnapshotSeq   uint32
+	DestroyedEntities *[]string
+}
+
 // ReplicationSystem builds and publishes replication batches for all
 // connected clients each tick. Lite MVP: replicate everything to everyone
 // (no AOI filter), filtered by same-map.
@@ -38,19 +46,19 @@ func NewReplicationSystem(sink ReplicationSink, tracer trace.Tracer) *Replicatio
 // Step runs replication for all connected clients, then clears dirty flags
 // and drains the destroyed entities queue. Returns the count of clients
 // that received a batch. Caller must hold s.mu.
-func (r *ReplicationSystem) Step(ctx context.Context, w *World) int {
+func (r *ReplicationSystem) Step(ctx context.Context, in ReplicationInput) int {
 	replicated := 0
-	for _, e := range w.entities {
+	for _, e := range in.Entities {
 		if e.NetworkSession == nil {
 			continue
 		}
-		if r.replicateToClient(ctx, w, e) {
+		if r.replicateToClient(ctx, in, e) {
 			replicated++
 		}
 	}
 
 	// Clear dirty flags
-	for _, e := range w.entities {
+	for _, e := range in.Entities {
 		e.dirtyPosition = false
 		e.dirtyState = false
 		e.dirtyName = false
@@ -60,14 +68,14 @@ func (r *ReplicationSystem) Step(ctx context.Context, w *World) int {
 	}
 
 	// Drain the destroyed entities queue — all clients have been replicated.
-	w.destroyedEntities = nil
+	*in.DestroyedEntities = nil
 
 	return replicated
 }
 
 // replicateToClient builds and publishes a replication batch for one client.
 // Returns true if a batch was published.
-func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, clientEntity *Entity) bool {
+func (r *ReplicationSystem) replicateToClient(ctx context.Context, in ReplicationInput, clientEntity *Entity) bool {
 	rctx, span := r.tracer.Start(ctx, "worldsim.replicate")
 	defer span.End()
 
@@ -81,7 +89,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 	// them if the client is an admin.
 	var spawnedEntities []*Entity
 
-	for _, e := range w.entities {
+	for _, e := range in.Entities {
 		// Multi-map filtering: only replicate entities on the same map as the
 		// client. The client's own entity is always included.
 		if e != clientEntity && e.Position != nil && e.Position.MapId != clientEntity.Position.MapId {
@@ -101,7 +109,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compPosition,
 					Data:        posBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			// Echo DisplayName updates (which carry presence status) back to
@@ -115,7 +123,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
 					Data:        nameBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			appendAnimations(batch, e)
@@ -150,7 +158,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 			}
 			batch.Spawns = append(batch.Spawns, &pb.SpawnEntity{
 				EntityId:    e.ID,
-				SnapshotSeq: w.Tick.SnapshotSeq,
+				SnapshotSeq: in.TickSnapshotSeq,
 				Components:  components,
 			})
 			e.spawnedTo[clientID] = true
@@ -162,7 +170,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compPosition,
 					Data:        posBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			if e.dirtyState {
@@ -171,7 +179,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compEntityState,
 					Data:        stateBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			if e.dirtyName {
@@ -180,7 +188,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
 					Data:        nameBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			if e.dirtyAppearance {
@@ -190,7 +198,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compAppearance,
 					Data:        appBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			if e.dirtyLightEmitter {
@@ -199,7 +207,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 					EntityId:    e.ID,
 					ComponentId: compLightEmitter,
 					Data:        lightBytes,
-					SnapshotSeq: w.Tick.SnapshotSeq,
+					SnapshotSeq: in.TickSnapshotSeq,
 				})
 			}
 			appendAnimations(batch, e)
@@ -213,13 +221,13 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, w *World, cli
 	// gets a SpawnEntity for them in this same batch. Without this filter,
 	// the client receives both Spawn and Destroy for the same entity, and
 	// the Destroy wins (entity disappears).
-	for _, id := range w.destroyedEntities {
-		if e, ok := w.entities[id]; ok && e.Position != nil && e.Position.MapId == clientEntity.Position.MapId {
+	for _, id := range *in.DestroyedEntities {
+		if e, ok := in.Entities[id]; ok && e.Position != nil && e.Position.MapId == clientEntity.Position.MapId {
 			continue
 		}
 		batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
 			EntityId:    id,
-			SnapshotSeq: w.Tick.SnapshotSeq,
+			SnapshotSeq: in.TickSnapshotSeq,
 		})
 	}
 

@@ -11,6 +11,16 @@ import (
 	"github.com/lstep/pixeleruv/backend/internal/audit"
 )
 
+// ZoneInput is the narrow read-view of World that ZoneSystem needs.
+// PendingPortalTransitions is a pointer so ZoneSystem can append portal
+// transition requests that PortalSystem drains after the tick releases the mutex.
+type ZoneInput struct {
+	Entities                 map[string]*Entity
+	Zones                    map[string]*ZoneRegistry
+	Maps                     map[string]*MapData
+	PendingPortalTransitions *[]portalTransitionReq
+}
+
 // ZoneSystem detects zone enter/exit transitions for all entities each tick
 // and publishes zone.enter/zone.exit events via ZoneSink. When a portal zone
 // is entered, it enqueues a portal transition on World.pendingPortalTransitions
@@ -31,13 +41,13 @@ func NewZoneSystem(sink ZoneSink, logger *slog.Logger) *ZoneSystem {
 }
 
 // Step runs zone enter/exit detection for all entities. Caller must hold s.mu.
-func (z *ZoneSystem) Step(ctx context.Context, w *World) {
-	for _, e := range w.entities {
+func (z *ZoneSystem) Step(ctx context.Context, in ZoneInput) {
+	for _, e := range in.Entities {
 		if e.currentZones == nil {
 			e.currentZones = make(map[string]bool)
 		}
 		// Look up the zone registry for this entity's current map.
-		zr := w.zones[e.Position.MapId]
+		zr := in.Zones[e.Position.MapId]
 		if zr == nil {
 			e.currentZones = make(map[string]bool)
 			continue
@@ -58,7 +68,7 @@ func (z *ZoneSystem) Step(ctx context.Context, w *World) {
 			if !e.currentZones[zid] {
 				z.sink.PublishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid, e.Position.MapId)
 				// Check for portal zones — handle map transition.
-				z.handlePortalZone(ctx, w, e, zid)
+				z.handlePortalZone(ctx, in, e, zid)
 			}
 		}
 		for zid := range e.currentZones {
@@ -70,7 +80,7 @@ func (z *ZoneSystem) Step(ctx context.Context, w *World) {
 				// A/V thrashing. See issue #88.
 				if strings.HasPrefix(zid, "prox-") {
 					ownerID := zid[len("prox-"):]
-					if owner, ok := w.entities[ownerID]; ok && owner.Position != nil {
+					if owner, ok := in.Entities[ownerID]; ok && owner.Position != nil {
 						feetX := e.Position.X
 						feetY := e.Position.Y + avatarFeetYOffset
 						ownerFeetX := owner.Position.X
@@ -95,11 +105,11 @@ func (z *ZoneSystem) Step(ctx context.Context, w *World) {
 // target_map, and target_entity properties. The actual transition is applied
 // after the tick releases s.mu (see tick); calling transitionEntity inline
 // would self-deadlock on the non-reentrant s.mu. Caller must hold s.mu.
-func (z *ZoneSystem) handlePortalZone(ctx context.Context, w *World, e *Entity, zoneID string) {
+func (z *ZoneSystem) handlePortalZone(ctx context.Context, in ZoneInput, e *Entity, zoneID string) {
 	if e.NetworkSession == nil {
 		return // only player avatars can transition
 	}
-	zr := w.zones[e.Position.MapId]
+	zr := in.Zones[e.Position.MapId]
 	if zr == nil {
 		return
 	}
@@ -112,12 +122,12 @@ func (z *ZoneSystem) handlePortalZone(ctx context.Context, w *World, e *Entity, 
 			return // not a portal zone
 		}
 		// Validate the target map exists.
-		if _, ok := w.maps[zone.PortalTargetMap]; !ok {
+		if _, ok := in.Maps[zone.PortalTargetMap]; !ok {
 			z.logger.WarnContext(ctx, "portal target map not found",
 				"entity", e.ID, "zone", zoneID, "target_map", zone.PortalTargetMap)
 			return
 		}
-		w.pendingPortalTransitions = append(w.pendingPortalTransitions, portalTransitionReq{
+		*in.PendingPortalTransitions = append(*in.PendingPortalTransitions, portalTransitionReq{
 			entityID:     e.ID,
 			targetMap:    zone.PortalTargetMap,
 			targetEntity: zone.PortalTargetEntity,
