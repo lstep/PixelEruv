@@ -34,10 +34,11 @@ func TestZoneEvent_ContainsClientID(t *testing.T) {
 	t.Cleanup(pubNc.Close)
 
 	sim := &Simulator{
-		nc:      pubNc,
+		nc:         pubNc,
 		defaultMap: "test-map",
-		logger:  logger,
-		tracer: otel.Tracer("test"),
+		extMgr:     NewExtensionManager(logger),
+		logger:     logger,
+		tracer:     otel.Tracer("test"),
 	}
 	sim.initTestSystems()
 
