@@ -66,7 +66,7 @@ func (z *ZoneSystem) Step(ctx context.Context, in ZoneInput) {
 		}
 		for zid := range newSet {
 			if !e.currentZones[zid] {
-				z.sink.PublishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid, e.Position.MapId)
+				z.sink.PublishZoneEvent(ctx, "zone.enter", e.ID, clientID, zid, e.Position.MapId, e.DisplayName)
 				// Check for portal zones — handle map transition.
 				z.handlePortalZone(ctx, in, e, zid)
 			}
@@ -93,7 +93,7 @@ func (z *ZoneSystem) Step(ctx context.Context, in ZoneInput) {
 						}
 					}
 				}
-				z.sink.PublishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid, e.Position.MapId)
+				z.sink.PublishZoneEvent(ctx, "zone.exit", e.ID, clientID, zid, e.Position.MapId, e.DisplayName)
 			}
 		}
 		e.currentZones = newSet
@@ -148,7 +148,7 @@ func NewNatZoneSink(nc *nats.Conn, logger *slog.Logger) ZoneSink {
 	return &natZoneSink{nc: nc, logger: logger}
 }
 
-func (s *natZoneSink) PublishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID string) {
+func (s *natZoneSink) PublishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID, displayName string) {
 	subject := event // event already contains the full subject (e.g. "zone.enter")
 	data := fmt.Sprintf(`{"entity_id":"%s","client_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, clientID, zoneID, mapID)
 	if err := s.nc.Publish(subject, []byte(data)); err != nil {
@@ -156,7 +156,7 @@ func (s *natZoneSink) PublishZoneEvent(ctx context.Context, event, entityID, cli
 	}
 	s.logger.InfoContext(ctx, "zone event", "event", event, "entity", entityID, "zone", zoneID)
 	audit.Emit(s.nc, event, audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID},
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
 		audit.Details{"zone": zoneID, "map": mapID},
 		"")
 }

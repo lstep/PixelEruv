@@ -30,7 +30,7 @@ func (r *recordingSink) calls_snapshot() []string {
 }
 
 // ZoneSink
-func (r *recordingSink) PublishZoneEvent(_ context.Context, event, entityID, clientID, zoneID, mapID string) {
+func (r *recordingSink) PublishZoneEvent(_ context.Context, event, entityID, clientID, zoneID, mapID, displayName string) {
 	r.record("zone:" + event)
 }
 

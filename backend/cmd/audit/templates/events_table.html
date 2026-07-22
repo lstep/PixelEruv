@@ -11,7 +11,7 @@
       <td><a href="{{bp}}/events/{{.ID}}">{{.EventType}}</a></td>
       <td class="severity">{{.Severity}}</td>
       <td>
-        {{if .Actor.Sub}}<a href="{{bp}}/players/{{.Actor.Sub}}">{{.Actor.Sub}}</a>{{end}}
+        {{if .Actor.DisplayName}}<strong>{{.Actor.DisplayName}}</strong>{{if .Actor.Sub}} <span class="muted">(<a href="{{bp}}/players/{{.Actor.Sub}}">{{.Actor.Sub}}</a>)</span>{{end}}{{else if .Actor.Sub}}<a href="{{bp}}/players/{{.Actor.Sub}}">{{.Actor.Sub}}</a>{{end}}
         {{if .Actor.EntityID}}<span class="muted">e:{{.Actor.EntityID}}</span>{{end}}
       </td>
       <td class="details-cell">{{printf "%s" .Details}}</td>

@@ -9,6 +9,7 @@
     <tr><th>Severity</th><td class="sev-{{.Event.Severity}}">{{.Event.Severity}}</td></tr>
     <tr><th>Timestamp</th><td>{{.Event.Timestamp.Format "2006-01-02 15:04:05 MST"}}</td></tr>
     <tr><th>Actor Sub</th><td>{{if .Event.Actor.Sub}}<a href="{{bp}}/players/{{.Event.Actor.Sub}}">{{.Event.Actor.Sub}}</a>{{end}}</td></tr>
+    <tr><th>Display Name</th><td>{{.Event.Actor.DisplayName}}</td></tr>
     <tr><th>Entity ID</th><td>{{.Event.Actor.EntityID}}</td></tr>
     <tr><th>Client ID</th><td>{{.Event.Actor.ClientID}}</td></tr>
     <tr><th>IP</th><td>{{.Event.Actor.IP}}</td></tr>

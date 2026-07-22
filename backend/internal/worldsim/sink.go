@@ -9,7 +9,7 @@ import (
 // ZoneSink is the side-effect interface for ZoneSystem. Production wires
 // *natSink; tests wire a recording fake.
 type ZoneSink interface {
-	PublishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID string)
+	PublishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID, displayName string)
 }
 
 // ProximitySink is the side-effect interface for ProximitySystem.
@@ -33,5 +33,5 @@ type ReplicationSink interface {
 type PortalSink interface {
 	PublishMapTransition(ctx context.Context, clientID, targetMap string, x, y float32, mapOpts string, mapWarns []*pb.MapWarning)
 	SaveMapID(entityID, mapID string) error
-	EmitTransitionAudit(entityID, oldMap, targetMap, targetEntity string, x, y float32)
+	EmitTransitionAudit(entityID, displayName, oldMap, targetMap, targetEntity string, x, y float32)
 }

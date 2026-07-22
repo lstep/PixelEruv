@@ -152,6 +152,7 @@ func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID,
 		mapOpts = string(md.Options)
 	}
 	mapWarns := in.MapWarnings[targetMap]
+	displayName := e.DisplayName
 	p.mu.Unlock()
 
 	// Send MapTransitionFrame, persist map_id, emit audit — all via sink.
@@ -159,7 +160,7 @@ func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID,
 	if err := p.sink.SaveMapID(entityID, targetMap); err != nil {
 		p.logger.WarnContext(ctx, "failed to save user map_id", "err", err, "entity", entityID)
 	}
-	p.sink.EmitTransitionAudit(entityID, oldMap, targetMap, targetEntity, spawnX, spawnY)
+	p.sink.EmitTransitionAudit(entityID, displayName, oldMap, targetMap, targetEntity, spawnX, spawnY)
 
 	p.logger.InfoContext(ctx, "entity transitioned to new map",
 		"entity", entityID, "old_map", oldMap, "new_map", targetMap,
@@ -207,9 +208,9 @@ func (s *natPortalSink) SaveMapID(entityID, mapID string) error {
 	return s.userStore.SaveMapID(entityID, mapID)
 }
 
-func (s *natPortalSink) EmitTransitionAudit(entityID, oldMap, targetMap, targetEntity string, x, y float32) {
+func (s *natPortalSink) EmitTransitionAudit(entityID, displayName, oldMap, targetMap, targetEntity string, x, y float32) {
 	audit.Emit(s.nc, "player.map_transition", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID},
+		audit.Actor{EntityID: entityID, DisplayName: displayName},
 		audit.Details{"old_map": oldMap, "new_map": targetMap, "target_entity": targetEntity, "x": x, "y": y},
 		"")
 }
