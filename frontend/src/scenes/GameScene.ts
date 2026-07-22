@@ -1220,6 +1220,15 @@ export class GameScene extends Phaser.Scene {
           msg.setText(`You are banned ${expiry}\n${reason}`);
         }
       },
+      onAlreadyConnected: () => {
+        this.showAlreadyConnectedConfirm();
+      },
+      onKicked: (reason) => {
+        const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
+        if (msg) {
+          msg.setText(`You have been kicked from this world\n${reason}`);
+        }
+      },
       onError: (_code, message) => {
         const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
         if (msg) {
@@ -2338,8 +2347,37 @@ export class GameScene extends Phaser.Scene {
       y += btnHeight + btnGap;
     };
 
+    // makeActionButton is like makeButton but invokes a callback instead of
+    // showing the "Not implemented" stub.
+    const makeActionButton = (label: string, on_click: () => void): void => {
+      const btn = this.add.text(x0 + pad, y, label, {
+        fontFamily: "Nunito, sans-serif",
+        fontSize: "10px",
+        color: "#ffffff",
+        fontStyle: "bold",
+        backgroundColor: "#3e3e4a",
+        padding: { left: 6, right: 6, top: 3, bottom: 3 },
+      });
+      btn.setOrigin(0, 0);
+      btn.setInteractive({ useHandCursor: true });
+      btn.on("pointerover", () => btn.setStyle({ backgroundColor: "#52525e" }));
+      btn.on("pointerout", () => btn.setStyle({ backgroundColor: "#3e3e4a" }));
+      btn.on("pointerdown", () => {
+        this._dropdownClickedThisFrame = true;
+        on_click();
+      });
+      children.push(btn);
+      y += btnHeight + btnGap;
+    };
+
     makeButton("Invite");
-    if (isAdmin) makeButton("Ban");
+    if (isAdmin) {
+      makeActionButton("Kick", () => {
+        this.ws?.sendKick(entityId, "Kicked by an admin");
+        this.closeDropdown();
+      });
+      makeButton("Ban");
+    }
 
     y -= btnGap; // remove trailing gap
     const panelH = y + pad;
@@ -2386,6 +2424,65 @@ export class GameScene extends Phaser.Scene {
     this.dropdownContainer?.destroy();
     this.dropdownContainer = null;
     this.openDropdownEntityId = null;
+  }
+
+  // showAlreadyConnectedConfirm shows a centered confirm dialog when the
+  // server reports another session is active for the same logged-in user.
+  // "Yes" sends AuthFrame with force=true (displaces the old window);
+  // "No" closes the WebSocket so the loading screen stays.
+  private showAlreadyConnectedConfirm(): void {
+    const cam = this.cameras.main;
+    const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(10000);
+    const dim = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.7)
+      .setOrigin(0, 0).setScrollFactor(0);
+    const panelW = 360;
+    const panelH = 120;
+    const panelX = cam.worldView.centerX - panelW / 2;
+    const panelY = cam.worldView.centerY - panelH / 2;
+    const bg = this.add.graphics();
+    bg.fillStyle(0x333340, 0.95);
+    bg.fillRoundedRect(panelX, panelY, panelW, panelH, 8);
+    const text = this.add.text(cam.worldView.centerX, panelY + 16,
+      "You are already connected in another window.\nConnect here and disconnect the other?",
+      {
+        fontFamily: "Nunito, sans-serif",
+        fontSize: "14px",
+        color: "#ffffff",
+        align: "center",
+        wordWrap: { width: panelW - 24 },
+      }).setOrigin(0.5, 0);
+    const btnY = panelY + panelH - 28;
+    const yesBtn = this.add.text(cam.worldView.centerX - 50, btnY, "Yes", {
+      fontFamily: "Nunito, sans-serif",
+      fontSize: "13px",
+      color: "#ffffff",
+      fontStyle: "bold",
+      backgroundColor: "#4a4a5a",
+      padding: { left: 12, right: 12, top: 5, bottom: 5 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    const noBtn = this.add.text(cam.worldView.centerX + 50, btnY, "No", {
+      fontFamily: "Nunito, sans-serif",
+      fontSize: "13px",
+      color: "#ffffff",
+      fontStyle: "bold",
+      backgroundColor: "#4a4a5a",
+      padding: { left: 12, right: 12, top: 5, bottom: 5 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    overlay.add([dim, bg, text, yesBtn, noBtn]);
+    overlay.setScale(1 / cam.zoom);
+    const cleanup = () => overlay.destroy();
+    yesBtn.on("pointerover", () => yesBtn.setStyle({ backgroundColor: "#5e5e6e" }));
+    yesBtn.on("pointerout", () => yesBtn.setStyle({ backgroundColor: "#4a4a5a" }));
+    noBtn.on("pointerover", () => noBtn.setStyle({ backgroundColor: "#5e5e6e" }));
+    noBtn.on("pointerout", () => noBtn.setStyle({ backgroundColor: "#4a4a5a" }));
+    yesBtn.on("pointerdown", () => {
+      cleanup();
+      this.ws?.sendAuthForce();
+    });
+    noBtn.on("pointerdown", () => {
+      cleanup();
+      this.ws?.close();
+    });
   }
 
   // updateLights is called every frame from update() when lightsEnabled is

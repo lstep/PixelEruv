@@ -615,7 +615,14 @@ func (s *Simulator) subscribe() error {
 			return
 		}
 		span.SetAttributes(attribute.String("client.id", ar.ClientId), attribute.String("user.sub", ar.GetSub()))
-		result := s.provisionClient(ctx, ar.ClientId, ar.GetSub(), ar.GetIp(), ar.GetDeviceId())
+		result := s.provisionClient(ctx, ar.ClientId, ar.GetSub(), ar.GetIp(), ar.GetDeviceId(), ar.GetForce())
+		// If a previous session was force-displaced, publish force_close so
+		// the pusher closes that WebSocket with a "kicked" frame. The old
+		// entity was already despawned in-lock by provisionClient; this just
+		// notifies the pusher to close the old browser window.
+		if result.displacedClientID != "" {
+			s.publishForceClose(ctx, result.displacedClientID, "Replaced by another session")
+		}
 		// Respond with the entity ID, map_id, and admin flag so the pusher
 		// can include them in the AuthResultFrame sent to the client. The
 		// client needs the actual entity ID (which may differ from
@@ -624,19 +631,22 @@ func (s *Simulator) subscribe() error {
 		// initially, and the admin flag to decide whether to subscribe to
 		// the admin-only NATS channel. If the client is banned, the reply
 		// carries the ban reason + expiry so the pusher can reject the
-		// connection and the browser can display the ban message.
+		// connection and the browser can display the ban message. If
+		// already_connected is true, the browser should ask the user to
+		// confirm and retry with force=true.
 		if m.Reply != "" {
 			resp, _ := proto.Marshal(&pb.AuthResultFrame{
-				EntityId:      result.entityID,
-				MapId:         result.mapID,
-				IsAdmin:       result.isAdmin,
-				Banned:        result.banned,
-				BanReason:     result.banReason,
-				BanUntil:      uint64(result.banUntil),
-				MapOptions:    result.mapOptions,
-				PlayerOptions: result.playerOptions,
-				MapWarnings:   result.mapWarnings,
-				MapError:      result.mapError,
+				EntityId:        result.entityID,
+				MapId:           result.mapID,
+				IsAdmin:         result.isAdmin,
+				Banned:          result.banned,
+				BanReason:       result.banReason,
+				BanUntil:        uint64(result.banUntil),
+				MapOptions:      result.mapOptions,
+				PlayerOptions:   result.playerOptions,
+				MapWarnings:     result.mapWarnings,
+				MapError:        result.mapError,
+				AlreadyConnected: result.alreadyConnected,
 			})
 			if err := s.nc.Publish(m.Reply, resp); err != nil {
 				s.logger.Warn("client.connected reply", "err", err, "client", ar.ClientId)
@@ -1193,18 +1203,24 @@ func (s *Simulator) publishHealth() {
 }
 
 // provisionResult is the return value of provisionClient. When banned is
-// true, the other fields are zero — no entity is created.
+// true, the other fields are zero — no entity is created. When
+// alreadyConnected is true, another session is active for the same
+// logged-in user; the caller should ask the browser to confirm and retry
+// with force=true. When displacedClientID is non-empty, a previous session
+// was force-despawned and the caller should publish force_close to it.
 type provisionResult struct {
-	entityID      string
-	mapID         string
-	isAdmin       bool
-	banned        bool
-	banReason     string
-	banUntil      int64
-	mapOptions    string
-	playerOptions string
-	mapWarnings   []*pb.MapWarning
-	mapError      string
+	entityID         string
+	mapID            string
+	isAdmin          bool
+	banned           bool
+	banReason        string
+	banUntil         int64
+	mapOptions       string
+	playerOptions    string
+	mapWarnings      []*pb.MapWarning
+	mapError         string
+	alreadyConnected bool
+	displacedClientID string
 }
 
 // removeStaleMobileZone removes the mobile proximity zone of any existing
@@ -1226,7 +1242,7 @@ func (s *Simulator) removeStaleMobileZone(entityID string) {
 // entity_id and last position are restored. Otherwise a new user record
 // is created. If the client matches an active ban (by user_id, IP, or
 // device_id), no entity is created and the ban info is returned.
-func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, deviceID string) provisionResult {
+func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, deviceID string, force bool) provisionResult {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -1302,6 +1318,28 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 					_ = s.userStore.UpdateSpriteBase(entityID, spriteBase)
 				}
 			}
+		}
+	}
+
+	// Dual-connect detection: if this is a logged-in user with a persistent
+	// entityID, and another session is already active for the same entityID
+	// (different clientID, still in s.clients), this is a second window — not
+	// a reconnect race (reconnect race = old clientID already gone from
+	// s.clients). If force=false, return alreadyConnected so the browser can
+	// ask the user to confirm. If force=true, despawn the old session now
+	// (under the lock via despawnClientLocked) and provision this one.
+	var displacedClientID string
+	if existingClientID, ok := s.entityIDToClient[entityID]; ok && existingClientID != clientID {
+		if oldEntity, exists := s.clients[existingClientID]; exists && oldEntity.ID == entityID {
+			if !force {
+				s.logger.InfoContext(ctx, "dual connect detected, awaiting user confirmation",
+					"entity", entityID, "existing_client", existingClientID, "new_client", clientID, "sub", sub)
+				return provisionResult{alreadyConnected: true}
+			}
+			s.logger.InfoContext(ctx, "force-displacing existing session",
+				"entity", entityID, "existing_client", existingClientID, "new_client", clientID, "sub", sub)
+			s.despawnClientLocked(ctx, existingClientID)
+			displacedClientID = existingClientID
 		}
 	}
 
@@ -1401,23 +1439,39 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		audit.Details{"map": mapName, "x": e.Position.X, "y": e.Position.Y, "is_admin": isAdmin},
 		"")
 	return provisionResult{
-		entityID:      entityID,
-		mapID:         mapName,
-		isAdmin:       isAdmin,
-		mapOptions:    mapOpts,
-		playerOptions: playerOptions,
-		mapWarnings:   s.mapWarnings[mapName],
-		mapError:      s.mapErrors[mapName],
+		entityID:          entityID,
+		mapID:             mapName,
+		isAdmin:           isAdmin,
+		mapOptions:        mapOpts,
+		playerOptions:     playerOptions,
+		mapWarnings:       s.mapWarnings[mapName],
+		mapError:          s.mapErrors[mapName],
+		displacedClientID: displacedClientID,
 	}
 }
 
-func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
-	s.mu.Lock()
+// despawnClientResult carries data needed for post-unlock work (position
+// save, audit) after despawnClientLocked does the in-lock cleanup.
+type despawnClientResult struct {
+	entityID       string
+	clientID       string
+	displayName    string
+	posX, posY     float32
+	mapID          string
+	replacedByNewer bool
+	hadEntity      bool
+}
 
+// despawnClientLocked does the in-lock portion of despawnClient: emits
+// zone.exit/proximity.leave, removes the mobile zone, deletes the entity
+// from all maps, and queues a DestroyEntity. Returns data for post-unlock
+// work (position save, audit). If the entity was already replaced by a
+// newer session (reconnect race), only the old client mapping is cleaned
+// up and replacedByNewer is true. Caller must hold s.mu.
+func (s *Simulator) despawnClientLocked(ctx context.Context, clientID string) despawnClientResult {
 	e, ok := s.clients[clientID]
 	if !ok {
-		s.mu.Unlock()
-		return
+		return despawnClientResult{}
 	}
 	// Publish zone.exit for all zones the entity is currently in, so
 	// extensions like ext-av can clean up (e.g. send LiveKit "leave"
@@ -1449,16 +1503,19 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	// Always remove the old session from the client map.
 	delete(s.clients, clientID)
 
+	result := despawnClientResult{
+		entityID:       e.ID,
+		clientID:       clientID,
+		displayName:    e.DisplayName,
+		replacedByNewer: replacedByNewer,
+		hadEntity:      true,
+	}
+
 	if replacedByNewer {
 		s.logger.InfoContext(ctx, "despawn skipped — entity replaced by newer session",
 			"entity", e.ID, "old_client", clientID,
 			"new_client", s.entityIDToClient[e.ID])
-		s.mu.Unlock()
-		audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
-			audit.Actor{EntityID: e.ID, ClientID: clientID, DisplayName: e.DisplayName},
-			audit.Details{"replaced_by_newer": true},
-			"")
-		return
+		return result
 	}
 
 	// Remove the player's mobile proximity zone from the registry.
@@ -1474,26 +1531,43 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	// clients. Without this, remaining clients never learn the entity is gone
 	// and the avatar sprite stays on screen after the player disconnects.
 	s.destroyedEntities = append(s.destroyedEntities, e.ID)
-	posX, posY := e.Position.X, e.Position.Y
-	mapID := e.Position.MapId
-	entityID := e.ID
-	displayName := e.DisplayName
+	result.posX = e.Position.X
+	result.posY = e.Position.Y
+	result.mapID = e.Position.MapId
+	return result
+}
+
+func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
+	s.mu.Lock()
+	result := s.despawnClientLocked(ctx, clientID)
 	s.mu.Unlock()
+
+	if !result.hadEntity {
+		return
+	}
+
+	if result.replacedByNewer {
+		audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
+			audit.Actor{EntityID: result.entityID, ClientID: result.clientID, DisplayName: result.displayName},
+			audit.Details{"replaced_by_newer": true},
+			"")
+		return
+	}
 
 	// Save position and map_id to PocketBase outside the lock (network I/O).
 	if s.userStore != nil {
-		if err := s.userStore.SavePosition(entityID, posX, posY); err != nil {
-			s.logger.WarnContext(ctx, "failed to save user position", "err", err, "entity", entityID)
+		if err := s.userStore.SavePosition(result.entityID, result.posX, result.posY); err != nil {
+			s.logger.WarnContext(ctx, "failed to save user position", "err", err, "entity", result.entityID)
 		}
-		if err := s.userStore.SaveMapID(entityID, mapID); err != nil {
-			s.logger.WarnContext(ctx, "failed to save user map_id", "err", err, "entity", entityID)
+		if err := s.userStore.SaveMapID(result.entityID, result.mapID); err != nil {
+			s.logger.WarnContext(ctx, "failed to save user map_id", "err", err, "entity", result.entityID)
 		}
 	}
 
-	s.logger.InfoContext(ctx, "despawned entity", "entity", entityID, "client", clientID)
+	s.logger.InfoContext(ctx, "despawned entity", "entity", result.entityID, "client", result.clientID)
 	audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
-		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
-		audit.Details{"map": mapID, "x": posX, "y": posY},
+		audit.Actor{EntityID: result.entityID, ClientID: result.clientID, DisplayName: result.displayName},
+		audit.Details{"map": result.mapID, "x": result.posX, "y": result.posY},
 		"")
 }
 
@@ -2449,6 +2523,33 @@ func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clien
 // a departing player's group.
 func (s *Simulator) publishProximityEvent(ctx context.Context, event, entityID, clientID, groupID, mapID string, members []string) {
 	s.proximitySink.PublishProximityEvent(ctx, event, entityID, clientID, groupID, mapID, members)
+}
+
+// publishForceClose publishes a marshaled ServerFrame (AuthResult with
+// kicked=true) on client.<clientID>.force_close so the pusher closes that
+// player's WebSocket and the browser shows the "kicked" overlay. Used by
+// dual-connect displacement and admin kick.
+func (s *Simulator) publishForceClose(ctx context.Context, clientID, reason string) {
+	frame := &pb.ServerFrame{
+		Payload: &pb.ServerFrame_AuthResult{
+			AuthResult: &pb.AuthResultFrame{
+				Ok:         false,
+				Kicked:     true,
+				KickReason: reason,
+			},
+		},
+	}
+	frameBytes, err := proto.Marshal(frame)
+	if err != nil {
+		s.logger.Warn("force_close marshal", "err", err, "client", clientID)
+		return
+	}
+	subject := fmt.Sprintf("client.%s.force_close", clientID)
+	msg := &nats.Msg{Subject: subject, Data: frameBytes}
+	otelinternal.Inject(ctx, msg)
+	if err := s.nc.PublishMsg(msg); err != nil {
+		s.logger.Warn("force_close publish", "err", err, "client", clientID)
+	}
 }
 
 func subjectClientID(subject, suffix string) string {

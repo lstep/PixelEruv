@@ -20,6 +20,7 @@ message ClientFrame {
     SetPlayerOptionsFrame set_player_options = 8;
     SetStatusFrame set_status = 9;
     RecordingRequestFrame recording = 10;
+    KickFrame kick = 11;
   }
 }
 
@@ -32,6 +33,22 @@ message AuthFrame {
   // sessions for the same browser, used as a ban target for guests. Evadable
   // by clearing storage — one layer of three (user_id, IP, device_id).
   string device_id = 3;
+  // force is set on the second AuthFrame when the user confirms displacing
+  // an existing session for the same logged-in user. The first AuthFrame
+  // gets already_connected=true back; the browser asks the user; on "yes"
+  // it re-sends AuthFrame with force=true so worldsim despawns the old
+  // session and provisions this one.
+  bool force = 4;
+}
+
+// KickFrame is sent by an admin client to kick another player by entity_id.
+// The pusher forwards it to worldsim.client.kick via NATS request-reply.
+// Worldsim resolves entity_id → client_id, despawns the entity, and
+// publishes client.<target>.force_close so the pusher closes that player's
+// WebSocket with a "kicked" AuthResultFrame.
+message KickFrame {
+  string entity_id = 1;  // target player entity to kick
+  string reason = 2;     // human-readable reason shown to the kicked player
 }
 
 message InputFrame {
@@ -198,6 +215,10 @@ message AuthResultFrame {
   string player_options = 13; // JSON-encoded player options
   repeated MapWarning map_warnings = 14; // non-fatal validation warnings for the player's map
   string map_error = 15;      // fatal map validation error (map not loaded); client shows black overlay
+  bool already_connected = 16; // worldsim→pusher→browser: another session is active for this user; ask user to confirm displacing it (send AuthFrame with force=true)
+  bool kicked = 17;           // worldsim→pusher→browser (via force_close): you were kicked, stop reconnecting
+  string kick_reason = 18;   // worldsim→pusher→browser: human-readable kick reason
+  bool force = 19;            // pusher→worldsim: user confirmed displacing the existing session
 }
 
 // MapWarning is a single non-fatal validation issue for a map. entity_id is

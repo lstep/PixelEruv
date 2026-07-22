@@ -8,6 +8,7 @@ import (
 	"github.com/lstep/pixeleruv/backend/internal/audit"
 	"github.com/nats-io/nats.go"
 	"go.opentelemetry.io/otel"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/lstep/pixeleruv/backend/internal/pb"
 )
@@ -340,5 +341,161 @@ func TestBanStoreAdd_InvalidTarget(t *testing.T) {
 	}
 	if err := s.Add(BanTargetUserID, "", "r", 0, ""); err == nil {
 		t.Error("expected error for empty target_value")
+	}
+}
+
+// TestClientKick_PublishesForceClose verifies that worldsim.client.kick
+// publishes a force_close message on client.<id>.force_close with a
+// marshaled ServerFrame containing kicked=true.
+func TestClientKick_PublishesForceClose(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+
+	sim := &Simulator{
+		World: World{
+			entities:         map[string]*Entity{},
+			clients:          map[string]*Entity{},
+			entityIDToClient: map[string]string{},
+		},
+		nc:           nc,
+		defaultMap:   "main",
+		logger:       logger,
+		tracer:       otel.Tracer("test"),
+		lastSavedPos: map[string]savedPos{},
+	}
+	a := &Entity{
+		ID:             "e_a",
+		Position:       &pb.Position{X: 5, Y: 5, MapId: "main"},
+		NetworkSession: &NetworkSession{ClientID: "c_a", Input: &pb.InputState{}},
+		currentZones:   make(map[string]bool),
+		spawnedTo:      make(map[string]bool),
+	}
+	sim.entities["e_a"] = a
+	sim.clients["c_a"] = a
+	sim.entityIDToClient["e_a"] = "c_a"
+
+	forceCloseSub, err := nc.SubscribeSync("client.c_a.force_close")
+	if err != nil {
+		t.Fatalf("subscribe force_close: %v", err)
+	}
+	nc.Flush()
+
+	if err := sim.subscribeClientKick(); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	nc.Flush()
+
+	body := mustJSON(t, kickRequest{
+		ClientID: "c_a",
+		Reason:   "test kick",
+	})
+	if _, err := nc.Request("worldsim.client.kick", body, 2*time.Second); err != nil {
+		t.Fatalf("kick request: %v", err)
+	}
+
+	msg, err := forceCloseSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected force_close message: %v", err)
+	}
+	var sf pb.ServerFrame
+	if err := proto.Unmarshal(msg.Data, &sf); err != nil {
+		t.Fatalf("unmarshal ServerFrame: %v", err)
+	}
+	ar := sf.GetAuthResult()
+	if ar == nil {
+		t.Fatal("expected AuthResult payload in force_close message")
+	}
+	if !ar.Kicked {
+		t.Error("expected kicked=true in force_close AuthResult")
+	}
+	if ar.KickReason != "test kick" {
+		t.Errorf("kick_reason = %q, want %q", ar.KickReason, "test kick")
+	}
+}
+
+// TestClientKick_ByEntityID verifies that worldsim.client.kick accepts
+// entity_id and resolves it to the correct client_id for despawn + force_close.
+func TestClientKick_ByEntityID(t *testing.T) {
+	_, natsURL := startEmbeddedNATS(t)
+	logger := slog.New(slog.NewTextHandler(&testWriter{t}, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	nc, err := nats.Connect(natsURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(nc.Close)
+
+	sim := &Simulator{
+		World: World{
+			entities:         map[string]*Entity{},
+			clients:          map[string]*Entity{},
+			entityIDToClient: map[string]string{},
+		},
+		nc:           nc,
+		defaultMap:   "main",
+		logger:       logger,
+		tracer:       otel.Tracer("test"),
+		lastSavedPos: map[string]savedPos{},
+	}
+	a := &Entity{
+		ID:             "e_target",
+		Position:       &pb.Position{X: 5, Y: 5, MapId: "main"},
+		NetworkSession: &NetworkSession{ClientID: "c_target", Input: &pb.InputState{}},
+		currentZones:   make(map[string]bool),
+		spawnedTo:      make(map[string]bool),
+	}
+	sim.entities["e_target"] = a
+	sim.clients["c_target"] = a
+	sim.entityIDToClient["e_target"] = "c_target"
+
+	forceCloseSub, err := nc.SubscribeSync("client.c_target.force_close")
+	if err != nil {
+		t.Fatalf("subscribe force_close: %v", err)
+	}
+	nc.Flush()
+
+	if err := sim.subscribeClientKick(); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	nc.Flush()
+
+	body := mustJSON(t, kickRequest{
+		EntityID: "e_target",
+		Reason:   "kicked by entity_id",
+	})
+	reply, err := nc.Request("worldsim.client.kick", body, 2*time.Second)
+	if err != nil {
+		t.Fatalf("kick request: %v", err)
+	}
+	var resp adminResponse
+	mustUnmarshal(t, reply.Data, &resp)
+	if !resp.OK {
+		t.Errorf("expected OK=true, got error: %s", resp.Error)
+	}
+
+	// Entity should be gone.
+	if _, ok := sim.clients["c_target"]; ok {
+		t.Error("client c_target still present after kick by entity_id")
+	}
+	if _, ok := sim.entities["e_target"]; ok {
+		t.Error("entity e_target still present after kick by entity_id")
+	}
+
+	// force_close should have been published.
+	msg, err := forceCloseSub.NextMsg(2 * time.Second)
+	if err != nil {
+		t.Fatalf("expected force_close message: %v", err)
+	}
+	var sf pb.ServerFrame
+	if err := proto.Unmarshal(msg.Data, &sf); err != nil {
+		t.Fatalf("unmarshal ServerFrame: %v", err)
+	}
+	ar := sf.GetAuthResult()
+	if ar == nil || !ar.Kicked {
+		t.Error("expected kicked=true in force_close AuthResult")
 	}
 }

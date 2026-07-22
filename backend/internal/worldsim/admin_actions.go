@@ -44,14 +44,18 @@ func respondAdmin(m *nats.Msg, resp adminResponse) {
 
 type kickRequest struct {
 	adminActionRequest
-	ClientID string `json:"client_id"`
+	ClientID string `json:"client_id,omitempty"`
+	EntityID string `json:"entity_id,omitempty"`
 	Reason   string `json:"reason,omitempty"`
 }
 
 // subscribeClientKick handles worldsim.client.kick: despawns the named client
 // via the existing despawnClient path (which saves position, emits zone.exit,
-// publishes player.despawned audit) and emits a player.kicked audit event
-// tagged with the admin actor. No-op if the client is not currently connected.
+// publishes player.despawned audit), publishes force_close so the pusher
+// closes the player's WebSocket with a "kicked" frame, and emits a
+// player.kicked audit event tagged with the admin actor. Accepts either
+// client_id or entity_id (resolved via entityIDToClient). No-op if the
+// client is not currently connected.
 func (s *Simulator) subscribeClientKick() error {
 	if _, err := s.nc.Subscribe("worldsim.client.kick", func(m *nats.Msg) {
 		ctx, span := s.tracer.Start(context.Background(), "worldsim.client.kick")
@@ -62,12 +66,29 @@ func (s *Simulator) subscribeClientKick() error {
 			span.SetStatus(codes.Error, "unmarshal")
 			return
 		}
-		span.SetAttributes(attribute.String("client.id", req.ClientID))
+
+		// Resolve entity_id → client_id if needed.
+		clientID := req.ClientID
+		if clientID == "" && req.EntityID != "" {
+			s.mu.Lock()
+			clientID = s.entityIDToClient[req.EntityID]
+			s.mu.Unlock()
+		}
+		span.SetAttributes(attribute.String("client.id", clientID))
+
+		if clientID == "" {
+			audit.Emit(s.nc, "player.kick", audit.SeverityWarn,
+				req.Actor,
+				audit.Details{"entity_id": req.EntityID, "result": "not_connected", "reason": req.Reason},
+				"")
+			respondAdmin(m, adminResponse{OK: false, Error: "not_connected"})
+			return
+		}
 
 		// Snapshot entity info under the lock so we can audit even though
 		// despawnClient also locks.
 		s.mu.Lock()
-		e, ok := s.clients[req.ClientID]
+		e, ok := s.clients[clientID]
 		entityID := ""
 		displayName := ""
 		if ok {
@@ -81,15 +102,23 @@ func (s *Simulator) subscribeClientKick() error {
 			// attempt so failed admin actions are visible.
 			audit.Emit(s.nc, "player.kick", audit.SeverityWarn,
 				req.Actor,
-				audit.Details{"client_id": req.ClientID, "result": "not_connected", "reason": req.Reason},
+				audit.Details{"client_id": clientID, "result": "not_connected", "reason": req.Reason},
 				"")
 			respondAdmin(m, adminResponse{OK: false, Error: "not_connected"})
 			return
 		}
 
-		s.despawnClient(ctx, req.ClientID)
+		s.despawnClient(ctx, clientID)
+		// Publish force_close so the pusher closes the player's WebSocket
+		// and the browser shows the "kicked" overlay. Without this, the
+		// despawned player's window stays open as a frozen zombie.
+		reason := req.Reason
+		if reason == "" {
+			reason = "Kicked by an admin"
+		}
+		s.publishForceClose(ctx, clientID, reason)
 		audit.Emit(s.nc, "player.kicked", audit.SeverityWarn,
-			mergeActor(req.Actor, audit.Actor{EntityID: entityID, ClientID: req.ClientID, DisplayName: displayName}),
+			mergeActor(req.Actor, audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName}),
 			audit.Details{"reason": req.Reason},
 			"")
 		respondAdmin(m, adminResponse{OK: true})

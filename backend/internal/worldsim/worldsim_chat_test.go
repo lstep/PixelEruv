@@ -290,7 +290,7 @@ func TestChat_GuestDisplayName(t *testing.T) {
 	// the real path. It needs a userStore == nil (no PocketBase in tests)
 	// so the guest branch is taken.
 	sim.userStore = nil
-	result := sim.provisionClient(t.Context(), "c_abc12345", "", "", "")
+	result := sim.provisionClient(t.Context(), "c_abc12345", "", "", "", false)
 	entityID := result.entityID
 	if entityID == "" {
 		t.Fatal("provisionClient returned empty entity id")

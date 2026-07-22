@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, RecordingRequestFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, RecordingRequestFrameSchema, KickFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -73,6 +73,14 @@ export interface ConnectHandlers {
   // Fired when a RecordingActiveFrame is received (ext-rec → each
   // participant in a recorded room). The client shows/hides a REC indicator.
   onRecordingActive?: (msg: { room: string; active: boolean; target: string; reason: string }) => void;
+  // Fired when the server reports another session is already active for
+  // the same logged-in user (dual connect). The UI should ask the user to
+  // confirm; if yes, call sendAuthForce() on the WsClient.
+  onAlreadyConnected?: () => void;
+  // Fired when this session was kicked (admin kick or dual-connect
+  // displacement). The client will not attempt to reconnect. reason is
+  // human-readable.
+  onKicked?: (reason: string) => void;
 }
 
 export interface SpawnEntityView {
@@ -215,6 +223,23 @@ export class WsClient {
             connectSpan.recordException(new Error("auth failed"));
             connectSpan.setStatus({ code: 2, message: "auth failed" });
             connectSpan.end();
+            // If the server says we were kicked, stop reconnecting and
+            // surface the kick reason to the UI.
+            if (ar.kicked) {
+              this.closed = true;
+              this.setState("closed");
+              console.error("kicked:", ar.kickReason);
+              this.handlers.onKicked?.(ar.kickReason || "Kicked by an admin");
+              break;
+            }
+            // If the server says another session is already active for the
+            // same user, ask the browser to confirm. The browser will call
+            // sendAuthForce() if the user agrees, or close() if not.
+            if (ar.alreadyConnected) {
+              console.log("already connected elsewhere, awaiting user confirmation");
+              this.handlers.onAlreadyConnected?.();
+              break;
+            }
             // If the server sent a ban reason, the client is banned —
             // stop reconnecting and surface the ban to the UI.
             if (ar.banReason) {
@@ -622,6 +647,34 @@ export class WsClient {
     } finally {
       span.end();
     }
+  }
+
+  // sendAuthForce sends a second AuthFrame with force=true on the current
+  // open WebSocket, confirming displacement of an existing session for the
+  // same logged-in user. Called by the UI after onAlreadyConnected asks the
+  // user and they agree. The server will then despawn the old session and
+  // provision this one, replying with a normal AuthResult.
+  sendAuthForce(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const auth = create(AuthFrameSchema, {
+      idToken: getIdToken() ?? "",
+      traceparent: traceparentFor(),
+      deviceId: getDeviceId(),
+      force: true,
+    });
+    const frame = create(ClientFrameSchema, { payload: { case: "auth", value: auth } });
+    this.ws.send(toBinary(ClientFrameSchema, frame));
+  }
+
+  // sendKick sends a KickFrame to kick another player by entity_id. Only
+  // meaningful for admin clients; worldsim resolves entity_id → client_id,
+  // despawns the entity, and publishes force_close so the target's browser
+  // shows the "kicked" overlay.
+  sendKick(entityId: string, reason: string = "Kicked by an admin"): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const kick = create(KickFrameSchema, { entityId, reason });
+    const frame = create(ClientFrameSchema, { payload: { case: "kick", value: kick } });
+    this.ws.send(toBinary(ClientFrameSchema, frame));
   }
 
   getClientId(): string | null {

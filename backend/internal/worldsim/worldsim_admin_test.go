@@ -139,7 +139,7 @@ func TestProvisionClient_SetsDeviceID(t *testing.T) {
 	sim, subNc := newChatTestSim(t)
 	sim.userStore = nil // no PocketBase in tests
 
-	result := sim.provisionClient(t.Context(), "c_abc12345", "", "1.2.3.4", "dev-uuid-123")
+	result := sim.provisionClient(t.Context(), "c_abc12345", "", "1.2.3.4", "dev-uuid-123", false)
 	if result.banned {
 		t.Fatal("expected not banned with nil banStore")
 	}
