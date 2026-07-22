@@ -18,12 +18,14 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 	// Wall zone w1 covers continuous tile space X[5,6], Y[5,6], expanded by
 	// playerCollisionRadius (0.1) → effective X[4.9,6.1], Y[4.9,6.1].
 	zones := []*Zone{{ID: "w1", Shape: ShapeRect, X: 5, Y: 5, W: 1, H: 1}}
+	extMgr := NewExtensionManager(slog.Default())
 	s := &Simulator{
 		World: World{
 			zones: map[string]*ZoneRegistry{"map1": NewZoneRegistry(zones, 20, 20)},
 			maps:  map[string]*MapData{"map1": {Width: 20, Height: 20, Collision: make([][]bool, 20)}},
 		},
-		extMgr: NewExtensionManager(slog.Default()),
+		extMgr:   extMgr,
+		movement: NewMovementSystem(extMgr),
 	}
 	for y := range s.maps["map1"].Collision {
 		s.maps["map1"].Collision[y] = make([]bool, 20)
@@ -50,7 +52,7 @@ func TestIsMoveBlocked_FeetOffset(t *testing.T) {
 		{"feet below expanded wall (py=5.4 -> feet=6.4)", 5.5, 5.4, false},
 	}
 	for _, c := range cases {
-		got := s.isMoveBlocked(s.zones["map1"], s.maps["map1"], c.px, c.py, c.px, c.py)
+		got := s.movement.isMoveBlocked(s.zones["map1"], s.maps["map1"], c.px, c.py, c.px, c.py)
 		if got != c.wantBlock {
 			t.Errorf("%s: isMoveBlocked(%v, %v) = %v, want %v (feet at Y=%v, wall Y[5,6] expanded to [4.9,6.1])",
 				c.name, c.px, c.py, got, c.wantBlock, c.py+1.0)
@@ -102,7 +104,9 @@ func TestIsMoveBlocked_WallsTileLayer_Symmetric(t *testing.T) {
 
 	// Minimal simulator: nil zone registry means only the Walls tile-layer
 	// fallback runs inside isMoveBlocked.
-	s := &Simulator{}
+	s := &Simulator{
+		movement: NewMovementSystem(nil), // extMgr unused when zr is nil
+	}
 
 	cases := []struct {
 		name      string
@@ -122,7 +126,7 @@ func TestIsMoveBlocked_WallsTileLayer_Symmetric(t *testing.T) {
 		{"-Y: into wall (feet at 5.9)", horizontal, 0, 6.0, 0, 4.9, true},
 	}
 	for _, c := range cases {
-		got := s.isMoveBlocked(nil, c.md, c.oldX, c.oldY, c.newX, c.newY)
+		got := s.movement.isMoveBlocked(nil, c.md, c.oldX, c.oldY, c.newX, c.newY)
 		if got != c.wantBlock {
 			t.Errorf("%s: isMoveBlocked = %v, want %v", c.name, got, c.wantBlock)
 		}

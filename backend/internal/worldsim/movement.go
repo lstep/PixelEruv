@@ -4,6 +4,16 @@ import (
 	"context"
 )
 
+// MovementInput is the narrow read-view of World that MovementSystem needs.
+// Writes are pointer-mediated through the Entity values in Entities (see
+// field-ownership comments on MovementSystem above).
+type MovementInput struct {
+	Entities  map[string]*Entity
+	Maps      map[string]*MapData
+	Zones     map[string]*ZoneRegistry
+	TestField int
+}
+
 // MovementSystem moves all player avatars one tick's worth of input,
 // resolving collisions with swept (segment-vs-shape) zone checks so walls
 // thinner than the per-tick movement distance cannot be tunneled through.
@@ -28,15 +38,15 @@ func NewMovementSystem(extMgr *ExtensionManager) *MovementSystem {
 // Step runs the movement system: applies input-driven movement with collision,
 // updates stationary ticks, and repositions mobile proximity zones.
 // Caller must hold s.mu (the world mutex).
-func (m *MovementSystem) Step(_ context.Context, w *World) {
-	m.runMovement(w)
-	m.updateStationaryTicks(w)
-	m.updateMobileZones(w)
+func (m *MovementSystem) Step(_ context.Context, in MovementInput) {
+	m.runMovement(in)
+	m.updateStationaryTicks(in)
+	m.updateMobileZones(in)
 }
 
-func (m *MovementSystem) runMovement(w *World) {
+func (m *MovementSystem) runMovement(in MovementInput) {
 	speed := float32(0.4) // tiles per tick (~8 tiles/sec at 20Hz)
-	for _, e := range w.entities {
+	for _, e := range in.Entities {
 		if e.NetworkSession == nil || e.Position == nil {
 			continue
 		}
@@ -72,8 +82,8 @@ func (m *MovementSystem) runMovement(w *World) {
 		newX := e.Position.X + dx*speed
 		newY := e.Position.Y + dy*speed
 
-		md := w.maps[e.Position.MapId]
-		zr := w.zones[e.Position.MapId]
+		md := in.Maps[e.Position.MapId]
+		zr := in.Zones[e.Position.MapId]
 		if md != nil {
 			// Clamp to map bounds.
 			newX = clamp(newX, 0, float32(md.Width-1))
@@ -140,8 +150,8 @@ func (m *MovementSystem) runMovement(w *World) {
 // dirtyPosition is set by runMovement when the player moved this tick, and
 // cleared at the end of the tick (by ReplicationSystem). This update runs
 // before that clear, so it sees the current tick's movement state.
-func (m *MovementSystem) updateStationaryTicks(w *World) {
-	for _, e := range w.entities {
+func (m *MovementSystem) updateStationaryTicks(in MovementInput) {
+	for _, e := range in.Entities {
 		if e.NetworkSession == nil {
 			continue
 		}
@@ -157,8 +167,8 @@ func (m *MovementSystem) updateStationaryTicks(w *World) {
 // avatar's current position (after movement was applied this tick). Centered
 // at the feet to match where zone detection evaluates membership. Must happen
 // before zone detection so the zone check sees up-to-date positions.
-func (m *MovementSystem) updateMobileZones(w *World) {
-	for _, e := range w.entities {
+func (m *MovementSystem) updateMobileZones(in MovementInput) {
+	for _, e := range in.Entities {
 		if e.mobileZone != nil && e.Position != nil {
 			e.mobileZone.X = e.Position.X - proximityRadius
 			e.mobileZone.Y = e.Position.Y + avatarFeetYOffset - proximityRadius

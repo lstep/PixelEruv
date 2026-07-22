@@ -45,7 +45,23 @@ func newChatTestSim(t *testing.T) (*Simulator, *nats.Conn) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 	return sim, subNc
+}
+
+// initTestSystems constructs all 5 tick systems on a test-built Simulator.
+// Production construction happens in New(); tests that build &Simulator{}
+// directly call this to wire the systems needed by tick() and Step().
+func (s *Simulator) initTestSystems() {
+	s.movement = NewMovementSystem(s.extMgr)
+	s.zoneSink = NewNatZoneSink(s.nc, s.logger)
+	s.zone = NewZoneSystem(s.zoneSink, s.logger)
+	s.proximitySink = NewNatProximitySink(s.nc, s.logger)
+	s.proximity = NewProximitySystem(s.proximitySink, s.logger)
+	s.replicationSink = NewNatReplicationSink(s.nc, s.logger, s.tracer)
+	s.replication = NewReplicationSystem(s.replicationSink, s.tracer)
+	s.portalSink = NewNatPortalSink(s.nc, s.logger, s.userStore)
+	s.portal = NewPortalSystem(s.portalSink, s.logger, &s.mu)
 }
 
 // addPlayer registers a player entity on the sim with the given display name

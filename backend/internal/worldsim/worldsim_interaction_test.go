@@ -48,6 +48,7 @@ func newInteractionTestSim(t *testing.T) (*Simulator, *nats.Conn) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 	return sim, subNc
 }
 

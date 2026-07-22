@@ -51,6 +51,7 @@ func TestDespawnClient_NotifiesOthersViaDestroyEntity(t *testing.T) {
 		logger:     logger,
 		tracer:     otel.Tracer("test"),
 	}
+	sim.initTestSystems()
 
 	a := &Entity{
 		ID:             "e_a",

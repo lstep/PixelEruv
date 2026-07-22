@@ -7,21 +7,14 @@ import (
 )
 
 // World is the mutable simulation state owned by the kernel and shared across
-// tick systems. Systems receive *World at Step time and read/write the fields
-// they own (see field-ownership comments on Entity). World is private to the
-// worldsim package — it is not part of Simulator's external interface.
-//
-// Field ownership by system (see tick() pipeline):
-//   - MovementSystem writes: Entity.Position, Entity.dirtyPosition,
-//     Entity.stationaryTicks, Entity.mobileZone.X/Y
-//   - ZoneSystem writes: Entity.currentZones, PendingPortalTransitions (enqueue)
-//   - ProximitySystem writes: Entity.currentProximityGroup
-//   - ReplicationSystem writes: Entity.spawnedTo, Entity.dirty* (clears),
-//     Entity.pendingAnimations (clears), DestroyedEntities (drains)
-//   - PortalSystem writes: Entity.Position (map transition),
-//     Entity.currentZones (reset), Entity.spawnedTo (reset),
-//     Entity.mobileZone.X/Y (reposition), DestroyedEntities (append)
+// tick systems. Systems receive a narrow input struct (e.g. MovementInput) at
+// Step time — see each system's input type for the fields it reads, and the
+// field-ownership comments on each system for the fields it writes.
+// World is private to the worldsim package — it is not part of Simulator's
+// external interface.
 type World struct {
+	testField int // throwaway for change-tracing verification
+
 	entities map[string]*Entity // entity_id -> entity
 	clients  map[string]*Entity // client_id -> entity (player avatar)
 

@@ -829,7 +829,15 @@ func (s *Simulator) subscribe() error {
 			s.logger.WarnContext(ctx, "teleport unmarshal", "err", err)
 			return
 		}
-		s.portalOrInit().transition(ctx, &s.World, req.EntityID, req.MapID, req.TargetEntity)
+		s.portal.transition(ctx, PortalInput{
+			Entities:                 s.entities,
+			Maps:                     s.maps,
+			Zones:                    s.zones,
+			MapWarnings:              s.mapWarnings,
+			RNG:                      s.rng,
+			PendingPortalTransitions: &s.pendingPortalTransitions,
+			DestroyedEntities:        &s.destroyedEntities,
+		}, req.EntityID, req.MapID, req.TargetEntity)
 		audit.Emit(s.nc, "player.teleport", audit.SeverityInfo,
 			audit.Actor{EntityID: req.EntityID},
 			audit.Details{"target_map": req.MapID, "target_entity": req.TargetEntity},
@@ -1436,24 +1444,6 @@ type portalTransitionReq struct {
 	entityID     string
 	targetMap    string
 	targetEntity string
-}
-
-// transitionEntity is a thin wrapper around PortalSystem.transition for
-// backward compatibility. Delegates to the portal system.
-func (s *Simulator) transitionEntity(ctx context.Context, entityID, targetMap, targetEntity string) {
-	s.portalOrInit().transition(ctx, &s.World, entityID, targetMap, targetEntity)
-}
-
-// portalOrInit returns the portal system, constructing a default one if it
-// wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) portalOrInit() *PortalSystem {
-	if s.portal == nil {
-		if s.portalSink == nil {
-			s.portalSink = NewNatPortalSink(s.nc, s.logger, s.userStore)
-		}
-		s.portal = NewPortalSystem(s.portalSink, s.logger, &s.mu)
-	}
-	return s.portal
 }
 
 func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {
@@ -2076,19 +2066,35 @@ func (s *Simulator) tick() {
 
 	s.Tick.SnapshotSeq++
 
-	s.movementOrInit().Step(ctx, &s.World)
+	s.movement.Step(ctx, MovementInput{
+		Entities: s.entities,
+		Maps:     s.maps,
+		Zones:    s.zones,
+	})
 
 	// --- Zone enter/exit detection ---
-	s.zoneOrInit().Step(ctx, &s.World)
+	s.zone.Step(ctx, ZoneInput{
+		Entities:                 s.entities,
+		Zones:                    s.zones,
+		Maps:                     s.maps,
+		PendingPortalTransitions: &s.pendingPortalTransitions,
+	})
 
 	// --- Proximity clustering (throttled to ~4Hz) ---
 	if s.Tick.TickCount%5 == 0 {
-		s.proximityOrInit().Step(ctx, &s.World)
+		s.proximity.Step(ctx, ProximityInput{
+			Entities: s.entities,
+			Zones:    s.zones,
+		})
 	}
 
 	// --- Replication ---
 	// Lite MVP: replicate everything to everyone (no AOI filter).
-	replicated := s.replicationOrInit().Step(ctx, &s.World)
+	replicated := s.replication.Step(ctx, ReplicationInput{
+		Entities:          s.entities,
+		TickSnapshotSeq:   s.Tick.SnapshotSeq,
+		DestroyedEntities: &s.destroyedEntities,
+	})
 
 	// Metric-as-log-attrs: tick duration, entity count, replication batches.
 	// motel has no /v1/metrics endpoint, so we emit these as span attributes +
@@ -2118,25 +2124,15 @@ func (s *Simulator) tick() {
 	// here crashes the process (Docker restarts it) — explicit unlock is
 	// safe because the lock is never observed held after the process dies.
 	s.mu.Unlock()
-	s.portalOrInit().Step(ctx, &s.World)
-}
-
-// replicateToClient is a thin wrapper around ReplicationSystem.replicateToClient
-// for backward compatibility with tests that call s.replicateToClient() directly.
-func (s *Simulator) replicateToClient(ctx context.Context, clientEntity *Entity) bool {
-	return s.replicationOrInit().replicateToClient(ctx, &s.World, clientEntity)
-}
-
-// replicationOrInit returns the replication system, constructing a default one
-// if it wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) replicationOrInit() *ReplicationSystem {
-	if s.replication == nil {
-		if s.replicationSink == nil {
-			s.replicationSink = NewNatReplicationSink(s.nc, s.logger, s.tracer)
-		}
-		s.replication = NewReplicationSystem(s.replicationSink, s.tracer)
-	}
-	return s.replication
+	s.portal.Step(ctx, PortalInput{
+		Entities:                 s.entities,
+		Maps:                     s.maps,
+		Zones:                    s.zones,
+		MapWarnings:              s.mapWarnings,
+		RNG:                      s.rng,
+		PendingPortalTransitions: &s.pendingPortalTransitions,
+		DestroyedEntities:        &s.destroyedEntities,
+	})
 }
 
 // runIntegrityCheck validates all loaded maps and logs any issues.
@@ -2379,75 +2375,18 @@ const proximityStationaryThreshold = 10
 // player squeeze through 1-tile gaps without snagging on corners.
 const playerCollisionRadius float32 = 0.1
 
-// runMovementSystem is a thin wrapper around MovementSystem.Step for
-// backward compatibility with tests that call s.runMovementSystem() directly.
-// Caller must hold s.mu.
-func (s *Simulator) runMovementSystem() {
-	s.movementOrInit().Step(context.Background(), &s.World)
-}
-
-// isMoveBlocked is a thin wrapper around MovementSystem.isMoveBlocked for
-// backward compatibility with tests that call s.isMoveBlocked() directly.
-func (s *Simulator) isMoveBlocked(zr *ZoneRegistry, md *MapData, oldX, oldY, newX, newY float32) bool {
-	return s.movementOrInit().isMoveBlocked(zr, md, oldX, oldY, newX, newY)
-}
-
-// movementOrInit returns the movement system, constructing a default one from
-// extMgr if it wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) movementOrInit() *MovementSystem {
-	if s.movement == nil {
-		s.movement = NewMovementSystem(s.extMgr)
-	}
-	return s.movement
-}
-
 // publishZoneEvent publishes a zone.enter or zone.exit event via the zone
-// sink. Thin wrapper for backward compatibility (despawnClient calls this).
+// sink. Called by despawnClient to emit zone.exit for all zones a departing
+// player was inside.
 func (s *Simulator) publishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID string) {
-	s.zoneSinkOrInit().PublishZoneEvent(ctx, event, entityID, clientID, zoneID, mapID)
+	s.zoneSink.PublishZoneEvent(ctx, event, entityID, clientID, zoneID, mapID)
 }
 
-// zoneSinkOrInit returns the zone sink, constructing a default one if it
-// wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) zoneSinkOrInit() ZoneSink {
-	if s.zoneSink == nil {
-		s.zoneSink = NewNatZoneSink(s.nc, s.logger)
-	}
-	return s.zoneSink
-}
-
-// zoneOrInit returns the zone system, constructing a default one if it
-// wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) zoneOrInit() *ZoneSystem {
-	if s.zone == nil {
-		s.zone = NewZoneSystem(s.zoneSinkOrInit(), s.logger)
-	}
-	return s.zone
-}
-
-// proximityEventPayload is the NATS payload for proximity.join/leave events.
-// publishProximityEvent is a thin wrapper around the proximity sink for
-// backward compatibility (despawnClient calls this).
+// publishProximityEvent publishes a proximity.join or proximity.leave event
+// via the proximity sink. Called by despawnClient to emit proximity.leave for
+// a departing player's group.
 func (s *Simulator) publishProximityEvent(ctx context.Context, event, entityID, clientID, groupID, mapID string, members []string) {
-	s.proximitySinkOrInit().PublishProximityEvent(ctx, event, entityID, clientID, groupID, mapID, members)
-}
-
-// proximitySinkOrInit returns the proximity sink, constructing a default one
-// if it wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) proximitySinkOrInit() ProximitySink {
-	if s.proximitySink == nil {
-		s.proximitySink = NewNatProximitySink(s.nc, s.logger)
-	}
-	return s.proximitySink
-}
-
-// proximityOrInit returns the proximity system, constructing a default one
-// if it wasn't set (e.g. in tests that build &Simulator{} directly).
-func (s *Simulator) proximityOrInit() *ProximitySystem {
-	if s.proximity == nil {
-		s.proximity = NewProximitySystem(s.proximitySinkOrInit(), s.logger)
-	}
-	return s.proximity
+	s.proximitySink.PublishProximityEvent(ctx, event, entityID, clientID, groupID, mapID, members)
 }
 
 func subjectClientID(subject, suffix string) string {
