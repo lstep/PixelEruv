@@ -2,7 +2,7 @@ package worldsim
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"log/slog"
 	"strings"
 
@@ -150,8 +150,19 @@ func NewNatZoneSink(nc *nats.Conn, logger *slog.Logger) ZoneSink {
 
 func (s *natZoneSink) PublishZoneEvent(ctx context.Context, event, entityID, clientID, zoneID, mapID, displayName string) {
 	subject := event // event already contains the full subject (e.g. "zone.enter")
-	data := fmt.Sprintf(`{"entity_id":"%s","client_id":"%s","zone_id":"%s","map_id":"%s"}`, entityID, clientID, zoneID, mapID)
-	if err := s.nc.Publish(subject, []byte(data)); err != nil {
+	payload := struct {
+		EntityID    string `json:"entity_id"`
+		ClientID    string `json:"client_id"`
+		ZoneID      string `json:"zone_id"`
+		MapID       string `json:"map_id"`
+		DisplayName string `json:"display_name"`
+	}{entityID, clientID, zoneID, mapID, displayName}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		s.logger.WarnContext(ctx, "zone event marshal", "event", event, "err", err)
+		return
+	}
+	if err := s.nc.Publish(subject, data); err != nil {
 		s.logger.WarnContext(ctx, "zone event publish", "event", event, "err", err)
 	}
 	s.logger.InfoContext(ctx, "zone event", "event", event, "entity", entityID, "zone", zoneID)
