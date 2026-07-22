@@ -857,6 +857,28 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish set_status", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_SetAfk:
+			// Forward AFK toggle to worldsim on client.<id>.set_afk.
+			// Worldsim sets Entity.AFK and marks dirtyName so the DisplayName
+			// component (which carries afk) is re-replicated. NOT persisted to
+			// PocketBase and NOT broadcast on worldsim.player_status (ext-av
+			// only cares about DND). See
+			// documentation/plans/2026-07-22-afk-state-design.md.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.SetAfk.GetTraceparent()),
+				"pusher.nats.publish.set_afk",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.Bool("afk", p.SetAfk.GetAfk()))
+			afkBytes, _ := proto.Marshal(p.SetAfk)
+			subject := fmt.Sprintf("client.%s.set_afk", clientID)
+			msg := &nats.Msg{Subject: subject, Data: afkBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish set_afk")
+				s.logger.Warn("nats publish set_afk", "client", clientID, "err", err)
+			}
+			pspan.End()
 		case *pb.ClientFrame_Recording:
 			// Forward recording start/stop to ext-rec on recording.<action>.
 			// ext-rec authorizes via worldsim.entity_info (admin only) and

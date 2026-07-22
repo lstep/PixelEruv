@@ -118,7 +118,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, in Replicatio
 			// is replicated to OTHER clients but never to the player who
 			// changed it.
 			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status, Afk: e.AFK})
 				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,
@@ -149,7 +149,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, in Replicatio
 				components = append(components, &pb.ComponentData{ComponentId: compEntityState, Data: stateBytes})
 			}
 			if e.NetworkSession != nil && e.DisplayName != "" {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status, Afk: e.AFK})
 				components = append(components, &pb.ComponentData{ComponentId: compDisplayName, Data: nameBytes})
 			}
 			if e.LightIntensity > 0 {
@@ -183,7 +183,7 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, in Replicatio
 				})
 			}
 			if e.dirtyName {
-				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status})
+				nameBytes, _ := proto.Marshal(&pb.DisplayName{Name: e.DisplayName, IsGuest: e.IsGuest, IsAdmin: e.IsAdmin && !e.HideAdminBadge, Status: e.Status, Afk: e.AFK})
 				batch.Updates = append(batch.Updates, &pb.UpdateComponent{
 					EntityId:    e.ID,
 					ComponentId: compDisplayName,

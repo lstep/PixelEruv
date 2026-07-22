@@ -21,6 +21,7 @@ message ClientFrame {
     SetStatusFrame set_status = 9;
     RecordingRequestFrame recording = 10;
     KickFrame kick = 11;
+    SetAfkFrame set_afk = 12;
   }
 }
 
@@ -135,6 +136,21 @@ message SetPlayerOptionsFrame {
 // documentation/plans/2026-07-15-player-status-design.md.
 message SetStatusFrame {
   uint32 status = 1;        // 0=AVAILABLE, 1=BUSY, 2=DO_NOT_DISTURB
+  string traceparent = 2;
+}
+
+// SetAfkFrame is a client request to toggle their AFK overlay flag. The
+// server updates Entity.AFK and replicates it via the DisplayName component
+// (afk field). AFK is a transient overlay on top of the manual presence
+// status (Available/Busy/DND) — it does not replace it. When AFK is on, the
+// player's nametag renders dimmed with an AFK indicator and their A/V tracks
+// are auto-muted (but they stay in the room, unlike DND). Not persisted to
+// PocketBase; resets to false on connect. The client's AfkDetector drives
+// this via a two-tier timer (tab hidden 2min, or input idle 10min), with a
+// meeting exemption (in a room with other participants). See
+// documentation/plans/2026-07-22-afk-state-design.md.
+message SetAfkFrame {
+  bool afk = 1;
   string traceparent = 2;
 }
 

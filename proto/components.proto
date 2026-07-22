@@ -58,6 +58,12 @@ message DisplayName {
   // (yellow), 2 = DO_NOT_DISTURB (red). DND fully excludes the player from
   // A/V rooms. See documentation/plans/2026-07-15-player-status-design.md.
   uint32 status = 4;
+  // AFK overlay flag — transient, client-driven, NOT persisted to PocketBase.
+  // When true, the player's nametag renders dimmed with an AFK indicator, and
+  // their A/V tracks are auto-muted (but they stay in the room, unlike DND).
+  // The manual status (0/1/2) is preserved underneath; clearing AFK restores
+  // it. See documentation/plans/2026-07-22-afk-state-design.md.
+  bool afk = 5;
 }
 
 // Component ID 5 — LightEmitter
