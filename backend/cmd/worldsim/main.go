@@ -76,14 +76,11 @@ func main() {
 	// rendered HTML by the time these hooks fire.
 	configureMailerHooks(app)
 
-	// Start PB's HTTP server in a goroutine (admin GUI + file serving for
-	// the frontend). The HTTP server runs alongside worldsim's tick loop.
-	go func() {
-		if err := app.Start(); err != nil {
-			log.Fatalf("pocketbase start: %v", err)
-		}
-	}()
-
+	// Create the worldsim simulator BEFORE starting PB's HTTP server.
+	// worldsim.New registers PB hooks (OnServe, OnRecordAfterUpdateSuccess,
+	// etc.) that must be bound before app.Start() fires those events —
+	// otherwise custom HTTP routes (e.g. /api/assets/, /api/world-king)
+	// never get registered on PB's router.
 	sim, err := worldsim.New(natsURL, app, tickHz, logger)
 	if err != nil {
 		log.Fatalf("worldsim init: %v", err)
@@ -97,6 +94,16 @@ func main() {
 	sim.OnWorldOptionsUpdate(func(opts worldsim.WorldOptions) {
 		applySMTPFromOptions(app, opts)
 	})
+
+	// Start PB's HTTP server in a goroutine (admin GUI + file serving for
+	// the frontend). The HTTP server runs alongside worldsim's tick loop.
+	// This fires the OnServe event, which registers worldsim's custom
+	// routes on PB's router.
+	go func() {
+		if err := app.Start(); err != nil {
+			log.Fatalf("pocketbase start: %v", err)
+		}
+	}()
 
 	logger.Info("worldsim starting", "nats", natsURL, "tick_hz", tickHz)
 	if err := sim.Run(ctx); err != nil {
