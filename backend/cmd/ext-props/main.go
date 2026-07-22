@@ -416,6 +416,17 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				Color     uint32  `json:"color,omitempty"`
 				Radius    float32 `json:"radius,omitempty"`
 			}{EntityID: tid, Intensity: intensity})
+			// Keep State in sync with intensity so buildPopupAction can
+			// filter activate/deactivate for light-based entities (which
+			// use set_light rather than the activate/deactivate verbs).
+			newState := "off"
+			if intensity > 0 {
+				newState = "on"
+			}
+			resp.Updates = append(resp.Updates, struct {
+				EntityID string `json:"entity_id"`
+				State    string `json:"state"`
+			}{EntityID: tid, State: newState})
 			target := findEntityInDispatch(dispatch, tid)
 			if gid, ok := resolveGidSwap(fx, target, intensity > 0); ok {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
@@ -461,6 +472,15 @@ func processEffect(fx Effect, dispatch *actionDispatchMsg, resp *actionReplyMsg,
 				Color     uint32  `json:"color,omitempty"`
 				Radius    float32 `json:"radius,omitempty"`
 			}{EntityID: tid, Intensity: newIntensity})
+			// Keep State in sync with intensity (see set_light above).
+			newState := "off"
+			if newIntensity > 0 {
+				newState = "on"
+			}
+			resp.Updates = append(resp.Updates, struct {
+				EntityID string `json:"entity_id"`
+				State    string `json:"state"`
+			}{EntityID: tid, State: newState})
 			if gid, ok := resolveGidSwap(fx, target, newIntensity > 0); ok {
 				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
 					EntityID string `json:"entity_id"`

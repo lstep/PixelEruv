@@ -3,6 +3,7 @@ package worldsim
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"testing"
@@ -263,6 +264,50 @@ func processEffectFake(dispatch *actionDispatchMsg, resp *actionReplyMsg, fx Eff
 					EntityID string `json:"entity_id"`
 					Gid      uint32 `json:"gid"`
 				}{EntityID: tid, Gid: target.Gid})
+			}
+		}
+
+	case "set_light":
+		// Mirrors ext-props: emits LightUpdates + a State update synced
+		// to intensity ("on" when > 0, "off" when 0) so popup filtering
+		// works for light-based entities.
+		for _, tid := range fx.TargetIDs {
+			if tid == "" {
+				continue
+			}
+			var intensity uint32
+			_, _ = fmt.Sscanf(fx.Payload, "%d", &intensity)
+			if intensity > 100 {
+				intensity = 100
+			}
+			resp.Handled = true
+			resp.LightUpdates = append(resp.LightUpdates, struct {
+				EntityID  string  `json:"entity_id"`
+				Intensity uint32  `json:"intensity"`
+				Color     uint32  `json:"color,omitempty"`
+				Radius    float32 `json:"radius,omitempty"`
+			}{EntityID: tid, Intensity: intensity})
+			newState := "off"
+			if intensity > 0 {
+				newState = "on"
+			}
+			resp.Updates = append(resp.Updates, struct {
+				EntityID string `json:"entity_id"`
+				State    string `json:"state"`
+			}{EntityID: tid, State: newState})
+			target := findTarget(tid)
+			if target != nil && target.GidOn != 0 {
+				gid := target.GidOff
+				if gid == 0 {
+					gid = target.Gid
+				}
+				if intensity > 0 {
+					gid = target.GidOn
+				}
+				resp.AppearanceUpdates = append(resp.AppearanceUpdates, struct {
+					EntityID string `json:"entity_id"`
+					Gid      uint32 `json:"gid"`
+				}{EntityID: tid, Gid: gid})
 			}
 		}
 	}
@@ -947,5 +992,156 @@ func TestActionExecute_PopupChoice(t *testing.T) {
 	}
 	if e.Gid != 491 {
 		t.Errorf("Gid = %d, want 491 (GidOn for activate)", e.Gid)
+	}
+}
+
+// TestPopupMode_SetLightSyncsState reproduces the bug where a light entity
+// uses the set_light effect (as the real map's light-1/2/3 do) for its
+// activate/deactivate actions. set_light must sync the entity's State to
+// "on"/"off" so that buildPopupAction filters activate/deactivate correctly.
+// Before the fix, set_light only emitted LightUpdates, State stayed empty,
+// and "activate" was always visible while "deactivate" was never visible —
+// even after the light was turned on.
+func TestPopupMode_SetLightSyncsState(t *testing.T) {
+	sim, subNc := newInteractionTestSim(t)
+	fakePropsExtension(t, subNc)
+
+	sim.extMgr.Register([]byte(`{"extension_id":"props","heartbeat_interval_s":10}`))
+	sim.extMgr.RegisterTriggers([]byte(`{
+		"extension_id": "props",
+		"input_triggers": [{"input": "key:E"}, {"input": "action:execute"}]
+	}`))
+
+	sim.entities["player-1"] = &Entity{
+		ID:       "player-1",
+		Position: &pb.Position{X: 5, Y: 5},
+	}
+	sim.clients["client-1"] = sim.entities["player-1"]
+	sim.entityIDToClient["player-1"] = "client-1"
+
+	// Light configured like maps/default-map.json light-1: activate uses
+	// set_light (intensity 80), deactivate uses set_light (intensity 0).
+	// No initial "state" property, so State starts empty — exactly the
+	// real-world condition that exposed the bug.
+	sim.entities["light-1"] = &Entity{
+		ID:             "light-1",
+		Position:       &pb.Position{X: 5.5, Y: 5},
+		EntityType:     "light",
+		OwnerExtension: "props",
+		Gid:            508,
+		GidOff:         508,
+		GidOn:          491,
+		LightColor:     0xffe6b4,
+		LightRadius:    3,
+		Actions:        "toggle,activate,deactivate",
+		Interactions: map[string][]Effect{
+			"toggle":     {{Action: "toggle_light", TargetIDs: []string{"light-1"}}},
+			"activate":   {{Action: "set_light", Payload: "80", TargetIDs: []string{"light-1"}}},
+			"deactivate": {{Action: "set_light", Payload: "0", TargetIDs: []string{"light-1"}}},
+		},
+	}
+
+	var mu sync.Mutex
+	results := make(map[uint32]*pb.ActionResultFrame) // seq -> result
+	sub, _ := subNc.Subscribe("client.client-1.replication", func(m *nats.Msg) {
+		var sf pb.ServerFrame
+		proto.Unmarshal(m.Data, &sf)
+		if ar := sf.GetActionResult(); ar != nil {
+			mu.Lock()
+			results[ar.GetSeq()] = ar
+			mu.Unlock()
+		}
+	})
+	defer sub.Unsubscribe()
+
+	// Phase 1: press E. Light is off (intensity 0, State empty), so the
+	// popup should show "toggle" + "activate" and hide "deactivate".
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sim.applyAction(ctx, "client-1", &pb.ActionFrame{Seq: 1, Input: "key:E"})
+
+	ar := waitForActionResultSeq(t, &mu, results, 1)
+	if len(ar.AvailableActions) != 2 {
+		t.Fatalf("phase 1: AvailableActions len = %d, want 2: %+v", len(ar.AvailableActions), ar.AvailableActions)
+	}
+	labels := make(map[string]string)
+	for _, a := range ar.AvailableActions {
+		labels[a.ActionId] = a.Label
+	}
+	if _, ok := labels["activate"]; !ok {
+		t.Errorf("phase 1: missing 'activate' (light is off)")
+	}
+	if _, ok := labels["deactivate"]; ok {
+		t.Errorf("phase 1: 'deactivate' should be hidden when light is off")
+	}
+
+	// Phase 2: choose "activate". This runs set_light intensity=80, which
+	// must sync State to "on" and LightIntensity to 80.
+	sim.applyAction(ctx, "client-1", &pb.ActionFrame{
+		Seq:      2,
+		Input:    "action:execute",
+		EntityId: "light-1",
+		ActionId: "activate",
+	})
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		sim.mu.Lock()
+		e := sim.entities["light-1"]
+		done := e.State == "on" && e.LightIntensity == 80
+		sim.mu.Unlock()
+		if done {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	sim.mu.Lock()
+	e := sim.entities["light-1"]
+	if e.State != "on" {
+		t.Errorf("phase 2: State = %q, want on (set_light must sync state)", e.State)
+	}
+	if e.LightIntensity != 80 {
+		t.Errorf("phase 2: LightIntensity = %d, want 80", e.LightIntensity)
+	}
+	sim.mu.Unlock()
+
+	// Phase 3: press E again. Light is on, so the popup should show
+	// "toggle" + "deactivate" and hide "activate". This is the user's
+	// reported bug: before the fix, "activate" was still shown.
+	sim.applyAction(ctx, "client-1", &pb.ActionFrame{Seq: 3, Input: "key:E"})
+
+	ar = waitForActionResultSeq(t, &mu, results, 3)
+	if len(ar.AvailableActions) != 2 {
+		t.Fatalf("phase 3: AvailableActions len = %d, want 2: %+v", len(ar.AvailableActions), ar.AvailableActions)
+	}
+	labels = make(map[string]string)
+	for _, a := range ar.AvailableActions {
+		labels[a.ActionId] = a.Label
+	}
+	if _, ok := labels["deactivate"]; !ok {
+		t.Errorf("phase 3: missing 'deactivate' (light is on)")
+	}
+	if _, ok := labels["activate"]; ok {
+		t.Errorf("phase 3: 'activate' should be hidden when light is on — got it, bug not fixed")
+	}
+}
+
+// waitForActionResultSeq polls the results map until the ActionResultFrame
+// for the given seq arrives, then returns it. Fails the test after a timeout.
+func waitForActionResultSeq(t *testing.T, mu *sync.Mutex, results map[uint32]*pb.ActionResultFrame, seq uint32) *pb.ActionResultFrame {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		ar, ok := results[seq]
+		mu.Unlock()
+		if ok {
+			return ar
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("timed out waiting for ActionResultFrame seq=%d", seq)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
