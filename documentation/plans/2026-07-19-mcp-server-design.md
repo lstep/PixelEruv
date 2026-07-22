@@ -118,11 +118,13 @@ previously exposed. New subjects (all request-reply, all reply with JSON):
 - `worldsim.entity.get` — single entity by ID. (entities_query.go)
 
 **Control:**
-- `worldsim.client.kick` — despawn a client, emit `player.kicked` audit.
+- `worldsim.client.kick` — despawn a client (by `client_id` or `entity_id`),
+  publish `client.<id>.force_close` so the pusher closes the player's
+  WebSocket, emit `player.kicked` audit.
   Replies `{"ok":true}` or `{"ok":false,"error":"not_connected"}`.
   (admin_actions.go)
-- `worldsim.client.ban` — insert a ban record via BanStore.Add, then kick any
-  matching connected client. Replies `{"ok":true,"kicked":bool}`.
+- `worldsim.client.ban` — insert a ban record via BanStore.Add, then kick +
+  force_close any matching connected client. Replies `{"ok":true,"kicked":bool}`.
   (admin_actions.go)
 
 **Admin overrides (bypass client-ID validation, use entity_id):**

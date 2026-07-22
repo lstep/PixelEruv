@@ -151,11 +151,13 @@ does not implement trigger behavior itself.
     (input trigger model). See
     `18-extensions.md`.
 14. **Token revocation execution** — when an admin kick is requested (by an
-    admin extension or authorized client), the kernel publishes
-    `admin.revoke.<entity_id>` (the Pusher closes the WebSocket) and despawns
-    the entity from the ECS. The *policy* (who can kick, under what
-    conditions) is deployment-specific and lives in an admin extension; the
-    *execution* is in the kernel because it requires ECS mutation.
+    admin extension, authorized client, or MCP server), the kernel despawns
+    the entity from the ECS and publishes `client.<client_id>.force_close`
+    with a marshaled `ServerFrame` (`AuthResult{kicked=true, kick_reason}`)
+    so the Pusher closes the player's WebSocket and the browser shows the
+    "kicked" overlay. The *policy* (who can kick, under what conditions) is
+    deployment-specific and lives in an admin extension; the *execution* is
+    in the kernel because it requires ECS mutation.
 
 ---
 
@@ -787,8 +789,8 @@ shared memory.
 | `worldsim.entity.teleport` | Extension | `{"entity_id", "map_id", "target_entity"}` — teleport an entity to a map (portal-style transition triggered by an extension) | On demand |
 | `worldsim.entities.query` | MCP server | `{"map_id?", "entity_type?", "owner_extension?", "zone_id?", "limit?"}` — filter entities, returns up to 500 snapshots sorted by entity_id. Reply: `[]entitySnapshot` or `{"error":"..."}`. | On demand |
 | `worldsim.entity.get` | MCP server | `{"entity_id"}` — single entity snapshot. Reply: `entitySnapshot` or `{"error":"entity not found"}`. | On demand |
-| `worldsim.client.kick` | MCP server | `{"client_id", "reason?", "actor"}` — despawn a connected client, emit `player.kicked` audit. Reply: `{"ok":true}` or `{"ok":false,"error":"not_connected"}`. | On demand |
-| `worldsim.client.ban` | MCP server | `{"target_type", "target_value", "reason?", "banned_until", "banned_by?", "actor"}` — insert a ban record (BanStore.Add) and kick any matching connected client. Reply: `{"ok":true,"kicked":bool}`. `target_type` ∈ `user_id`/`ip`/`device_id`. | On demand |
+| `worldsim.client.kick` | MCP server / Pusher (KickFrame) | `{"client_id?", "entity_id?", "reason?", "actor"}` — despawn + force_close. Either client_id or entity_id (resolved via entityIDToClient). Publishes `client.<id>.force_close`, emits `player.kicked` audit. Reply: `{"ok":true}` or `{"ok":false,"error":"not_connected"}`. | On demand |
+| `worldsim.client.ban` | MCP server | `{"target_type", "target_value", "reason?", "banned_until", "banned_by?", "actor"}` — insert a ban record (BanStore.Add), kick + force_close any matching connected client. Reply: `{"ok":true,"kicked":bool}`. `target_type` ∈ `user_id`/`ip`/`device_id`. | On demand |
 | `worldsim.admin.chat` | MCP server | `{"entity_id", "channel", "text", "actor"}` — send chat as an entity, bypassing the connected-client requirement. `channel` ∈ `global`/`proximity`. Emits `chat.message` audit tagged `admin=true`. Reply: `{"ok":bool,"error":"..."}`. | On demand |
 | `worldsim.admin.set_name` | MCP server | `{"entity_id", "name", "actor"}` — rename an entity (sanitized to ASCII printable, truncated to 20 runes). Persists to PB for logged-in players. Reply: `{"ok":bool,"error":"..."}`. | On demand |
 | `worldsim.admin.set_status` | MCP server | `{"entity_id", "status", "actor"}` — set presence (0=Available, 1=Busy, 2=DND). Persists to PB for logged-in players. Broadcasts on `worldsim.player_status`. Reply: `{"ok":bool,"error":"..."}`. | On demand |
@@ -812,6 +814,7 @@ shared memory.
 | `input.<input_type>` | All extensions registered for that input type | Input trigger dispatch (player clicked or pressed a key; includes equipment snapshot, range, LOS, entities) | On ActionFrame |
 | `extension.<ext_id>.error` | Extension | Validation error | On error |
 | `admin.revoke.<entity_id>` | Pusher (all instances) | Force-disconnect a user | On admin kick |
+| `client.<client_id>.force_close` | Pusher (owning the client) | Marshaled `ServerFrame` (`AuthResult{kicked=true, kick_reason}`) — pusher forwards to WS then closes it | On kick/ban/dual-connect displacement |
 | `healthz` | Pusher (health aggregator) | Health JSON: `{service, status, version, uptime, extras}` with `entity_count`, `connected_players`, `running_extensions` | Every 10s |
 
 > The subject naming convention is illustrative. The final convention will be
