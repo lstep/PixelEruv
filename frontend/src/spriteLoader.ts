@@ -1,14 +1,16 @@
-// Fetches the character spritesheet catalog from PocketBase.
+// Fetches the character spritesheet catalog from worldsim's asset API.
 //
-// The `sprite_bases` collection (see pb_migrations/1751900000_create_sprite_bases.js)
-// stores each base sheet as a file field. This module fetches all records and
-// returns the IDs + URLs so GameScene can load them via Phaser's loader.
+// worldsim serves the sprite_bases list via GET /api/assets/sprites. The
+// sprite_bases PB collection is fully locked (nil API rules), so the frontend
+// cannot hit /api/collections/sprite_bases/ directly. worldsim reads the
+// records via the in-process Go SDK (bypassing rules) and serves the list +
+// sheet file URLs on its embedded PB router.
 //
 // Env vars:
-//   VITE_POCKETBASE_URL — PocketBase base URL (dev only; default http://localhost:8090)
+//   VITE_POCKETBASE_URL — worldsim/PocketBase base URL (dev only; default http://localhost:8090)
 //
 // In production (served by nginx), PB_URL derives from window.location.origin so
-// the browser reaches PocketBase via the nginx /api/ proxy (same-origin).
+// the browser reaches worldsim via the nginx /api/ proxy (same-origin).
 
 const PB_URL = window.location.port === "5173"
   ? (import.meta.env.VITE_POCKETBASE_URL ?? "http://localhost:8090")
@@ -19,31 +21,36 @@ export interface SpriteBaseAsset {
   id: string;
   // Human-readable name (filename stem, e.g. "char_0").
   name: string;
-  // PocketBase file URL for the PNG.
+  // URL to the sprite PNG (served by worldsim's asset endpoint).
   url: string;
 }
 
-// Fetch all sprite_bases records from PocketBase. Returns empty array on
-// failure (caller falls back to static char_0..char_3 files).
+// Response shape from GET /api/assets/sprites.
+interface SpriteBaseResponse {
+  id: string;
+  name: string;
+  url: string;
+}
+
+// Fetch all sprite_bases from worldsim. Returns empty array on failure (caller
+// falls back to static char_0..char_3 files).
 export async function loadSpriteBases(): Promise<SpriteBaseAsset[]> {
   try {
-    const resp = await fetch(
-      `${PB_URL}/api/collections/sprite_bases/records?perPage=200`,
-    );
-    if (!resp.ok) throw new Error(`PocketBase responded ${resp.status}`);
+    const resp = await fetch(`${PB_URL}/api/assets/sprites`);
+    if (!resp.ok) throw new Error(`Asset endpoint responded ${resp.status}`);
 
-    const data = await resp.json();
-    if (!data.items || data.items.length === 0) {
+    const data: SpriteBaseResponse[] = await resp.json();
+    if (!data || data.length === 0) {
       return [];
     }
 
-    return data.items.map((item: { id: string; name: string; sheet: string; collectionId: string }) => ({
+    return data.map((item) => ({
       id: item.id,
       name: item.name,
-      url: `${PB_URL}/api/files/${item.collectionId}/${item.id}/${item.sheet}`,
+      url: item.url.startsWith("http") ? item.url : `${PB_URL}${item.url}`,
     }));
   } catch (err) {
-    console.warn("PocketBase sprite_bases load failed, falling back to static sheets:", err);
+    console.warn("Sprite bases load failed, falling back to static sheets:", err);
     return [];
   }
 }

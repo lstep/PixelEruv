@@ -468,7 +468,15 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 		// /api/world-king is public (no auth) — returns only the king's
 		// display name for the welcome page footer. King email is not exposed.
 		e.Router.GET("/api/world-king", s.handleWorldKingHTTP)
-		return nil
+		// Asset-serving routes for the frontend. Public (no auth) — these
+		// serve game assets (maps, sprites) from PB via the Go SDK, allowing
+		// the maps/sprite_bases collections to be fully locked (nil rules).
+		e.Router.GET("/api/assets/maps/default", s.handleAssetMapDefault)
+		e.Router.GET("/api/assets/maps/{name}", s.handleAssetMap)
+		e.Router.GET("/api/assets/maps/{name}/tilesets/{filename}", s.handleAssetTileset)
+		e.Router.GET("/api/assets/sprites", s.handleAssetSprites)
+		e.Router.GET("/api/assets/sprites/{id}/sheet", s.handleAssetSpriteSheet)
+		return e.Next()
 	})
 
 	if err := s.subscribe(); err != nil {
