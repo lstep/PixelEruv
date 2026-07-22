@@ -926,16 +926,21 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			// because reusing AuthResult would make the WsClient think
 			// it's a new auth result and overwrite the admin's own
 			// clientId/entityId.
+			pctx, pspan := s.tracer.Start(ctx, "pusher.nats.publish.kick")
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.String("kick.entity_id", p.Kick.GetEntityId()))
 			kickPayload := map[string]string{
 				"entity_id": p.Kick.GetEntityId(),
 				"reason":    p.Kick.GetReason(),
 			}
 			kickBytes, _ := json.Marshal(kickPayload)
 			kickMsg := &nats.Msg{Subject: "worldsim.client.kick", Data: kickBytes}
-			otelinternal.Inject(ctx, kickMsg)
+			otelinternal.Inject(pctx, kickMsg)
 			if err := s.nc.PublishMsg(kickMsg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish kick")
 				s.logger.Warn("kick publish failed", "client", clientID, "err", err)
 			}
+			pspan.End()
 		}
 		}
 	}
