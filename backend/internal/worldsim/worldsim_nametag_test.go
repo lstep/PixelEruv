@@ -342,3 +342,40 @@ func TestReplication_SpawnIncludesIsAdmin(t *testing.T) {
 		t.Fatal("timed out waiting for replication batch")
 	}
 }
+
+// TestSanitizeName_PBPersistedThreats verifies sanitizeName against the
+// hostile inputs that could reach it via the PocketBase-bypass path: a
+// display_name written directly to PB (Max 100, no charset constraint) is
+// re-sanitized on load (worldsim.go provisionClient) and by the players
+// OnRecordCreateExecute/OnRecordUpdateExecute hooks. Newlines and other
+// control chars would break audit-log/table layout; over-length names break
+// UI; <script> is kept (ASCII printable) but is inert in all render paths
+// (Phaser canvas Text, DOM textContent, Go html/template).
+func TestSanitizeName_PBPersistedThreats(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"newlines stripped", "ev\nil\rtab\there", "eviltabhere"},
+		{"null + control stripped", "a\x00b\x01c\x1fd", "abcd"},
+		{"script tag kept (ASCII)", "<script>alert(1)</script>", "<script>alert(1)</sc"},
+		{"100-char truncated", strings.Repeat("X", 100), strings.Repeat("X", maxNameRunes)},
+		{"unicode stripped", "Café😀", "Caf"},
+		{"empty stays empty", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := sanitizeName(c.in)
+			if got != c.want {
+				t.Fatalf("sanitizeName(%q) = %q, want %q", c.in, got, c.want)
+			}
+			if len([]rune(got)) > maxNameRunes {
+				t.Fatalf("result %q exceeds maxNameRunes (%d)", got, maxNameRunes)
+			}
+			for _, r := range got {
+				if r < 32 || r > 126 {
+					t.Fatalf("result %q contains non-ASCII-printable rune %q", got, r)
+				}
+			}
+		})
+	}
+}

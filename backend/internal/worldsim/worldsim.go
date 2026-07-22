@@ -499,6 +499,25 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 		return e.Next()
 	})
 
+	// Defense-in-depth: sanitize display_name on any players record
+	// create/update, regardless of the write path (in-process SDK, admin UI,
+	// or a future API rule). Strips non-ASCII-printable chars and truncates to
+	// maxNameRunes, matching handleSetName/sanitizeName. Never rejects — just
+	// cleans — so it is a no-op for the legit worldsim write paths that
+	// already pass sanitized names.
+	sanitizeDisplayName := func(e *core.RecordEvent) error {
+		raw := e.Record.GetString("display_name")
+		if raw == "" {
+			return e.Next()
+		}
+		if cleaned := sanitizeName(raw); cleaned != raw {
+			e.Record.Set("display_name", cleaned)
+		}
+		return e.Next()
+	}
+	app.OnRecordCreateExecute("players").BindFunc(sanitizeDisplayName)
+	app.OnRecordUpdateExecute("players").BindFunc(sanitizeDisplayName)
+
 	return s, nil
 }
 
@@ -1292,7 +1311,12 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 				"err", err, "sub", sub)
 		} else {
 			entityID = user.EntityID
-			displayName = user.DisplayName
+			// Re-sanitize the persisted display_name: PocketBase is a trust
+			// boundary and the field could have been written directly (e.g. via
+			// the admin UI or a past API write) without worldsim's sanitizer.
+			// This guarantees only ASCII-printable, ≤20-rune names reach
+			// replication + audit, matching handleSetName/sanitizeName.
+			displayName = sanitizeName(user.DisplayName)
 			spriteBase = user.SpriteBase
 			isAdmin = user.IsAdmin
 			hideAdminBadge = user.HideAdminBadge
