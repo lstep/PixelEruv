@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/pocketbase/pocketbase"
@@ -68,6 +69,12 @@ func main() {
 	// Configure OAuth2 providers from env vars. Only providers with both
 	// client ID and secret set are enabled.
 	configureOAuth2(app)
+
+	// Rewrite the {LINK} in PB's default verification and password-reset
+	// emails to point at the frontend pages (/verify-email, /reset-password)
+	// instead of PB's admin UI. The token is already substituted in the
+	// rendered HTML by the time these hooks fire.
+	configureMailerHooks(app)
 
 	// Start PB's HTTP server in a goroutine (admin GUI + file serving for
 	// the frontend). The HTTP server runs alongside worldsim's tick loop.
@@ -137,6 +144,24 @@ func applySMTPFromOptions(app core.App, opts worldsim.WorldOptions) {
 	if err := app.Save(s); err != nil {
 		log.Printf("apply SMTP from world_options: %v", err)
 	}
+}
+
+// configureMailerHooks rewrites the action links in PB's default
+// verification and password-reset emails to point at the frontend pages
+// instead of PB's admin UI. The token is already substituted in the
+// rendered HTML by the time these hooks fire, so we do a string replace
+// on the admin-UI path prefix.
+func configureMailerHooks(app core.App) {
+	app.OnMailerRecordVerificationSend().BindFunc(func(e *core.MailerRecordEvent) error {
+		e.Message.HTML = strings.Replace(e.Message.HTML,
+			"/_/#/auth/confirm-verification/", "/verify-email?token=", 1)
+		return e.Next()
+	})
+	app.OnMailerRecordPasswordResetSend().BindFunc(func(e *core.MailerRecordEvent) error {
+		e.Message.HTML = strings.Replace(e.Message.HTML,
+			"/_/#/auth/confirm-password-reset/", "/reset-password?token=", 1)
+		return e.Next()
+	})
 }
 
 // configureOAuth2 enables OAuth2 providers on the users collection from

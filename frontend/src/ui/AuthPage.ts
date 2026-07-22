@@ -10,6 +10,8 @@ import {
   loginWithProvider,
   listAuthProviders,
   confirmVerification,
+  requestPasswordReset,
+  confirmPasswordReset,
   isLoggedIn,
 } from "../auth";
 
@@ -284,6 +286,12 @@ export function renderLoginPage(): void {
   linkRow.className = "link-row";
   linkRow.innerHTML = `Don't have an account? <a href="/register">Register</a>`;
   card.appendChild(linkRow);
+
+  const forgotRow = document.createElement("div");
+  forgotRow.className = "link-row";
+  forgotRow.style.marginTop = "0.5rem";
+  forgotRow.innerHTML = `<a href="/forgot-password">Forgot password?</a>`;
+  card.appendChild(forgotRow);
 }
 
 export async function renderVerifyEmailPage(): Promise<void> {
@@ -308,4 +316,107 @@ export async function renderVerifyEmailPage(): Promise<void> {
   } catch (err) {
     showMessage(card, `Verification failed: ${(err as Error).message}`, "error");
   }
+}
+
+export function renderForgotPasswordPage(): void {
+  const page = createPage();
+  const card = createCard(page, "Reset your password", "Enter your email and we'll send you a reset link.");
+
+  const emailLabel = document.createElement("label");
+  emailLabel.textContent = "Email";
+  card.appendChild(emailLabel);
+  const emailInput = document.createElement("input");
+  emailInput.type = "email";
+  emailInput.placeholder = "you@example.com";
+  card.appendChild(emailInput);
+
+  const submitBtn = document.createElement("button");
+  submitBtn.className = "primary";
+  submitBtn.textContent = "Send reset link";
+  card.appendChild(submitBtn);
+
+  submitBtn.addEventListener("click", async () => {
+    const email = emailInput.value.trim();
+    if (!email) {
+      showMessage(card, "Email is required.", "error");
+      return;
+    }
+    submitBtn.disabled = true;
+    try {
+      await requestPasswordReset(email);
+      showMessage(card, "If an account exists for that email, a reset link has been sent.", "success");
+      submitBtn.textContent = "Check your email";
+    } catch (err) {
+      submitBtn.disabled = false;
+      showMessage(card, `Request failed: ${(err as Error).message}`, "error");
+    }
+  });
+
+  const linkRow = document.createElement("div");
+  linkRow.className = "link-row";
+  linkRow.innerHTML = `<a href="/login">Back to login</a>`;
+  card.appendChild(linkRow);
+}
+
+export async function renderResetPasswordPage(): Promise<void> {
+  const page = createPage();
+  const card = createCard(page, "Set a new password", "Choose a new password for your account.");
+
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get("token");
+
+  if (!token) {
+    showMessage(card, "Invalid reset link — no token found.", "error");
+    return;
+  }
+
+  const pwLabel = document.createElement("label");
+  pwLabel.textContent = "New password";
+  card.appendChild(pwLabel);
+  const pwInput = document.createElement("input");
+  pwInput.type = "password";
+  pwInput.placeholder = "At least 8 characters";
+  card.appendChild(pwInput);
+
+  const pwConfirmLabel = document.createElement("label");
+  pwConfirmLabel.textContent = "Confirm password";
+  card.appendChild(pwConfirmLabel);
+  const pwConfirmInput = document.createElement("input");
+  pwConfirmInput.type = "password";
+  card.appendChild(pwConfirmInput);
+
+  const submitBtn = document.createElement("button");
+  submitBtn.className = "primary";
+  submitBtn.textContent = "Reset password";
+  card.appendChild(submitBtn);
+
+  submitBtn.addEventListener("click", async () => {
+    const pw = pwInput.value;
+    const pwConfirm = pwConfirmInput.value;
+    if (!pw) {
+      showMessage(card, "Password is required.", "error");
+      return;
+    }
+    if (pw.length < 8) {
+      showMessage(card, "Password must be at least 8 characters.", "error");
+      return;
+    }
+    if (pw !== pwConfirm) {
+      showMessage(card, "Passwords do not match.", "error");
+      return;
+    }
+    submitBtn.disabled = true;
+    try {
+      await confirmPasswordReset(token, pw, pwConfirm);
+      showMessage(card, "Password reset! You can now log in.", "success");
+      submitBtn.textContent = "Done";
+      const linkRow = document.createElement("div");
+      linkRow.className = "link-row";
+      linkRow.innerHTML = `<a href="/login">Go to login</a>`;
+      card.appendChild(linkRow);
+    } catch (err) {
+      submitBtn.disabled = false;
+      showMessage(card, `Reset failed: ${(err as Error).message}`, "error");
+    }
+  });
 }

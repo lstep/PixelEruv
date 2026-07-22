@@ -6,7 +6,7 @@ import { loadMapAssets } from "./mapLoader";
 import { loadSpriteBases } from "./spriteLoader";
 import { TopMenu } from "./ui/TopMenu";
 import { ChatPanel } from "./ui/ChatPanel";
-import { renderRegisterPage, renderLoginPage, renderVerifyEmailPage } from "./ui/AuthPage";
+import { renderRegisterPage, renderLoginPage, renderVerifyEmailPage, renderForgotPasswordPage, renderResetPasswordPage } from "./ui/AuthPage";
 
 // Initialize OpenTelemetry before any instrumented code runs. No-op when
 // VITE_OTEL_ENABLED != "true".
@@ -98,6 +98,16 @@ async function bootstrap(): Promise<void> {
   }
   if (path === "/verify-email") {
     renderVerifyEmailPage();
+    showReloadNoticeIfPending();
+    return;
+  }
+  if (path === "/forgot-password") {
+    renderForgotPasswordPage();
+    showReloadNoticeIfPending();
+    return;
+  }
+  if (path === "/reset-password") {
+    renderResetPasswordPage();
     showReloadNoticeIfPending();
     return;
   }
