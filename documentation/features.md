@@ -577,10 +577,13 @@ placeholder line ("Hello world"). Admins see the player's IP address
 and a short device ID, delivered via a dedicated NATS channel that
 carries an `AdminInfoFrame` with every player's IP, device ID, guest
 status, and user ID — the data only reaches admin clients. Both
-regular and admin viewers see an "Invite" button; admins additionally
-see a "Ban" button. These buttons are stubs — they show "Not
-implemented yet" when clicked. Wiring the ban button to a server-side
-ban command is a planned future task.
+regular and admin viewers see an "Invite" button (stub); admins
+additionally see a "Kick" button and a "Ban" button (stub). The Kick
+button sends a `KickFrame` by entity_id to the pusher, which forwards
+it to `worldsim.client.kick`; worldsim despawns the entity and
+publishes `client.<id>.force_close` so the target's browser shows a
+"You have been kicked" overlay and stops reconnecting. The Ban button
+is still a stub.
 
 Logged-in players also have their IP address and last-seen timestamp
 persisted in the `players` collection.
@@ -591,7 +594,9 @@ a generated name and logged-in users get their PocketBase display name.
 Click the green dot on a name tag — a dropdown panel appears with
 "Hello world" and an "Invite" button. Switch to an admin account —
 click the same dot — the dropdown now shows the player's IP and device
-ID, plus "Invite" and "Ban" buttons. Click elsewhere — the dropdown
+ID, plus "Invite", "Kick", and "Ban" buttons. Click "Kick" — the
+target player's window goes gray with "You have been kicked from this
+world" and stops reconnecting. Click elsewhere — the dropdown
 closes. Switch back to a regular account — no IP or device ID is
 visible.
 

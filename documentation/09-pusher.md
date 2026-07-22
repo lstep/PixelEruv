@@ -134,7 +134,12 @@ JetStream KV.
 6. **Control frame forwarding** — subscribe to NATS Core (subject
    `client.<client_id>.control`) and forward control frames (LiveKit tokens,
    kick notifications) to the client's WebSocket.
-7. **Lifecycle events** — publish `client.connected` and `client.disconnected`
+7. **Force-close handling** — subscribe to `client.<client_id>.force_close`.
+   When worldsim kicks/bans a player or a dual-connect displaces an old
+   session, worldsim publishes a marshaled `ServerFrame` (`AuthResult{kicked=true}`)
+   here. The pusher forwards it to the target WebSocket, then closes the
+   connection so the browser shows the "kicked" overlay and stops reconnecting.
+8. **Lifecycle events** — publish `client.connected` and `client.disconnected`
    events to NATS Core so the World Simulator can provision/teardown entities.
 
 ---
@@ -219,6 +224,7 @@ the World Sim's perspective.
 | `client.<client_id>.replication` | World Sim | `ReplicationBatch` (protobuf) | Per tick |
 | `client.<client_id>.control` | LiveKit Bridge | `ControlFrame` (LiveKit token) | Event-driven |
 | `admin.revoke.<entity_id>` | World Sim | `{entity_id, reason}` | On admin kick |
+| `client.<client_id>.force_close` | World Sim (kick/ban/dual-connect) | Marshaled `ServerFrame` (`AuthResult{kicked=true}`) — pusher forwards to the WS then closes it | On kick/ban/dual-connect |
 | `healthz` | All services (pusher, worldsim, extensions) | Health JSON (see §9) | Every 10s |
 
 ### Outbound (published by the Pusher)

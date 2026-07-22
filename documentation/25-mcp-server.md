@@ -165,8 +165,8 @@ data). All return JSON.
 | Tool | What it does |
 |---|---|
 | `teleport_entity` | Teleport a player to a target map, optionally to a named beacon. Fire-and-forget. |
-| `kick_player` | Force-disconnect a client by client_id. Saves position, emits `player.kicked` audit. |
-| `ban_player` | Insert a ban record (user_id / ip / device_id) into PocketBase and kick any matching connected client. `banned_until=0` = permanent. |
+| `kick_player` | Force-disconnect a player by `client_id` **or** `entity_id`. Saves position, force-closes the player's WebSocket (browser shows "You have been kicked" overlay), emits `player.kicked` audit. No-op (with audit) if not currently connected. |
+| `ban_player` | Insert a ban record (user_id / ip / device_id) into PocketBase and kick any matching connected client. Force-closes the player's WebSocket (browser shows "You have been kicked" overlay), emits `player.banned` audit. `banned_until=0` = permanent. |
 
 **Admin overrides (5 + 1 dispatch):**
 

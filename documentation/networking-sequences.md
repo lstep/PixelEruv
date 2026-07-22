@@ -283,34 +283,39 @@ sequenceDiagram
 
 Instant eviction without waiting for the 15-minute `id_token` expiry. The
 revocation **policy** (who can kick, under what conditions) is in an admin
-extension. The revocation **execution** is in the World Sim: it publishes
-`admin.revoke.<entity_id>`; every Pusher instance subscribes and closes the
-matching WebSocket.
+extension. The revocation **execution** is in the World Sim: it despawns
+the entity and publishes `client.<client_id>.force_close` with a marshaled
+`ServerFrame` (`AuthResult{kicked=true, kick_reason}`); the Pusher instance
+owning that client forwards the frame to the WebSocket, then closes it so
+the browser shows the "kicked" overlay and stops reconnecting.
+
+Kick can be triggered three ways: MCP server (`worldsim.client.kick` by
+client_id or entity_id), admin browser dropdown (KickFrame → pusher →
+`worldsim.client.kick`), or ban (`worldsim.client.ban` — despawn +
+force_close the matching client).
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Admin as Admin (via admin extension)
-    participant E as Admin Extension
+    participant Admin as Admin (MCP / browser dropdown / ban)
     participant W as WorldSim
     participant N as NATS
-    participant P as Pusher (all instances)
+    participant P as Pusher (owning the client)
     participant B as Browser (target)
 
-    Admin->>E: revoke user (via admin extension API)
-    E->>N: publish admin kick request (to World Sim)
+    Admin->>N: worldsim.client.kick { client_id or entity_id, reason }
     N->>W: deliver kick request
-    W->>W: remove entity from ECS, tear down zone membership
-    W->>N: publish admin.revoke.<entity_id> { entity_id, reason }
-    N->>P: deliver to every Pusher instance
+    W->>W: despawnClient (save position, zone.exit, proximity.leave, DestroyEntity)
+    W->>N: publish client.<client_id>.force_close { AuthResult{kicked=true, kick_reason} }
+    N->>P: deliver force_close to the owning Pusher
 
-    Note over P: each Pusher checks its session map
+    Note over P: Pusher finds the session in its map
     alt matching client_id on this Pusher
-        P-->>B: ErrorFrame { code: 4401, message: "revoked" }
-        P-->>B: WS close 4401
-        Note over B: redirect to Dex login
+        P-->>B: ServerFrame { AuthResult { kicked: true, kick_reason } }
+        P-->>B: WS close (policy violation)
+        Note over B: show "You have been kicked" overlay, stop reconnecting
     else no match on this instance
-        Note over P: no-op (another instance holds the session)
+        Note over P: no-op (session already gone)
     end
 
     Note over W: also publishes client.disconnected via the normal close path
@@ -318,10 +323,69 @@ sequenceDiagram
 
 ---
 
+## 7. Dual-connect confirmation
+
+When a logged-in user opens a second browser window, both windows mint the
+same persistent `entity_id` (from PocketBase). Without detection, the
+second `provisionClient` silently overwrites the first entity, and the old
+window becomes a frozen zombie (drops input, receives no replication,
+oscillates position saves). The dual-connect flow detects this and asks
+the user to confirm before displacing the old session.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B1 as Browser (old window)
+    participant B2 as Browser (new window)
+    participant P as Pusher
+    participant W as WorldSim
+    participant N as NATS
+
+    Note over B1: already connected, entity e_user active on c_old
+
+    B2->>P: WS connect + AuthFrame { id_token, force=false }
+    P->>N: client.connected { client_id=c_new, sub, force=false }
+    N->>W: deliver client.connected
+    W->>W: provisionClient: entityID e_user already in s.entities with c_old active
+    Note over W: dual-connect detected (same entityID, different clientID, old still in s.clients)
+    W-->>N: reply AuthResult { ok=false, already_connected=true }
+    N-->>P: deliver reply
+    P-->>B2: ServerFrame { AuthResult { ok=false, already_connected=true } }
+    Note over B2: show confirm popup: "Already connected in another window. Connect here?"
+
+    alt user clicks "Yes"
+        B2->>P: AuthFrame { id_token, force=true }
+        P->>N: client.connected { client_id=c_new, sub, force=true }
+        N->>W: deliver client.connected (force=true)
+        W->>W: despawnClientLocked(c_old): save position, zone.exit, proximity.leave, DestroyEntity
+        W->>W: provision new entity for c_new
+        W->>N: publish client.c_old.force_close { AuthResult{kicked=true, kick_reason} }
+        N-->>P: deliver force_close for c_old
+        P-->>B1: ServerFrame { AuthResult { kicked=true, kick_reason } }
+        P-->>B1: WS close (policy violation)
+        Note over B1: show "You have been kicked" overlay, stop reconnecting
+        W-->>N: reply AuthResult { ok=true, entity_id=e_user, ... }
+        N-->>P: deliver reply
+        P-->>B2: ServerFrame { AuthResult { ok=true, entity_id, map_id, ... } }
+        Note over B2: load game (normal connect flow continues)
+    else user clicks "No"
+        B2->>P: WS close
+        Note over B2: stay on loading screen
+    end
+```
+
+The reconnect race (old session already gone from `s.clients` before the
+new `provisionClient` runs) is NOT a dual-connect: `provisionClient`
+treats it as a normal reconnect and reuses the stale entity via the
+`removeStaleMobileZone` path. See `worldsim_reconnect_race_test.go` and
+`worldsim_dualconnect_test.go`.
+
+---
+
 ## Coverage and gaps
 
-These six cover the complete client-facing networking story: connect,
-steady state, interact, recover, refresh, revoke.
+These seven cover the complete client-facing networking story: connect,
+steady state, interact, recover, refresh, revoke, dual-connect.
 
 Not yet diagrammed (available on request):
 

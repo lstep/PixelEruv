@@ -72,12 +72,20 @@ Pusher closes the connection with code `4401`.
 ```protobuf
 message AuthFrame {
   string id_token = 1;             // OIDC JWT from Dex
+  string traceparent = 2;          // W3C traceparent for this auth
+  string device_id = 3;            // browser-local UUID for ban tracking
+  bool force = 4;                  // true = displace an existing session for the same user (dual-connect confirmation)
 }
 
 message AuthResultFrame {
   bool ok = 1;
   string client_id = 2;            // assigned by the Pusher
   string entity_id = 3;            // assigned by the World Sim (after provisioning)
+  // ... fields 4-15 (ban, admin, map, options, warnings — see frames.proto)
+  bool already_connected = 16;     // worldsim→browser: another session is active for this user; ask user to confirm (send AuthFrame with force=true)
+  bool kicked = 17;                // worldsim→pusher→browser (via force_close): you were kicked, stop reconnecting
+  string kick_reason = 18;         // human-readable kick reason
+  bool force = 19;                 // pusher→worldsim: user confirmed displacing the existing session
 }
 
 message InputFrame {
@@ -257,6 +265,7 @@ convention is **`<domain>.<scope>.<action>`**, lowercase, dot-separated.
 | Subject | Publisher | Subscriber | Payload |
 |---|---|---|---|
 | `admin.revoke.<entity_id>` | World Sim (execution) | Pusher (all) | Force-disconnect a user (policy decided by an admin extension; execution by the kernel) |
+| `client.<client_id>.force_close` | World Sim (kick/ban/dual-connect) | Pusher (owning the client) | Marshaled `ServerFrame` (`AuthResult{kicked=true, kick_reason}`) — pusher forwards to the WS then closes it |
 
 ### 2.6a MCP-server-facing subjects (worldsim request-reply)
 
@@ -277,7 +286,7 @@ can filter LLM-initiated actions from client-initiated ones. See
 | `worldsim.entities.query` | `{"map_id?", "entity_type?", "owner_extension?", "zone_id?", "limit?"}` | `[]entitySnapshot` (up to 500, sorted by entity_id) or `{"error":"..."}` |
 | `worldsim.entity.get` | `{"entity_id"}` | `entitySnapshot` or `{"error":"entity not found"}` |
 | `worldsim.entity.teleport` | `{"entity_id", "map_id", "target_entity?"}` | *(fire-and-forget, no reply)* |
-| `worldsim.client.kick` | `{"client_id", "reason?", "actor"}` | `{"ok":true}` or `{"ok":false,"error":"not_connected"}` |
+| `worldsim.client.kick` | `{"client_id?", "entity_id?", "reason?", "actor"}` — despawn + force_close. Either client_id or entity_id required. | `{"ok":true}` or `{"ok":false,"error":"not_connected"}` |
 | `worldsim.client.ban` | `{"target_type", "target_value", "reason?", "banned_until", "banned_by?", "actor"}` | `{"ok":true,"kicked":bool}`. `target_type` ∈ `user_id`/`ip`/`device_id`. |
 | `worldsim.admin.chat` | `{"entity_id", "channel", "text", "actor"}` | `{"ok":bool,"error":"..."}`. `channel` ∈ `global`/`proximity`. |
 | `worldsim.admin.set_name` | `{"entity_id", "name", "actor"}` | `{"ok":bool,"error":"..."}`. Sanitized to ASCII printable, truncated to 20 runes. |
