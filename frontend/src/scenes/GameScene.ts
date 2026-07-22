@@ -2488,17 +2488,31 @@ export class GameScene extends Phaser.Scene {
   // "No" closes the WebSocket so the loading screen stays.
   private showAlreadyConnectedConfirm(): void {
     const cam = this.cameras.main;
-    const overlay = this.add.container(0, 0).setScrollFactor(0).setDepth(10000);
-    const dim = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.7)
-      .setOrigin(0, 0).setScrollFactor(0);
+    // Hide the "Server not available" overlay while we ask the user — the
+    // server IS reachable, it's just waiting for confirmation. onStateChange
+    // will re-show it if the user picks "No" (ws.close → state "closed").
+    this.disconnectOverlay?.setVisible(false);
+    document.body.classList.remove("server-unavailable");
+    // Resume the scene so pointer events reach the buttons. The scene was
+    // paused on first create awaiting auth; the alreadyConnected branch never
+    // transitions to "open" so it stays paused and input is dead. No avatar
+    // has been spawned yet, so there's nothing to predict against. If the
+    // user picks "No", ws.close → state "closed" → onStateChange re-pauses.
+    this.scene.resume("GameScene");
+    // Place the container at the screen center in world coordinates and
+    // counter-scale by 1/zoom so it renders at constant screen size. Children
+    // are positioned relative to the container center (local 0,0). Do NOT use
+    // setScrollFactor(0) — per AGENTS.md, it misinterprets world-coord
+    // positions as screen coordinates under zoom.
+    const overlay = this.add.container(cam.worldView.centerX, cam.worldView.centerY).setDepth(10000);
+    const dim = this.add.rectangle(-this.scale.width / 2, -this.scale.height / 2,
+      this.scale.width, this.scale.height, 0x000000, 0.7).setOrigin(0, 0);
     const panelW = 360;
     const panelH = 120;
-    const panelX = cam.worldView.centerX - panelW / 2;
-    const panelY = cam.worldView.centerY - panelH / 2;
     const bg = this.add.graphics();
     bg.fillStyle(0x333340, 0.95);
-    bg.fillRoundedRect(panelX, panelY, panelW, panelH, 8);
-    const text = this.add.text(cam.worldView.centerX, panelY + 16,
+    bg.fillRoundedRect(-panelW / 2, -panelH / 2, panelW, panelH, 8);
+    const text = this.add.text(0, -panelH / 2 + 16,
       "You are already connected in another window.\nConnect here and disconnect the other?",
       {
         fontFamily: "Nunito, sans-serif",
@@ -2507,8 +2521,8 @@ export class GameScene extends Phaser.Scene {
         align: "center",
         wordWrap: { width: panelW - 24 },
       }).setOrigin(0.5, 0);
-    const btnY = panelY + panelH - 28;
-    const yesBtn = this.add.text(cam.worldView.centerX - 50, btnY, "Yes", {
+    const btnY = panelH / 2 - 28;
+    const yesBtn = this.add.text(-50, btnY, "Yes", {
       fontFamily: "Nunito, sans-serif",
       fontSize: "13px",
       color: "#ffffff",
@@ -2516,7 +2530,7 @@ export class GameScene extends Phaser.Scene {
       backgroundColor: "#4a4a5a",
       padding: { left: 12, right: 12, top: 5, bottom: 5 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    const noBtn = this.add.text(cam.worldView.centerX + 50, btnY, "No", {
+    const noBtn = this.add.text(50, btnY, "No", {
       fontFamily: "Nunito, sans-serif",
       fontSize: "13px",
       color: "#ffffff",
