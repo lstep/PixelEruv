@@ -899,9 +899,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			// Admin kick: forward to worldsim.client.kick via request-reply.
 			// Worldsim resolves entity_id → client_id, despawns the entity,
 			// and publishes force_close so the pusher closes the target's
-			// WebSocket. Only admins should send this; worldsim does not
-			// re-verify admin status here (the pusher already verified the
-			// token). The reply is a JSON adminResponse.
+			// WebSocket. Fire-and-forget from the browser's perspective —
+			// the admin sees the target disappear via replication. We do
+			// NOT send an ack frame because reusing AuthResult would make
+			// the WsClient think it's a new auth result and overwrite the
+			// admin's own clientId/entityId.
 			kickPayload := map[string]string{
 				"entity_id": p.Kick.GetEntityId(),
 				"reason":    p.Kick.GetReason(),
@@ -909,28 +911,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			kickBytes, _ := json.Marshal(kickPayload)
 			kickMsg := &nats.Msg{Subject: "worldsim.client.kick", Data: kickBytes}
 			otelinternal.Inject(ctx, kickMsg)
-			kickReply, err := s.nc.RequestMsg(kickMsg, 5*time.Second)
-			if err != nil {
+			if _, err := s.nc.RequestMsg(kickMsg, 5*time.Second); err != nil {
 				s.logger.Warn("kick request-reply failed", "client", clientID, "err", err)
-			} else {
-				// Forward the raw JSON reply to the admin's browser as an
-				// AuthResult ack (reusing ok field for success/failure).
-				var adminResp struct {
-					OK    bool   `json:"ok"`
-					Error string `json:"error,omitempty"`
-				}
-				if err := json.Unmarshal(kickReply.Data, &adminResp); err == nil {
-					ackFrame := &pb.ServerFrame{
-						Payload: &pb.ServerFrame_AuthResult{
-							AuthResult: &pb.AuthResultFrame{
-								Ok:         adminResp.OK,
-								KickReason: adminResp.Error,
-							},
-						},
-					}
-					ackBytes, _ := proto.Marshal(ackFrame)
-					c.Write(ctx, websocket.MessageBinary, ackBytes)
-				}
 			}
 		}
 		}
