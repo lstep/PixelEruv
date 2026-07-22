@@ -73,6 +73,7 @@ type session struct {
 	adminSub  *nats.Subscription
 	recSub    *nats.Subscription
 	recActSub *nats.Subscription
+	pingSub   *nats.Subscription
 	closeOnce sync.Once
 }
 
@@ -420,6 +421,23 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		sess.chatSub = chatSub
 	}
 
+	// Subscribe to per-session ping inbox. Worldsim publishes a
+	// fully-marshaled ServerFrame (PlayerPingFrame) here when another player
+	// pings this client. Raw bytes pass through unchanged — same pattern as
+	// chat_inbox.
+	pingSub, err := s.nc.Subscribe(fmt.Sprintf("client.%s.ping_inbox", clientID), func(m *nats.Msg) {
+		writeCtx, cancel := context.WithTimeout(authCtx, 5*time.Second)
+		defer cancel()
+		if err := c.Write(writeCtx, websocket.MessageBinary, m.Data); err != nil {
+			s.logger.Warn("ws write ping_inbox", "client", clientID, "err", err)
+		}
+	})
+	if err != nil {
+		s.logger.Warn("nats sub ping_inbox", "client", clientID, "err", err)
+	} else {
+		sess.pingSub = pingSub
+	}
+
 	s.sessions.Store(clientID, sess)
 	defer func() {
 		sess.sub.Unsubscribe()
@@ -437,6 +455,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		}
 		if sess.recActSub != nil {
 			sess.recActSub.Unsubscribe()
+		}
+		if sess.pingSub != nil {
+			sess.pingSub.Unsubscribe()
 		}
 		s.sessions.Delete(clientID)
 		s.publishLifecycle(authCtx, "client.disconnected", clientID, sub)
@@ -939,6 +960,27 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				pspan.RecordError(err)
 				pspan.SetStatus(codes.Error, "nats publish kick")
 				s.logger.Warn("kick publish failed", "client", clientID, "err", err)
+			}
+			pspan.End()
+		case *pb.ClientFrame_PingPlayer:
+			// Player ping: forward to worldsim.client.ping. Worldsim resolves
+			// entity_id → client_id, drops the ping if the target is in DND
+			// mode, and otherwise publishes a PlayerPingFrame to the target's
+			// ping_inbox. Fire-and-forget — the target's client plays a sound
+			// on receipt.
+			pctx, pspan := s.tracer.Start(ctx, "pusher.nats.publish.ping")
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.String("ping.entity_id", p.PingPlayer.GetEntityId()))
+			pingPayload := map[string]string{
+				"entity_id":       p.PingPlayer.GetEntityId(),
+				"sender_client_id": clientID,
+			}
+			pingBytes, _ := json.Marshal(pingPayload)
+			pingMsg := &nats.Msg{Subject: "worldsim.client.ping", Data: pingBytes}
+			otelinternal.Inject(pctx, pingMsg)
+			if err := s.nc.PublishMsg(pingMsg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish ping")
+				s.logger.Warn("ping publish failed", "client", clientID, "err", err)
 			}
 			pspan.End()
 		}

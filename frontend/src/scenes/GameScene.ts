@@ -508,6 +508,11 @@ export class GameScene extends Phaser.Scene {
   // soft warm pool at its feet (2-tile radius). Players in the local
   // player's proximity chat group get a brighter highlight.
   private showProximityGlow = false;
+  // Persistent HTMLAudioElement for ping notifications. Pre-created and
+  // unlocked on the first user click so it can play even when the tab is in
+  // the background (new Audio() created on-the-fly gets blocked by autoplay
+  // policy in hidden tabs). Reused for each ping by resetting currentTime.
+  private pingAudio: HTMLAudioElement | null = null;
   // Entity IDs in the local player's current proximity chat group, computed
   // each frame via connected-components on feet-distance ≤ 2 tiles (matching
   // the server's runProximityClustering). Used to highlight group members.
@@ -1048,34 +1053,38 @@ export class GameScene extends Phaser.Scene {
     // centered message. Visible from the start (we boot in "connecting"),
     // hidden once the WS reaches "open", and reshown on any drop. While it
     // is visible the scene is paused so local prediction doesn't move the
-    // avatar against a dead server.
-    const dim = this.add
-      .rectangle(0, 0, this.scale.width, this.scale.height, 0x404040, 0.85)
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(9998);
-    const msg = this.add
-      .text(this.scale.width / 2, this.scale.height / 2, "Server not available", {
-        fontFamily: "monospace",
-        fontSize: "32px",
-        color: "#ff0000",
-        stroke: "#000000",
-        strokeThickness: 4,
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(9999);
-    this.disconnectOverlay = this.add
-      .container(0, 0, [dim, msg])
-      .setScrollFactor(0)
-      .setDepth(9999);
-    // The overlay starts visible (we boot in "connecting"), so mirror that on
-    // the DOM: dim and disable floating DOM UI until the WS reaches "open".
-    document.body.classList.add("server-unavailable");
+    // avatar against a dead server. Created once (isFirstCreate) and reused
+    // across scene restarts (map transitions) — without this guard, each
+    // restart would leak orphaned dim+msg objects in the display list.
+    if (isFirstCreate) {
+      const dim = this.add
+        .rectangle(0, 0, this.scale.width, this.scale.height, 0x404040, 0.85)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(9998);
+      const msg = this.add
+        .text(this.scale.width / 2, this.scale.height / 2, "Server not available", {
+          fontFamily: "monospace",
+          fontSize: "32px",
+          color: "#ff0000",
+          stroke: "#000000",
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setScrollFactor(0)
+        .setDepth(9999);
+      this.disconnectOverlay = this.add
+        .container(0, 0, [dim, msg])
+        .setScrollFactor(0)
+        .setDepth(9999);
+      // The overlay starts visible (we boot in "connecting"), so mirror that on
+      // the DOM: dim and disable floating DOM UI until the WS reaches "open".
+      document.body.classList.add("server-unavailable");
+    }
     // On restart (map transition), the ws is already connected — hide the
     // overlay immediately since onStateChange won't fire (connect is skipped).
     if (!isFirstCreate && this.ws?.getState() === "open") {
-      this.disconnectOverlay.setVisible(false);
+      this.disconnectOverlay?.setVisible(false);
       document.body.classList.remove("server-unavailable");
     }
     // Day/night tint overlay — cosmetic, client-side, follows the local
@@ -1250,6 +1259,37 @@ export class GameScene extends Phaser.Scene {
           msg.setText(`You have been kicked from this world\n${reason}`);
         }
       },
+      onPlayerPing: (msg) => {
+        // Play a notification sound so the player knows someone wants their
+        // attention (e.g. if AFK). DND targets never receive this — worldsim
+        // drops the ping server-side.
+        //
+        // Uses the persistent pingAudio element (pre-unlocked on first click)
+        // so playback works even in background tabs. Phaser's Web Audio
+        // manager suspends the AudioContext when the tab is hidden; a raw
+        // HTMLAudioElement that was primed during a user gesture does not
+        // have this limitation. The sound is replayed 3 times for a stronger
+        // "ping ping ping" effect. When the tab is hidden, also show a
+        // browser Notification as a visual fallback (Chrome freezes deeply
+        // backgrounded tabs after ~5 min, killing all JS — the Notification
+        // is the only signal that reaches the user in that state).
+        const playPing = () => {
+          if (this.pingAudio) {
+            this.pingAudio.currentTime = 0;
+            this.pingAudio.play().catch(() => {});
+          }
+        };
+        playPing();
+        setTimeout(playPing, 300);
+        setTimeout(playPing, 600);
+        if (document.hidden && Notification && Notification.permission === "granted") {
+          const name = msg.displayName || "Someone";
+          new Notification(`${name} pinged you`, {
+            body: "Click to return to the world",
+            tag: "player-ping",
+          });
+        }
+      },
       onError: (_code, message) => {
         const msg = this.disconnectOverlay?.getAt(1) as Phaser.GameObjects.Text | undefined;
         if (msg) {
@@ -1266,6 +1306,28 @@ export class GameScene extends Phaser.Scene {
         }
       },
     });
+
+    // Pre-create the ping notification audio element and unlock it on the
+    // first user click. Browsers block audio autoplay in background tabs for
+    // elements that weren't "primed" during a user gesture. By creating the
+    // element once and calling play() during a click, the element stays
+    // unlocked and can be replayed later even when the tab is hidden. Also
+    // request Notification permission so we can show a visual fallback when
+    // the tab is in the background.
+    this.pingAudio = new Audio("/assets/sounds/clic.wav");
+    this.pingAudio.preload = "auto";
+    this.pingAudio.volume = 1.0;
+    document.addEventListener("click", () => {
+      if (this.pingAudio) {
+        this.pingAudio.play().then(() => {
+          this.pingAudio!.pause();
+          this.pingAudio!.currentTime = 0;
+        }).catch(() => {});
+      }
+      if (Notification && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    }, { once: true });
     } // end isFirstCreate
 
     // Process buffered spawns from a map transition. During the transition,
@@ -2427,6 +2489,10 @@ export class GameScene extends Phaser.Scene {
     };
 
     makeButton("Invite");
+    makeActionButton("Ping", () => {
+      this.ws?.sendPing(entityId);
+      this.closeDropdown();
+    });
     if (isAdmin) {
       makeActionButton("Kick", () => {
         this.ws?.sendKick(entityId, "Kicked by an admin");

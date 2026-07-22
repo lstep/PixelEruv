@@ -1000,6 +1000,14 @@ func (s *Simulator) subscribe() error {
 		return fmt.Errorf("subscribe worldsim.admin.set_player_options: %w", err)
 	}
 
+	// Player ping handler (worldsim.client.ping): resolves the target
+	// entity_id → client_id, drops the ping if the target is in DND mode,
+	// and otherwise publishes a PlayerPingFrame to the target's ping_inbox.
+	// See documentation/plans/2026-07-22-player-ping-design.md.
+	if err := s.subscribeClientPing(); err != nil {
+		return fmt.Errorf("subscribe worldsim.client.ping: %w", err)
+	}
+
 	// Announce readiness so extensions can register against a live subscriber
 	// instead of racing their initial publish (NATS Core drops publishes with
 	// no subscribers). Flush guarantees the broadcast is on the wire before
