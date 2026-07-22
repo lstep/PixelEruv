@@ -194,6 +194,15 @@ func (s *Simulator) subscribeClientBan() error {
 
 		if kickedClientID != "" {
 			s.despawnClient(ctx, kickedClientID)
+			// Publish force_close so the pusher closes the banned player's
+			// WebSocket and the browser shows the "kicked" overlay. Without
+			// this, the despawned player's window stays open as a frozen
+			// zombie (same issue the kick fix addressed).
+			banReason := req.Reason
+			if banReason == "" {
+				banReason = "Banned by an admin"
+			}
+			s.publishForceClose(ctx, kickedClientID, banReason)
 		}
 
 		audit.Emit(s.nc, "player.banned", audit.SeverityWarn,

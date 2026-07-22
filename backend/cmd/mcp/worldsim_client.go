@@ -241,11 +241,16 @@ func (w *WorldsimClient) Teleport(ctx context.Context, entityID, mapID, targetEn
 	return &AdminResponse{OK: true}, nil
 }
 
-func (w *WorldsimClient) Kick(ctx context.Context, clientID, reason string) (*AdminResponse, error) {
+func (w *WorldsimClient) Kick(ctx context.Context, clientID, entityID, reason string) (*AdminResponse, error) {
 	payload := map[string]any{
-		"client_id": clientID,
-		"reason":    reason,
-		"actor":     w.adminActor(),
+		"reason": reason,
+		"actor":  w.adminActor(),
+	}
+	if clientID != "" {
+		payload["client_id"] = clientID
+	}
+	if entityID != "" {
+		payload["entity_id"] = entityID
 	}
 	data, err := w.requestReply(ctx, "worldsim.client.kick", payload)
 	if err != nil {

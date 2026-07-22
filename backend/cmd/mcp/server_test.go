@@ -90,7 +90,7 @@ func TestWorldsimClient_AdminActions(t *testing.T) {
 		t.Errorf("SetStatus response: %+v, want OK", resp)
 	}
 
-	resp, err = w.Kick(context.Background(), "c_a", "test")
+	resp, err = w.Kick(context.Background(), "c_a", "", "test")
 	if err != nil {
 		t.Fatalf("Kick: %v", err)
 	}
