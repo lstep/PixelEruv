@@ -207,3 +207,66 @@ func TestDespawnClient_UnknownClient(t *testing.T) {
 		t.Fatal("despawn of unknown client should not mutate state")
 	}
 }
+
+// makeRaceEntityOnMap is makeRaceEntity with an explicit map ID, used for
+// cross-map reconnect-race tests.
+func makeRaceEntityOnMap(entityID, clientID, mapID string, x, y float32) *Entity {
+	e := makeRaceEntity(entityID, clientID, x, y)
+	e.Position.MapId = mapID
+	return e
+}
+
+// zonePresent reports whether a zone with the given ID is in the registry.
+func zonePresent(zr *ZoneRegistry, zoneID string) bool {
+	for _, z := range zr.zones {
+		if z.ID == zoneID {
+			return true
+		}
+	}
+	return false
+}
+
+// TestProvisionClient_CrossMapReconnectRace verifies that when a user
+// reconnects to a DIFFERENT map than their previous session, the stale
+// entity's mobile zone is removed from the OLD map's registry (not the new
+// map's). Without the fix, provisionClient looked up s.zones[mapName] (the
+// new map) for the stale cleanup, so the old zone was never removed and a
+// duplicate "prox-<entityID>" lingered in the old map's registry.
+func TestProvisionClient_CrossMapReconnectRace(t *testing.T) {
+	sim := newRaceTestSim(t)
+	// Add a second map so the reconnect can target a different map.
+	sim.zones["test-map-2"] = NewZoneRegistry(nil, 20, 20)
+
+	const entityID = "e_user"
+	const oldClientID = "c_old"
+	const newClientID = "c_new"
+	const oldMap = "test-map"
+	const newMap = "test-map-2"
+
+	// Step 1: old session's entity on test-map.
+	eOld := makeRaceEntityOnMap(entityID, oldClientID, oldMap, 5, 5)
+	insertEntity(sim, eOld)
+	if !zonePresent(sim.zones[oldMap], "prox-"+entityID) {
+		t.Fatal("setup: old mobile zone should be in old map registry")
+	}
+
+	// Step 2: new session reconnects on a different map. Exercise the real
+	// cleanup path (removeStaleMobileZone) + overwrite, then register the
+	// new entity's zone on the new map.
+	eNew := makeRaceEntityOnMap(entityID, newClientID, newMap, 7, 7)
+	sim.removeStaleMobileZone(entityID)
+	insertEntity(sim, eNew)
+
+	// The old map's registry must no longer hold the stale prox zone.
+	if zonePresent(sim.zones[oldMap], "prox-"+entityID) {
+		t.Fatal("RACE: stale mobile zone was not removed from the old map's registry on cross-map reconnect")
+	}
+	// The new map's registry must hold the new entity's prox zone.
+	if !zonePresent(sim.zones[newMap], "prox-"+entityID) {
+		t.Fatal("RACE: new mobile zone missing from the new map's registry")
+	}
+	// The new entity must be the current one.
+	if sim.entities[entityID] != eNew {
+		t.Fatal("RACE: s.entities[entityID] is not the new entity")
+	}
+}

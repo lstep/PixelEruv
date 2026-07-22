@@ -1197,6 +1197,20 @@ type provisionResult struct {
 	mapError      string
 }
 
+// removeStaleMobileZone removes the mobile proximity zone of any existing
+// entity with the given entityID from that entity's map registry. Used by
+// provisionClient during reconnect-race cleanup, before overwriting the
+// stale entity with a fresh one. Must be called with s.mu held.
+func (s *Simulator) removeStaleMobileZone(entityID string) {
+	old, exists := s.entities[entityID]
+	if !exists || old.mobileZone == nil || old.Position == nil {
+		return
+	}
+	if oldZR := s.zones[old.Position.MapId]; oldZR != nil {
+		oldZR.RemoveZone(old.mobileZone.ID)
+	}
+}
+
 // provisionClient creates a player avatar entity for the given client.
 // If the user has a record in PocketBase (by user_id), their persistent
 // entity_id and last position are restored. Otherwise a new user record
@@ -1354,12 +1368,10 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 	// its mobile zone from the registry before adding the new one. Without
 	// this, two zones with the same ID ("prox-<entityID>") coexist, and
 	// RemoveZone (called later by the old despawn) would remove the first
-	// match — potentially the new entity's zone.
-	if old, exists := s.entities[entityID]; exists && old.mobileZone != nil {
-		if oldZR := s.zones[mapName]; oldZR != nil {
-			oldZR.RemoveZone(old.mobileZone.ID)
-		}
-	}
+	// match — potentially the new entity's zone. The cleanup must target the
+	// OLD entity's map, not the new one, since the stale zone was registered
+	// there.
+	s.removeStaleMobileZone(entityID)
 	if zr := s.zones[mapName]; zr != nil {
 		zr.AddZone(e.mobileZone)
 	}
