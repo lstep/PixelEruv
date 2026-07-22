@@ -1349,6 +1349,17 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 		Radius:   proximityRadius,
 		Mobility: "mobile",
 	}
+	// If a stale entity with the same entityID still exists (reconnect race:
+	// client.connected arrived before the old client.disconnected), remove
+	// its mobile zone from the registry before adding the new one. Without
+	// this, two zones with the same ID ("prox-<entityID>") coexist, and
+	// RemoveZone (called later by the old despawn) would remove the first
+	// match — potentially the new entity's zone.
+	if old, exists := s.entities[entityID]; exists && old.mobileZone != nil {
+		if oldZR := s.zones[mapName]; oldZR != nil {
+			oldZR.RemoveZone(old.mobileZone.ID)
+		}
+	}
 	if zr := s.zones[mapName]; zr != nil {
 		zr.AddZone(e.mobileZone)
 	}
@@ -1402,6 +1413,32 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 	if e.currentProximityGroup != "" {
 		s.publishProximityEvent(ctx, "proximity.leave", e.ID, clientIDForEvent, e.currentProximityGroup, mapIDForEvent, nil)
 	}
+	// Detect the reconnect race: if a newer entity with the same entityID
+	// has already been provisioned (client.connected arrived before this
+	// client.disconnected), s.entities[e.ID] points to the NEW entity, not
+	// this stale one. In that case, only clean up the old session — do NOT
+	// delete the new entity, remove its mobile zone, or queue a
+	// DestroyEntity, as that would silently break the reconnected player
+	// (no replication, no proximity A/V, no trigger visual feedback).
+	// Compare pointers to distinguish "same entity" from "replaced by newer".
+	current, stillExists := s.entities[e.ID]
+	replacedByNewer := stillExists && current != e
+
+	// Always remove the old session from the client map.
+	delete(s.clients, clientID)
+
+	if replacedByNewer {
+		s.logger.InfoContext(ctx, "despawn skipped — entity replaced by newer session",
+			"entity", e.ID, "old_client", clientID,
+			"new_client", s.entityIDToClient[e.ID])
+		s.mu.Unlock()
+		audit.Emit(s.nc, "player.despawned", audit.SeverityInfo,
+			audit.Actor{EntityID: e.ID, ClientID: clientID},
+			audit.Details{"replaced_by_newer": true},
+			"")
+		return
+	}
+
 	// Remove the player's mobile proximity zone from the registry.
 	if e.mobileZone != nil && e.Position != nil {
 		if zr := s.zones[e.Position.MapId]; zr != nil {
@@ -1409,7 +1446,6 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 		}
 	}
 	delete(s.entities, e.ID)
-	delete(s.clients, clientID)
 	delete(s.entityIDToClient, e.ID)
 	delete(s.lastSavedPos, e.ID)
 	// Queue a DestroyEntity so the next replication tick notifies all other
