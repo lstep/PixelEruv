@@ -120,6 +120,23 @@ export async function confirmVerification(token: string): Promise<void> {
   await pb.collection("users").confirmVerification(token);
 }
 
+// Request a password reset email. PocketBase sends an email with a reset
+// token to the given address (if it exists). The email links to
+// /reset-password?token=... via the mailer hook in worldsim main.go.
+export async function requestPasswordReset(email: string): Promise<void> {
+  await pb.collection("users").requestPasswordReset(email);
+}
+
+// Confirm a password reset from the redirect URL. PocketBase redirects to
+// /reset-password?token=... — this method sets the new password.
+export async function confirmPasswordReset(
+  token: string,
+  password: string,
+  passwordConfirm: string,
+): Promise<void> {
+  await pb.collection("users").confirmPasswordReset(token, password, passwordConfirm);
+}
+
 // Clear stored credentials without redirecting. Used when the server
 // rejects a stale token (e.g. PB DB was reset) — the WS client clears
 // the token so the next reconnect falls back to guest mode.
