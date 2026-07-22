@@ -130,6 +130,27 @@ func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID,
 	// Reset spawnedTo so the entity re-spawns for all clients on the new map.
 	e.spawnedTo = make(map[string]bool)
 
+	// Clear the transitioning client's spawnedTo entry on every other entity.
+	// The client destroyed all its avatars on the map transition (frontend
+	// handleMapTransition), so it needs fresh SpawnEntity frames for all
+	// entities on the new map — not just this one. Without this, entities the
+	// client previously saw on a prior visit to the target map (props, other
+	// players) keep spawnedTo[clientID]=true, so the replication loop sends
+	// Updates instead of Spawns, and the client (which has no avatar for them)
+	// silently drops the updates. Result: missing entities/players on revisit.
+	transitionClientID := ""
+	if e.NetworkSession != nil {
+		transitionClientID = e.NetworkSession.ClientID
+	}
+	if transitionClientID != "" {
+		for _, other := range in.Entities {
+			if other == e {
+				continue
+			}
+			delete(other.spawnedTo, transitionClientID)
+		}
+	}
+
 	// Re-add mobile zone to the new map's zone registry.
 	if e.mobileZone != nil {
 		if zr := in.Zones[targetMap]; zr != nil {
@@ -143,10 +164,7 @@ func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID,
 	// map will get a SpawnEntity via the normal replication loop.
 	*in.DestroyedEntities = append(*in.DestroyedEntities, entityID)
 
-	clientID := ""
-	if e.NetworkSession != nil {
-		clientID = e.NetworkSession.ClientID
-	}
+	clientID := transitionClientID
 	mapOpts := ""
 	if md := in.Maps[targetMap]; md != nil {
 		mapOpts = string(md.Options)
