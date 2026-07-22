@@ -52,6 +52,17 @@ export class TopMenu {
   // status (e.g. on page reload after restoring from PocketBase) without
   // re-firing setStatusHandler (which would echo a SetStatusFrame back).
   private applyStatusFn: ((value: number) => void) | null = null;
+  // localAfk tracks whether the local player is currently AFK (overlay on).
+  // setLocalAfk updates the AFK badge visibility and A/V button state. While
+  // AFK, mic/cam/screen buttons are disabled (same visual feedback as DND),
+  // but the manual status selector stays at its current value — AFK is an
+  // overlay, not a replacement.
+  private localAfk = false;
+  private afkBadge: HTMLDivElement | null = null;
+  // currentStatus is the last status applied via applyStatus (0/1/2). Used by
+  // setLocalAfk to re-apply the A/V button disable logic when localAfk changes
+  // without needing to re-derive the status from the DOM.
+  private currentStatus = 0;
   private playerOptions: string = "";
   private authStoreUnsub: (() => void) | null = null;
   private boundDocClick: () => void;
@@ -423,16 +434,15 @@ export class TopMenu {
       { label: "Busy", value: 1, color: "#eab308" },
       { label: "DND", value: 2, color: "#ef4444" },
     ];
-    let currentStatus = 0;
     const statusButtons: HTMLButtonElement[] = [];
     const applyStatus = (value: number) => {
-      currentStatus = value;
+      this.currentStatus = value;
       for (const sb of statusButtons) {
         const v = Number(sb.dataset.value);
         sb.style.outline = v === value ? "2px solid #fff" : "none";
       }
-      // Disable A/V controls while DND; re-enable otherwise.
-      const disabled = value === 2;
+      // Disable A/V controls while DND or AFK; re-enable otherwise.
+      const disabled = value === 2 || this.localAfk;
       this.micBtn.disabled = disabled;
       this.camBtn.disabled = disabled;
       this.screenBtn.disabled = disabled;
@@ -459,6 +469,16 @@ export class TopMenu {
       statusButtons.push(btn);
     }
     applyStatus(0);
+
+    // AFK badge — shown when the local player is AFK (overlay active).
+    // Informational: tells the user they appear AFK to others. Hidden by
+    // default; setLocalAfk toggles visibility.
+    this.afkBadge = document.createElement("div");
+    this.afkBadge.textContent = "AFK";
+    this.afkBadge.style.cssText =
+      "display:none;margin-top:6px;padding:4px 10px;font-size:12px;font-weight:600;" +
+      "background:#6b7280;color:#fff;border-radius:20px;";
+    this.dropdown.appendChild(this.afkBadge);
 
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -797,6 +817,21 @@ export class TopMenu {
   // reload, where the server restored the persisted status from PocketBase.
   syncStatusFromServer(value: number): void {
     this.applyStatusFn?.(value);
+  }
+
+  // setLocalAfk reflects the local player's AFK overlay state in the dropdown
+  // UI: toggles the AFK badge visibility and re-applies the A/V button
+  // disable logic (buttons disabled while AFK, same as DND). Called by
+  // GameScene on AFK transitions from the AfkDetector, and on spawn /
+  // DisplayName update for defense-in-depth sync with the server-stamped
+  // value. Does NOT re-fire setStatusHandler — AFK is an overlay, not a
+  // status change.
+  setLocalAfk(afk: boolean): void {
+    this.localAfk = afk;
+    if (this.afkBadge) this.afkBadge.style.display = afk ? "block" : "none";
+    // Re-apply the current status so the A/V button disable logic picks up
+    // the new localAfk value (buttons disabled while DND or AFK).
+    this.applyStatusFn?.(this.currentStatus);
   }
 
   // setPlayerOptions updates the stored player options from the server's auth

@@ -3,6 +3,7 @@ import { fromBinary } from "@bufbuild/protobuf";
 import { AppearanceSchema, DisplayNameSchema, EntityStateSchema, LightEmitterSchema } from "../proto/components_pb";
 import { WsClient, decodePosition, ReplicationBatchView, ConnectionState, AvailableActionView } from "../net/WsClient";
 import { AvClient } from "../net/AvClient";
+import { AfkDetector } from "../net/AfkDetector";
 import { VideoBar } from "../ui/VideoBar";
 import { ScreenShareOverlay } from "../ui/ScreenShareOverlay";
 import { DayNightOverlay } from "../ui/DayNightOverlay";
@@ -423,6 +424,7 @@ export class GameScene extends Phaser.Scene {
   private avatars: Map<string, Avatar> = new Map();
   private myEntityId: string | null = null;
   private avClient: AvClient | null = null;
+  private afkDetector: AfkDetector | null = null;
   private videoBar: VideoBar | null = null;
   private screenShareOverlay: ScreenShareOverlay | null = null;
   // Display names by entity ID, populated from DisplayName component updates.
@@ -438,6 +440,10 @@ export class GameScene extends Phaser.Scene {
   // Presence status by entity ID, from the DisplayName component's status
   // field (0=Available, 1=Busy, 2=DND). Drives the nametag pill color.
   private statusByEntity = new Map<string, number>();
+  // AFK overlay flag by entity ID, from the DisplayName component's afk
+  // field. When true, the nametag renders dimmed with an AFK indicator. The
+  // manual status (statusByEntity) is preserved underneath.
+  private afkByEntity = new Map<string, boolean>();
   // Admin-only info by entity ID (IP, guest status). Populated from
   // AdminInfoFrame, only received by admin clients. Used to render the IP
   // below the name in the name tag pillbox for admin viewers.
@@ -1023,6 +1029,20 @@ export class GameScene extends Phaser.Scene {
       () => this.ws?.isAdmin() ?? false,
       () => this.avClient?.currentRoomName() ?? null,
     );
+    // AFK detector — monitors user activity + tab visibility and drives the
+    // AFK overlay state (SetAfkFrame) and tab-visibility A/V auto-mute. Has
+    // a meeting exemption (no AFK while in a room with other participants).
+    // See documentation/plans/2026-07-22-afk-state-design.md.
+    this.afkDetector = new AfkDetector(this.ws!, {
+      onAfkChange: (afk) => {
+        this.avClient?.setAfkMuted(afk);
+        topMenu?.setLocalAfk(afk);
+      },
+      onTabVisibilityChange: (hidden) => {
+        this.avClient?.setTabHidden(hidden);
+      },
+      isInMeeting: () => this.avClient?.isInMeeting() ?? false,
+    });
     const chatPanel = this.game.registry.get("chatPanel") as ChatPanel | undefined;
     // "Server not available" overlay — a full-screen gray dim plus a red
     // centered message. Visible from the start (we boot in "connecting"),
@@ -1136,6 +1156,7 @@ export class GameScene extends Phaser.Scene {
         this.isGuestByEntity.clear();
         this.isAdminByEntity.clear();
         this.statusByEntity.clear();
+        this.afkByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         this.closeInteractionPopup();
@@ -1281,6 +1302,8 @@ export class GameScene extends Phaser.Scene {
 
     // Clean up A/V video bar + LiveKit room on scene shutdown.
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      this.afkDetector?.destroy();
+      this.afkDetector = null;
       this.videoBar?.destroy();
       this.screenShareOverlay?.destroy();
       this.avClient?.close();
@@ -1657,6 +1680,7 @@ export class GameScene extends Phaser.Scene {
         this.isGuestByEntity.clear();
         this.isAdminByEntity.clear();
         this.statusByEntity.clear();
+        this.afkByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         // Restart the scene to reload the map.
@@ -1789,6 +1813,7 @@ export class GameScene extends Phaser.Scene {
       let isGuest = false;
       let isAdmin = false;
       let status = 0;
+      let afk = false;
       let lightIntensity = 0;
       let lightColor = 0;
       let lightRadius = 0;
@@ -1815,6 +1840,7 @@ export class GameScene extends Phaser.Scene {
           isGuest = dn.isGuest;
           isAdmin = dn.isAdmin;
           status = dn.status;
+          afk = dn.afk;
         } else if (comp.componentId === 5) {
           // LightEmitter component — intensity/color/radius for the lighting
           // system. intensity > 0 marks the entity as an active light.
@@ -1921,7 +1947,8 @@ export class GameScene extends Phaser.Scene {
         this.isGuestByEntity.set(spawn.entityId, isGuest);
         this.isAdminByEntity.set(spawn.entityId, isAdmin);
         this.statusByEntity.set(spawn.entityId, status);
-        this.createNameTag(spawn.entityId, displayName, isGuest, isAdmin, status);
+        this.afkByEntity.set(spawn.entityId, afk);
+        this.createNameTag(spawn.entityId, displayName, isGuest, isAdmin, status, afk);
       }
       // Start idle animation immediately.
       sprite.play(`${charKey}_idle_down`, true);
@@ -1936,8 +1963,10 @@ export class GameScene extends Phaser.Scene {
         // default) and AvClient wouldn't know about DND until a change.
         if (displayName) {
           this.avClient?.setStatus(status);
+          this.avClient?.setAfkMuted(afk);
           const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
           tm?.syncStatusFromServer(status);
+          tm?.setLocalAfk(afk);
         }
       }
       console.log(`spawned ${spawn.entityId} at (${x}, ${y})`);
@@ -1997,17 +2026,20 @@ export class GameScene extends Phaser.Scene {
           this.isGuestByEntity.set(upd.entityId, dn.isGuest);
           this.isAdminByEntity.set(upd.entityId, dn.isAdmin);
           this.statusByEntity.set(upd.entityId, dn.status);
+          this.afkByEntity.set(upd.entityId, dn.afk);
           // Recreate the tag because the pillbox width depends on text width.
           avatar.nameTag?.destroy();
-          this.createNameTag(upd.entityId, dn.name, dn.isGuest, dn.isAdmin, dn.status);
+          this.createNameTag(upd.entityId, dn.name, dn.isGuest, dn.isAdmin, dn.status, dn.afk);
           // Keep the local player's AvClient DND flag and TopMenu status
           // selector in sync with the server-stamped status (defense-in-depth
           // client-side enforcement + UI reflection without echoing a
           // SetStatusFrame back to the server).
           if (upd.entityId === this.myEntityId) {
             this.avClient?.setStatus(dn.status);
+            this.avClient?.setAfkMuted(dn.afk);
             const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
             tm?.syncStatusFromServer(dn.status);
+            tm?.setLocalAfk(dn.afk);
           }
         }
       } else if (upd.componentId === 3) {
@@ -2080,6 +2112,7 @@ export class GameScene extends Phaser.Scene {
         this.isGuestByEntity.delete(dest.entityId);
         this.isAdminByEntity.delete(dest.entityId);
         this.statusByEntity.delete(dest.entityId);
+        this.afkByEntity.delete(dest.entityId);
         this.adminInfoByEntity.delete(dest.entityId);
         console.log(`destroyed ${dest.entityId}`);
       }
@@ -2103,7 +2136,7 @@ export class GameScene extends Phaser.Scene {
   // inverted triangle at the bottom points down at the avatar. The container
   // is counter-scaled by 1/zoom each frame (see update) so it stays a
   // constant screen size. Hidden for the local player's own avatar.
-  private createNameTag(entityId: string, name: string, isGuest: boolean, isAdmin: boolean, status: number): void {
+  private createNameTag(entityId: string, name: string, isGuest: boolean, isAdmin: boolean, status: number, afk: boolean): void {
     const avatar = this.avatars.get(entityId);
     if (!avatar) return;
 
@@ -2157,8 +2190,24 @@ export class GameScene extends Phaser.Scene {
       guestBadge.setOrigin(0, 0.5);
     }
 
+    // --- AFK badge (shown when the AFK overlay is active) ---
+    let afkBadge: Phaser.GameObjects.Text | null = null;
+    if (afk) {
+      afkBadge = this.add.text(0, 0, "AFK", {
+        fontFamily: "Nunito, sans-serif",
+        fontSize: "9px",
+        color: "#f8fafc",
+        fontStyle: "bold",
+        backgroundColor: "#6b7280",
+        padding: { left: 4, right: 4, top: 1, bottom: 1 },
+      });
+      afkBadge.setOrigin(0, 0.5);
+    }
+
     // --- Status pill (color reflects presence status; clickable, opens
-    // info dropdown). 0=Available (green), 1=Busy (yellow), 2=DND (red). ---
+    // info dropdown). 0=Available (green), 1=Busy (yellow), 2=DND (red).
+    // When AFK, the pill is dimmed (reduced alpha) to signal the overlay —
+    // the manual status color stays visible underneath. ---
     const pillColors = [
       { fill: 0x22c55e, stroke: 0x15803d }, // available
       { fill: 0xeab308, stroke: 0xa16207 }, // busy
@@ -2168,6 +2217,7 @@ export class GameScene extends Phaser.Scene {
     const pillRadius = 4;
     const statusPill = this.add.circle(0, 0, pillRadius, pc.fill);
     statusPill.setStrokeStyle(1, pc.stroke);
+    if (afk) statusPill.setAlpha(0.4);
     // Enlarge the hit area so the dot is easy to click despite counter-scaling.
     statusPill.setInteractive(
       new Phaser.Geom.Circle(0, 0, 14),
@@ -2189,8 +2239,9 @@ export class GameScene extends Phaser.Scene {
     const badgeGap = 6;
     const adminBadgeWidth = adminBadge ? adminBadge.width + badgeGap : 0;
     const guestBadgeWidth = guestBadge ? guestBadge.width + badgeGap : 0;
+    const afkBadgeWidth = afkBadge ? afkBadge.width + badgeGap : 0;
     const contentWidth =
-      pillRadius * 2 + gap + text.width + adminBadgeWidth + guestBadgeWidth;
+      pillRadius * 2 + gap + text.width + adminBadgeWidth + guestBadgeWidth + afkBadgeWidth;
     const pillBoxWidth = contentWidth + padding * 2;
 
     // (0, 0) in container space = tip of the speech-bubble tail, pointing
@@ -2228,11 +2279,16 @@ export class GameScene extends Phaser.Scene {
     }
     if (guestBadge) {
       guestBadge.setPosition(badgeX, bgCenterY);
+      badgeX += guestBadge.width + badgeGap;
+    }
+    if (afkBadge) {
+      afkBadge.setPosition(badgeX, bgCenterY);
     }
 
     const children: Phaser.GameObjects.GameObject[] = [bg, tail, statusPill, text];
     if (adminBadge) children.push(adminBadge);
     if (guestBadge) children.push(guestBadge);
+    if (afkBadge) children.push(afkBadge);
 
     container.add(children);
     container.setDepth(avatar.sprite.depth + 0.01);

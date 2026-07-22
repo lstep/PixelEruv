@@ -166,6 +166,14 @@ type Entity struct {
 	// (players.status) on every change and restored at provision time, so it
 	// survives page reloads. Guests have no PB record and are session-only.
 	Status uint32
+	// AFK is a transient overlay flag (not a 4th status value) set by the
+	// client's AfkDetector via SetAfkFrame. When true, the nametag renders
+	// dimmed with an AFK indicator and the client auto-mutes A/V tracks (but
+	// stays in the room, unlike DND). NOT persisted to PocketBase — resets to
+	// false on connect. The manual Status is preserved underneath; clearing
+	// AFK restores it. See
+	// documentation/plans/2026-07-22-afk-state-design.md.
+	AFK bool
 	// lastHeartbeat is the last time the pusher confirmed the WebSocket is
 	// alive (via client.<id>.heartbeat, published on each successful WS ping).
 	// The client reaper despawns entities whose heartbeat is older than
@@ -828,6 +836,29 @@ func (s *Simulator) subscribe() error {
 		s.handleSetStatus(ctx, clientID, &frame)
 	}); err != nil {
 		return fmt.Errorf("subscribe client.set_status: %w", err)
+	}
+
+	// client.<id>.set_afk — AFK overlay toggle (client-driven, transient).
+	// The client's AfkDetector sends this on AFK transitions. Worldsim sets
+	// Entity.AFK and marks dirtyName so the DisplayName component (which
+	// carries afk) is re-replicated. NOT persisted to PocketBase and NOT
+	// broadcast on worldsim.player_status (ext-av only cares about DND, not
+	// AFK — AFK mutes tracks client-side but does not eject from rooms).
+	// See documentation/plans/2026-07-22-afk-state-design.md.
+	if _, err := s.nc.Subscribe("client.*.set_afk", func(m *nats.Msg) {
+		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.handle_set_afk_sub")
+		defer span.End()
+		clientID := subjectClientID(m.Subject, "set_afk")
+		span.SetAttributes(attribute.String("client.id", clientID))
+		var frame pb.SetAfkFrame
+		if err := proto.Unmarshal(m.Data, &frame); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "unmarshal")
+			return
+		}
+		s.handleSetAfk(ctx, clientID, &frame)
+	}); err != nil {
+		return fmt.Errorf("subscribe client.set_afk: %w", err)
 	}
 
 	// Extension lifecycle subscriptions.
@@ -2105,6 +2136,42 @@ func (s *Simulator) handleSetStatus(ctx context.Context, clientID string, frame 
 		s.logger.WarnContext(ctx, "publish player_status", "err", err, "entity", entityID)
 		span.RecordError(err)
 	}
+}
+
+// handleSetAfk processes a client-sent SetAfkFrame: updates Entity.AFK (a
+// transient overlay flag, not a 4th status value) and marks dirtyName so the
+// DisplayName component (which carries afk) is re-replicated. NOT persisted to
+// PocketBase and NOT broadcast on worldsim.player_status — ext-av only cares
+// about DND, not AFK. AFK mutes A/V tracks client-side but does not eject from
+// rooms. The manual Status is preserved underneath; clearing AFK restores it.
+// See documentation/plans/2026-07-22-afk-state-design.md.
+func (s *Simulator) handleSetAfk(ctx context.Context, clientID string, frame *pb.SetAfkFrame) {
+	ctx, span := s.tracer.Start(ctx, "worldsim.handle_set_afk")
+	defer span.End()
+	afk := frame.GetAfk()
+	span.SetAttributes(attribute.String("client.id", clientID), attribute.Bool("afk", afk))
+
+	s.mu.Lock()
+	entity, ok := s.clients[clientID]
+	if !ok {
+		s.mu.Unlock()
+		span.SetStatus(codes.Error, "unknown client")
+		return
+	}
+	if entity.AFK == afk {
+		s.mu.Unlock()
+		return
+	}
+	entity.AFK = afk
+	entity.dirtyName = true // afk rides on the DisplayName component
+	entityID := entity.ID
+	displayName := entity.DisplayName
+	s.mu.Unlock()
+
+	audit.Emit(s.nc, "player.set_afk", audit.SeverityInfo,
+		audit.Actor{EntityID: entityID, ClientID: clientID, DisplayName: displayName},
+		audit.Details{"afk": afk},
+		"")
 }
 
 // handleSetSpriteBase processes a client-sent SetSpriteBaseFrame: validates

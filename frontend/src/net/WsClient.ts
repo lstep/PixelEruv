@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, RecordingRequestFrameSchema, KickFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -608,6 +608,27 @@ export class WsClient {
         create(SetStatusFrameSchema, { status, traceparent: traceparentFor() }),
       );
       const frame = create(ClientFrameSchema, { payload: { case: "setStatus", value: ss } });
+      this.ws.send(toBinary(ClientFrameSchema, frame));
+    } finally {
+      span.end();
+    }
+  }
+
+  // setAfk sends a SetAfkFrame to toggle the AFK overlay flag. The server
+  // updates Entity.AFK and replicates it via the DisplayName component (afk
+  // field). AFK is a transient overlay on top of the manual presence status —
+  // it does not replace it. Not persisted to PocketBase; resets to false on
+  // connect. Driven by the client's AfkDetector. Fire-and-forget.
+  setAfk(afk: boolean): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const span = tracer.startSpan("ws.send_set_afk", {
+      attributes: { "client.id": this.clientId ?? "", "afk": afk },
+    });
+    try {
+      const sa = context.with(trace.setSpan(context.active(), span), () =>
+        create(SetAfkFrameSchema, { afk, traceparent: traceparentFor() }),
+      );
+      const frame = create(ClientFrameSchema, { payload: { case: "setAfk", value: sa } });
       this.ws.send(toBinary(ClientFrameSchema, frame));
     } finally {
       span.end();
