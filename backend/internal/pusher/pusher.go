@@ -133,6 +133,32 @@ func New(wsAddr, natsURL, pbAPIURL string, logger *slog.Logger) (*Server, error)
 		return nil, fmt.Errorf("subscribe chat.broadcast: %w", err)
 	}
 
+	// client.*.force_close — worldsim publishes a marshaled ServerFrame
+	// (AuthResult with kicked=true) here when a player is kicked (admin
+	// kick or dual-connect displacement). The pusher forwards the raw
+	// bytes to the target session's WebSocket, then closes the connection
+	// so the browser shows the "kicked" overlay and stops reconnecting.
+	if _, err := nc.Subscribe("client.*.force_close", func(m *nats.Msg) {
+		clientID := subjectClientID(m.Subject, "force_close")
+		val, ok := srv.sessions.Load(clientID)
+		if !ok {
+			srv.logger.Warn("force_close: session not found", "client", clientID)
+			return
+		}
+		sess := val.(*session)
+		writeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := sess.conn.Write(writeCtx, websocket.MessageBinary, m.Data); err != nil {
+			srv.logger.Warn("force_close ws write", "client", clientID, "err", err)
+		}
+		sess.closeOnce.Do(func() {
+			sess.conn.Close(websocket.StatusPolicyViolation, "kicked")
+		})
+		srv.logger.Info("force_close: closed session", "client", clientID)
+	}); err != nil {
+		return nil, fmt.Errorf("subscribe client.*.force_close: %w", err)
+	}
+
 	return srv, nil
 }
 
@@ -433,7 +459,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	playerOptions := ""
 	var mapWarnings []*pb.MapWarning
 	mapError := ""
-	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip, deviceID); err != nil {
+	if reply, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip, deviceID, false); err != nil {
 		s.logger.Warn("client.connected request-reply, using default entity ID", "client", clientID, "err", err)
 	} else {
 		var ar pb.AuthResultFrame
@@ -441,8 +467,6 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			s.logger.Warn("client.connected reply unmarshal", "client", clientID, "err", err)
 		} else {
 			// If worldsim detected an active ban, reject the connection.
-			// Send the ban info to the browser so it can display the
-			// reason and expiry, then close the WebSocket.
 			if ar.Banned {
 				banResult := &pb.ServerFrame{
 					Payload: &pb.ServerFrame_AuthResult{
@@ -463,13 +487,89 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 					"")
 				return
 			}
-			entityID = ar.EntityId
-			isAdmin = ar.IsAdmin
-			mapID = ar.MapId
-			mapOptions = ar.MapOptions
-			playerOptions = ar.PlayerOptions
-			mapWarnings = ar.MapWarnings
-			mapError = ar.MapError
+			// If worldsim detected a dual connection (same logged-in user
+			// already active), forward already_connected to the browser so
+			// it can ask the user to confirm. If the user agrees, the
+			// browser sends a second AuthFrame with force=true; we re-publish
+			// client.connected with force=true and worldsim despawns the old
+			// session. If the user declines (WS closed or no force), return.
+			if ar.AlreadyConnected {
+				alreadyResult := &pb.ServerFrame{
+					Payload: &pb.ServerFrame_AuthResult{
+						AuthResult: &pb.AuthResultFrame{
+							Ok:              false,
+							AlreadyConnected: true,
+						},
+					},
+				}
+				alreadyBytes, _ := proto.Marshal(alreadyResult)
+				if err := c.Write(authCtx, websocket.MessageBinary, alreadyBytes); err != nil {
+					s.logger.Warn("already_connected ws write", "client", clientID, "err", err)
+					return
+				}
+				// Read the second AuthFrame — the browser either sends
+				// force=true or closes the WS.
+				typ2, data2, err := c.Read(authCtx)
+				if err != nil {
+					s.logger.Info("already_connected: user declined (ws closed)", "client", clientID, "err", err)
+					return
+				}
+				if typ2 != websocket.MessageBinary {
+					c.Close(websocket.StatusPolicyViolation, "expected binary")
+					return
+				}
+				var cf2 pb.ClientFrame
+				if err := proto.Unmarshal(data2, &cf2); err != nil {
+					c.Close(websocket.StatusPolicyViolation, "bad protobuf")
+					return
+				}
+				auth2 := cf2.GetAuth()
+				if auth2 == nil || !auth2.GetForce() {
+					s.logger.Info("already_connected: user declined (no force)", "client", clientID)
+					return
+				}
+				// Re-publish client.connected with force=true.
+				reply2, err := s.publishLifecycleRequest(authCtx, "client.connected", clientID, sub, ip, deviceID, true)
+				if err != nil {
+					s.logger.Warn("client.connected force request-reply failed", "client", clientID, "err", err)
+					return
+				}
+				var ar2 pb.AuthResultFrame
+				if err := proto.Unmarshal(reply2, &ar2); err != nil {
+					s.logger.Warn("client.connected force reply unmarshal", "client", clientID, "err", err)
+					return
+				}
+				if ar2.Banned {
+					banResult := &pb.ServerFrame{
+						Payload: &pb.ServerFrame_AuthResult{
+							AuthResult: &pb.AuthResultFrame{
+								Ok:        false,
+								BanReason: ar2.BanReason,
+								BanUntil:  ar2.BanUntil,
+							},
+						},
+					}
+					banBytes, _ := proto.Marshal(banResult)
+					c.Write(authCtx, websocket.MessageBinary, banBytes)
+					c.Close(websocket.StatusPolicyViolation, "banned")
+					return
+				}
+				entityID = ar2.EntityId
+				isAdmin = ar2.IsAdmin
+				mapID = ar2.MapId
+				mapOptions = ar2.MapOptions
+				playerOptions = ar2.PlayerOptions
+				mapWarnings = ar2.MapWarnings
+				mapError = ar2.MapError
+			} else {
+				entityID = ar.EntityId
+				isAdmin = ar.IsAdmin
+				mapID = ar.MapId
+				mapOptions = ar.MapOptions
+				playerOptions = ar.PlayerOptions
+				mapWarnings = ar.MapWarnings
+				mapError = ar.MapError
+			}
 		}
 	}
 
@@ -795,6 +895,43 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish recording", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_Kick:
+			// Admin kick: forward to worldsim.client.kick via request-reply.
+			// Worldsim resolves entity_id → client_id, despawns the entity,
+			// and publishes force_close so the pusher closes the target's
+			// WebSocket. Only admins should send this; worldsim does not
+			// re-verify admin status here (the pusher already verified the
+			// token). The reply is a JSON adminResponse.
+			kickPayload := map[string]string{
+				"entity_id": p.Kick.GetEntityId(),
+				"reason":    p.Kick.GetReason(),
+			}
+			kickBytes, _ := json.Marshal(kickPayload)
+			kickMsg := &nats.Msg{Subject: "worldsim.client.kick", Data: kickBytes}
+			otelinternal.Inject(ctx, kickMsg)
+			kickReply, err := s.nc.RequestMsg(kickMsg, 5*time.Second)
+			if err != nil {
+				s.logger.Warn("kick request-reply failed", "client", clientID, "err", err)
+			} else {
+				// Forward the raw JSON reply to the admin's browser as an
+				// AuthResult ack (reusing ok field for success/failure).
+				var adminResp struct {
+					OK    bool   `json:"ok"`
+					Error string `json:"error,omitempty"`
+				}
+				if err := json.Unmarshal(kickReply.Data, &adminResp); err == nil {
+					ackFrame := &pb.ServerFrame{
+						Payload: &pb.ServerFrame_AuthResult{
+							AuthResult: &pb.AuthResultFrame{
+								Ok:         adminResp.OK,
+								KickReason: adminResp.Error,
+							},
+						},
+					}
+					ackBytes, _ := proto.Marshal(ackFrame)
+					c.Write(ctx, websocket.MessageBinary, ackBytes)
+				}
+			}
 		}
 		}
 	}
@@ -850,8 +987,8 @@ func (s *Server) publishLifecycle(ctx context.Context, subject, clientID, sub st
 // and returns the reply data. Used for client.connected so worldsim can return
 // the provisioned entity ID. The client IP and device_id are carried so
 // worldsim can persist the IP and check the ban list.
-func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub, ip, deviceID string) ([]byte, error) {
-	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub, Ip: ip, DeviceId: deviceID})
+func (s *Server) publishLifecycleRequest(ctx context.Context, subject, clientID, sub, ip, deviceID string, force bool) ([]byte, error) {
+	msg, _ := proto.Marshal(&pb.AuthResultFrame{ClientId: clientID, Sub: sub, Ip: ip, DeviceId: deviceID, Force: force})
 	m := &nats.Msg{Subject: subject, Data: msg}
 	otelinternal.Inject(ctx, m)
 	reply, err := s.nc.RequestMsg(m, 5*time.Second)
@@ -865,6 +1002,18 @@ func generateClientID() string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return "c_" + hex.EncodeToString(b)
+}
+
+// subjectClientID extracts the client ID from a "client.<id>.<suffix>" NATS
+// subject. e.g. "client.c_abc.force_close" → "c_abc".
+func subjectClientID(subject, suffix string) string {
+	prefix := "client."
+	s := subject[len(prefix):]
+	end := len(s) - len("."+suffix)
+	if end < 0 {
+		return ""
+	}
+	return s[:end]
 }
 
 // clientIP extracts the client's IP address from the request. It prefers the
