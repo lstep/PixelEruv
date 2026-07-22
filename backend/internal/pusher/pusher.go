@@ -896,14 +896,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			pspan.End()
 		case *pb.ClientFrame_Kick:
-			// Admin kick: forward to worldsim.client.kick via request-reply.
+			// Admin kick: forward to worldsim.client.kick.
 			// Worldsim resolves entity_id → client_id, despawns the entity,
 			// and publishes force_close so the pusher closes the target's
-			// WebSocket. Fire-and-forget from the browser's perspective —
-			// the admin sees the target disappear via replication. We do
-			// NOT send an ack frame because reusing AuthResult would make
-			// the WsClient think it's a new auth result and overwrite the
-			// admin's own clientId/entityId.
+			// WebSocket. Fire-and-forget — the admin sees the target
+			// disappear via replication. We do NOT send an ack frame
+			// because reusing AuthResult would make the WsClient think
+			// it's a new auth result and overwrite the admin's own
+			// clientId/entityId.
 			kickPayload := map[string]string{
 				"entity_id": p.Kick.GetEntityId(),
 				"reason":    p.Kick.GetReason(),
@@ -911,8 +911,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			kickBytes, _ := json.Marshal(kickPayload)
 			kickMsg := &nats.Msg{Subject: "worldsim.client.kick", Data: kickBytes}
 			otelinternal.Inject(ctx, kickMsg)
-			if _, err := s.nc.RequestMsg(kickMsg, 5*time.Second); err != nil {
-				s.logger.Warn("kick request-reply failed", "client", clientID, "err", err)
+			if err := s.nc.PublishMsg(kickMsg); err != nil {
+				s.logger.Warn("kick publish failed", "client", clientID, "err", err)
 			}
 		}
 		}
