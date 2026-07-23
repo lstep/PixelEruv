@@ -1043,9 +1043,6 @@ export class GameScene extends Phaser.Scene {
         this.avClient?.setAfkMuted(afk);
         topMenu?.setLocalAfk(afk);
       },
-      onTabVisibilityChange: (hidden) => {
-        this.avClient?.setTabHidden(hidden);
-      },
       isInMeeting: () => this.avClient?.isInMeeting() ?? false,
     });
     const chatPanel = this.game.registry.get("chatPanel") as ChatPanel | undefined;
