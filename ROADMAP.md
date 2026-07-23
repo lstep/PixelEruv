@@ -1,5 +1,25 @@
 # Roadmap (future features)
 
+## MMORPG-Scale World Engine + Procedural World Generation
+
+**Design doc:** `documentation/plans/2026-07-23-mmorpg-scale-and-worldgen-design.md` (762 lines, research-backed, with file:line citations to current architecture).
+
+Two coupled initiatives: (A) scale the engine to huge maps with hundreds of concurrent players, and (B) procedurally generate those worlds (terrain, biomes, settlements, NPCs, history). Research covers AOI algorithms (nine-grid), snapshot interpolation + delta compression (Gaffer On Games, Overwatch), chunk streaming (Minecraft, Roblox, Tiled infinite maps), Eve Online sharding, and Dwarf Fortress world generation (phases, history simulation, emergent narrative, personality model).
+
+### Recommended implementation order
+
+| Order | Phase | Status | Why this order |
+|---|---|---|---|
+| 1st | **Phase 2: AOI grid** | In progress | Highest-impact performance change. Zero prerequisites — works on existing finite maps. Converts O(N*M) replication to O(N_local*M). Foundation that makes large maps viable. |
+| 2nd | Phase 1: Infinite maps | Not started | Small change, unblocks worldgen output. Quick once AOI is in place. |
+| 3rd | Phase 4: Worldgen terrain + biomes | Not started | Generate huge maps AND populate them without hitting the replication ceiling. The visible deliverable. |
+| 4th | Phase 3: Delta compression | Not started | Second-order bandwidth optimization. Protocol change — ship when there's time for migration. |
+| 5th | Phase 5: Chunk streaming | Not started | Needed only when generated maps are large enough that full-load is too slow. |
+| 6th | Phase 6: NPCs, history, quests | Not started | Ambitious story layer. Builds on worldgen + chunk streaming. |
+| 7th | Phase 7: Sharding | Not started | Only if exceeding hundreds of concurrent players. Explicitly deferred. |
+
+**Key decision:** Phase 2 (AOI) before Phase 1 (infinite maps) because AOI has zero prerequisites and addresses the actual scaling bottleneck. Building worldgen before AOI would produce maps that choke at ~50 concurrent players.
+
 ## Service Worker push notifications for player pings
 
 The current player ping feature (see `documentation/plans/2026-07-22-player-ping-design.md`) plays a notification sound + browser Notification when a player is pinged. This works for visible tabs and recently-backgrounded tabs, but Chrome freezes deeply backgrounded tabs after ~5 minutes — in that state no JS runs, so neither the WebSocket handler nor the audio/Notification code executes. The ping is silently lost.

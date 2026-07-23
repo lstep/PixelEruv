@@ -2330,6 +2330,26 @@ func lastN(s string, n int) string {
 	return string(r[len(r)-n:])
 }
 
+// rebuildAOIGrids reconstructs per-map AOI spatial hash grids from current
+// entity positions. Called each tick before replication. Creates fresh grids
+// every tick — old grids are GC'd. This avoids incremental maintenance across
+// provision/despawn/portal-transition at the cost of O(M) hash inserts per
+// tick (~100µs for 1000 entities).
+func (s *Simulator) rebuildAOIGrids() {
+	s.aoiGrids = make(map[string]*AOIGrid)
+	for _, e := range s.entities {
+		if e.Position == nil {
+			continue
+		}
+		g, ok := s.aoiGrids[e.Position.MapId]
+		if !ok {
+			g = NewAOIGrid(aoiCellSize)
+			s.aoiGrids[e.Position.MapId] = g
+		}
+		g.Insert(e)
+	}
+}
+
 // tick runs the game loop: movement system + replication.
 func (s *Simulator) tick() {
 	ctx, span := s.tracer.Start(context.Background(), "worldsim.tick")
@@ -2362,12 +2382,18 @@ func (s *Simulator) tick() {
 		})
 	}
 
+	// --- AOI grid rebuild (before replication) ---
+	// Rebuilds per-map spatial hash grids from current entity positions so the
+	// replication system can filter by area of interest instead of replicating
+	// everything on the same map. O(M) per tick — negligible vs replication.
+	s.rebuildAOIGrids()
+
 	// --- Replication ---
-	// Lite MVP: replicate everything to everyone (no AOI filter).
 	replicated := s.replication.Step(ctx, ReplicationInput{
 		Entities:          s.entities,
 		TickSnapshotSeq:   s.Tick.SnapshotSeq,
 		DestroyedEntities: &s.destroyedEntities,
+		AOIGrids:          s.aoiGrids,
 	})
 
 	// Metric-as-log-attrs: tick duration, entity count, replication batches.
