@@ -2184,6 +2184,7 @@ export class GameScene extends Phaser.Scene {
 
       let x = 10 * TILE_SIZE;
       let y = 10 * TILE_SIZE;
+      let dir = 0; // facing direction from Position component (0=down,1=left,2=right,3=up)
       let gid = 0;
       let spriteBase = "";
       let interactable = false;
@@ -2203,6 +2204,9 @@ export class GameScene extends Phaser.Scene {
           const pos = decodePosition(comp.data);
           x = pos.x * TILE_SIZE;
           y = pos.y * TILE_SIZE;
+          // Clamp dir to 0-3; PB is a trust boundary and an out-of-range
+          // value would index out of bounds in DIR_FRAME_START.
+          dir = Math.max(0, Math.min(3, pos.dir | 0));
         } else if (comp.componentId === 3) {
           // Appearance component — gid for props, sprite_base for player avatars
           const appearance = fromBinary(AppearanceSchema, comp.data);
@@ -2281,7 +2285,7 @@ export class GameScene extends Phaser.Scene {
       const charKey = spriteBase
         ? spriteBase
         : CHAR_SPRITES[spriteIndexForEntity(spawn.entityId)];
-      const sprite = this.add.sprite(x, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[0]);
+      const sprite = this.add.sprite(x, y + TILE_SIZE / 2, charKey, DIR_FRAME_START[dir]);
       // 64px-tall frame: origin at 0.75 puts the feet at the tile bottom and
       // lets the taller-than-tile head extend up into the tile above.
       sprite.setOrigin(0.5, 0.75);
@@ -2292,7 +2296,7 @@ export class GameScene extends Phaser.Scene {
         sprite,
         entityId: spawn.entityId,
         charKey,
-        dir: 0,
+        dir,
         moving: false,
         isProp: false,
         state: "",
