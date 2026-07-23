@@ -170,9 +170,20 @@ func TestAuditClient_HTTP(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(APIEvent{ID: 1, EventType: "player.kicked", Severity: "warn"})
 	})
+	mux.HandleFunc("/audit/api/players", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]PlayerSummary{
+			{Sub: "sub123", DisplayName: "Alice", TotalSessionSec: 3600, EventCount: 10, ConnectCount: 2},
+		})
+	})
 	mux.HandleFunc("/audit/api/players/sub123", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]APIEvent{{ID: 5, EventType: "player.set_name", Actor: audit.Actor{Sub: "sub123"}}})
+		json.NewEncoder(w).Encode(map[string]any{
+			"sub":           "sub123",
+			"display_name":  "Alice",
+			"events":        []APIEvent{{ID: 5, EventType: "player.set_name", Actor: audit.Actor{Sub: "sub123"}}},
+			"activity_events": []APIEvent{{ID: 6, EventType: "client.connected", Actor: audit.Actor{Sub: "sub123"}}},
+		})
 	})
 	mux.HandleFunc("/audit/api/stats", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -205,6 +216,22 @@ func TestAuditClient_HTTP(t *testing.T) {
 	}
 	if len(timeline) != 1 || timeline[0].Actor.Sub != "sub123" {
 		t.Errorf("PlayerTimeline: %+v", timeline)
+	}
+
+	players, err := a.ListPlayers(context.Background())
+	if err != nil {
+		t.Fatalf("ListPlayers: %v", err)
+	}
+	if len(players) != 1 || players[0].Sub != "sub123" || players[0].DisplayName != "Alice" {
+		t.Errorf("ListPlayers: %+v", players)
+	}
+
+	activity, err := a.PlayerActivity(context.Background(), "sub123", 0)
+	if err != nil {
+		t.Fatalf("PlayerActivity: %v", err)
+	}
+	if len(activity) != 1 || activity[0].EventType != "client.connected" {
+		t.Errorf("PlayerActivity: %+v", activity)
 	}
 
 	stats, err := a.Stats(context.Background())

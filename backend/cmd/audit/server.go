@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ type Server struct {
 	healthzURL     string
 	otelBaseURL    string
 	dockerProxyURL string
+	playerClient   *PlayerListClient
 	basePath       string
 	authUser       string
 	authPass       string
@@ -47,6 +49,7 @@ func NewServer(nc *nats.Conn, store EventStore, logger *slog.Logger, healthzURL,
 		healthzURL:     healthzURL,
 		otelBaseURL:    otelBaseURL,
 		dockerProxyURL: dockerProxyURL,
+		playerClient:   NewPlayerListClient(nc),
 		basePath:       basePath,
 		authUser:       authUser,
 		authPass:       authPass,
@@ -69,7 +72,8 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	mux.HandleFunc(bp+"/", s.handleDashboard)
 	mux.HandleFunc(bp+"/events", s.handleEvents)
 	mux.HandleFunc(bp+"/events/", s.handleEventDetail)
-	mux.HandleFunc(bp+"/players/", s.handlePlayerTimeline)
+	mux.HandleFunc(bp+"/players", s.handlePlayersList)
+	mux.HandleFunc(bp+"/players/", s.handlePlayerDetail)
 	mux.HandleFunc(bp+"/health", s.handleHealthPage)
 	mux.HandleFunc(bp+"/docker/partial", s.handleDockerPartial)
 	mux.HandleFunc(bp+"/world", s.handleWorld)
@@ -81,7 +85,8 @@ func (s *Server) Run(ctx context.Context, addr string) error {
 	// live event stream is delivered via the audit.event NATS subject.
 	mux.HandleFunc(bp+"/api/events", s.handleAPIEvents)
 	mux.HandleFunc(bp+"/api/events/", s.handleAPIEventDetail)
-	mux.HandleFunc(bp+"/api/players/", s.handleAPIPlayerTimeline)
+	mux.HandleFunc(bp+"/api/players", s.handleAPIPlayers)
+	mux.HandleFunc(bp+"/api/players/", s.handleAPIPlayerDetail)
 	mux.HandleFunc(bp+"/api/stats", s.handleAPIStats)
 
 	// Static files (HTMX, CSS) — served from embedded filesystem.
@@ -241,24 +246,162 @@ func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handlePlayerTimeline(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePlayersList(w http.ResponseWriter, r *http.Request) {
+	players := s.mergedPlayers(r.Context())
+	s.render(w, "players.html", map[string]any{
+		"Players":     players,
+		"BasePath":    s.basePath,
+		"OtelBaseURL": s.otelBaseURL,
+	})
+}
+
+func (s *Server) handlePlayerDetail(w http.ResponseWriter, r *http.Request) {
 	sub := strings.TrimPrefix(r.URL.Path, s.basePath+"/players/")
 	if sub == "" {
-		http.Error(w, "missing sub", 400)
+		http.Redirect(w, r, s.basePath+"/players", http.StatusFound)
 		return
 	}
-	events, err := s.store.Query(QueryFilter{ActorSub: sub, Limit: 200})
+	sessions, err := s.store.PlayerSessions(sub)
 	if err != nil {
-		s.logger.Warn("query player timeline", "err", err)
-		http.Error(w, "query error", 500)
-		return
+		s.logger.Warn("player sessions", "err", err, "sub", sub)
 	}
-	s.render(w, "player_timeline.html", map[string]any{
-		"PlayerSub":   sub,
-		"Events":      events,
-		"OtelBaseURL": s.otelBaseURL,
-		"BasePath":    s.basePath,
+	events, err := s.store.PlayerEvents(sub, 200)
+	if err != nil {
+		s.logger.Warn("player events", "err", err, "sub", sub)
+	}
+	since := time.Now().UTC().Add(-7 * 24 * time.Hour)
+	activityEvents, err := s.store.PlayerActivityEvents(sub, since)
+	if err != nil {
+		s.logger.Warn("player activity events", "err", err, "sub", sub)
+	}
+	now := time.Now().UTC()
+	segments := buildActivitySegments(activityEvents, since, now)
+
+	// Day boundaries for the SVG grid: each midnight between since and now.
+	type dayMarker struct {
+		Label string
+		X     float64
+	}
+	var days []dayMarker
+	dayStart := time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, since.Location())
+	for d := dayStart.Add(24 * time.Hour); d.Before(now); d = d.Add(24 * time.Hour) {
+		days = append(days, dayMarker{
+			Label: d.Format("Jan 02"),
+			X:     float64(d.Sub(since)) / float64(now.Sub(since)) * 1000,
+		})
+	}
+
+	// Summary stats.
+	var totalSessionNs int64
+	for _, sess := range sessions {
+		totalSessionNs += int64(sess.Duration)
+	}
+	var displayName string
+	for _, ev := range events {
+		if ev.Actor.DisplayName != "" {
+			displayName = ev.Actor.DisplayName
+			break
+		}
+	}
+
+	s.render(w, "player_detail.html", map[string]any{
+		"PlayerSub":      sub,
+		"DisplayName":    displayName,
+		"Sessions":       sessions,
+		"Events":         events,
+		"ActivityEvents": activityEvents,
+		"Segments":       segments,
+		"DayMarkers":     days,
+		"TimelineStart":  since,
+		"TimelineEnd":    now,
+		"TotalSessionNs": totalSessionNs,
+		"SessionCount":   len(sessions),
+		"EventCount":     len(events),
+		"OtelBaseURL":    s.otelBaseURL,
+		"BasePath":       s.basePath,
 	})
+}
+
+// activitySegment is a colored bar in the 7-day SVG timeline. State is one
+// of: "offline", "present", "busy", "dnd", "afk".
+type activitySegment struct {
+	Start time.Time
+	End   time.Time
+	State string
+}
+
+// buildActivitySegments walks the player's activity events chronologically and
+// produces a sequence of colored segments covering [since, now]. The player
+// starts offline; each connect/disconnect/status/afk event may transition the
+// state. Segments are emitted on each state change.
+func buildActivitySegments(events []StoredEvent, since, now time.Time) []activitySegment {
+	type state struct {
+		connected bool
+		status    int // 0=present, 1=busy, 2=dnd
+		afk       bool
+	}
+	cur := state{}
+	curEnd := since
+	stateName := func(st state) string {
+		if !st.connected {
+			return "offline"
+		}
+		if st.afk {
+			return "afk"
+		}
+		switch st.status {
+		case 1:
+			return "busy"
+		case 2:
+			return "dnd"
+		default:
+			return "present"
+		}
+	}
+
+	var segments []activitySegment
+	emit := func(end time.Time) {
+		if end.After(curEnd) {
+			segments = append(segments, activitySegment{
+				Start: curEnd,
+				End:   end,
+				State: stateName(cur),
+			})
+			curEnd = end
+		}
+	}
+
+	for _, ev := range events {
+		switch ev.EventType {
+		case "client.connected":
+			if !cur.connected {
+				emit(ev.Timestamp)
+				cur.connected = true
+			}
+		case "client.disconnected":
+			if cur.connected {
+				emit(ev.Timestamp)
+				cur.connected = false
+				cur.afk = false
+			}
+		case "player.set_status":
+			var d struct{ Status int `json:"status"` }
+			_ = json.Unmarshal(ev.Details, &d)
+			if cur.connected && d.Status != cur.status {
+				emit(ev.Timestamp)
+				cur.status = d.Status
+			}
+		case "player.set_afk":
+			var d struct{ Afk bool `json:"afk"` }
+			_ = json.Unmarshal(ev.Details, &d)
+			if cur.connected && d.Afk != cur.afk {
+				emit(ev.Timestamp)
+				cur.afk = d.Afk
+			}
+		}
+	}
+	emit(now)
+	return segments
 }
 
 func (s *Server) handleHealthPage(w http.ResponseWriter, r *http.Request) {
@@ -557,22 +700,186 @@ func (s *Server) handleAPIEventDetail(w http.ResponseWriter, r *http.Request) {
 	writeAPIJSON(w, toAPIEvent(se))
 }
 
-func (s *Server) handleAPIPlayerTimeline(w http.ResponseWriter, r *http.Request) {
+// apiPlayerSummary is the JSON shape for one row in the /api/players list.
+type apiPlayerSummary struct {
+	Sub             string `json:"sub"`
+	DisplayName     string `json:"display_name"`
+	FirstSeen       string `json:"first_seen"`
+	LastSeen        string `json:"last_seen"`
+	EventCount      int    `json:"event_count"`
+	ConnectCount    int    `json:"connect_count"`
+	TotalSessionSec int64  `json:"total_session_sec"`
+	Created         string `json:"created,omitempty"`
+	IsAdmin         bool   `json:"is_admin"`
+}
+
+// mergedPlayers fetches audit stats and PocketBase records, merges them, and
+// returns a sorted leaderboard. Players with no audit events still appear
+// (from PB) with zero stats. Falls back to audit-only data if PB is not
+// configured.
+func (s *Server) mergedPlayers(ctx context.Context) []PlayerSummary {
+	auditPlayers, err := s.store.ListPlayers()
+	if err != nil {
+		s.logger.Warn("list players", "err", err)
+		return nil
+	}
+	auditBySub := make(map[string]*PlayerSummary, len(auditPlayers))
+	for i := range auditPlayers {
+		auditBySub[auditPlayers[i].Sub] = &auditPlayers[i]
+	}
+
+	pbPlayers, pbErr := s.playerClient.ListPlayers(ctx)
+	if pbErr != nil {
+		s.logger.Warn("list players from worldsim", "err", pbErr)
+	}
+
+	if len(pbPlayers) == 0 {
+		return auditPlayers
+	}
+
+	merged := make([]PlayerSummary, 0, len(pbPlayers))
+	for _, pb := range pbPlayers {
+		if pb.UserID == "" || pb.UserID == "dev" {
+			continue
+		}
+		ps := PlayerSummary{
+			Sub:         pb.UserID,
+			DisplayName: pb.DisplayName,
+			IsAdmin:     pb.IsAdmin,
+		}
+		if pb.Created != "" {
+			ps.Created, _ = time.Parse(time.RFC3339, pb.Created)
+		}
+		if stats, ok := auditBySub[pb.UserID]; ok {
+			ps.FirstSeen = stats.FirstSeen
+			ps.LastSeen = stats.LastSeen
+			ps.EventCount = stats.EventCount
+			ps.ConnectCount = stats.ConnectCount
+			ps.TotalSessionNs = stats.TotalSessionNs
+			if ps.DisplayName == "" {
+				ps.DisplayName = stats.DisplayName
+			}
+		}
+		merged = append(merged, ps)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if (merged[i].TotalSessionNs > 0) != (merged[j].TotalSessionNs > 0) {
+			return merged[i].TotalSessionNs > 0
+		}
+		if merged[i].TotalSessionNs != merged[j].TotalSessionNs {
+			return merged[i].TotalSessionNs > merged[j].TotalSessionNs
+		}
+		return merged[i].Created.After(merged[j].Created)
+	})
+	return merged
+}
+
+func (s *Server) handleAPIPlayers(w http.ResponseWriter, r *http.Request) {
+	players := s.mergedPlayers(r.Context())
+	out := make([]apiPlayerSummary, 0, len(players))
+	for _, p := range players {
+		row := apiPlayerSummary{
+			Sub:             p.Sub,
+			DisplayName:     p.DisplayName,
+			FirstSeen:       p.FirstSeen.UTC().Format(time.RFC3339),
+			LastSeen:        p.LastSeen.UTC().Format(time.RFC3339),
+			EventCount:      p.EventCount,
+			ConnectCount:    p.ConnectCount,
+			TotalSessionSec: p.TotalSessionNs / int64(time.Second),
+			IsAdmin:         p.IsAdmin,
+		}
+		if !p.Created.IsZero() {
+			row.Created = p.Created.UTC().Format(time.RFC3339)
+		}
+		out = append(out, row)
+	}
+	writeAPIJSON(w, out)
+}
+
+// apiSession is the JSON shape for one session in the player detail response.
+type apiSession struct {
+	ClientID       string `json:"client_id"`
+	ConnectedAt    string `json:"connected_at"`
+	DisconnectedAt string `json:"disconnected_at,omitempty"`
+	DurationSec    int64  `json:"duration_sec"`
+	Open           bool   `json:"open"`
+}
+
+// apiPlayerDetail is the JSON shape returned by /api/players/{sub}.
+type apiPlayerDetail struct {
+	Sub          string     `json:"sub"`
+	DisplayName  string     `json:"display_name"`
+	Sessions     []apiSession `json:"sessions"`
+	Events       []apiEvent   `json:"events"`
+	ActivityEvents []apiEvent `json:"activity_events"`
+}
+
+func (s *Server) handleAPIPlayerDetail(w http.ResponseWriter, r *http.Request) {
 	sub := strings.TrimPrefix(r.URL.Path, s.basePath+"/api/players/")
 	if sub == "" {
 		writeAPIError(w, http.StatusBadRequest, "missing sub")
 		return
 	}
-	events, err := s.store.Query(QueryFilter{ActorSub: sub, Limit: 200})
+	sessions, err := s.store.PlayerSessions(sub)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "query failed: "+err.Error())
+		writeAPIError(w, http.StatusInternalServerError, "sessions failed: "+err.Error())
 		return
 	}
-	out := make([]apiEvent, 0, len(events))
-	for _, se := range events {
-		out = append(out, toAPIEvent(se))
+	events, err := s.store.PlayerEvents(sub, 200)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "events failed: "+err.Error())
+		return
 	}
-	writeAPIJSON(w, out)
+	sinceHours := 7 * 24
+	if v := r.URL.Query().Get("since_hours"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 24*365 {
+			sinceHours = n
+		}
+	}
+	since := time.Now().UTC().Add(-time.Duration(sinceHours) * time.Hour)
+	activityEvents, err := s.store.PlayerActivityEvents(sub, since)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "activity failed: "+err.Error())
+		return
+	}
+
+	var displayName string
+	for _, ev := range events {
+		if ev.Actor.DisplayName != "" {
+			displayName = ev.Actor.DisplayName
+			break
+		}
+	}
+
+	sessionsOut := make([]apiSession, 0, len(sessions))
+	for _, sess := range sessions {
+		row := apiSession{
+			ClientID:    sess.ClientID,
+			ConnectedAt: sess.ConnectedAt.UTC().Format(time.RFC3339),
+			DurationSec: int64(sess.Duration / time.Second),
+			Open:        sess.Open,
+		}
+		if !sess.Open {
+			row.DisconnectedAt = sess.DisconnectedAt.UTC().Format(time.RFC3339)
+		}
+		sessionsOut = append(sessionsOut, row)
+	}
+	eventsOut := make([]apiEvent, 0, len(events))
+	for _, se := range events {
+		eventsOut = append(eventsOut, toAPIEvent(se))
+	}
+	activityOut := make([]apiEvent, 0, len(activityEvents))
+	for _, se := range activityEvents {
+		activityOut = append(activityOut, toAPIEvent(se))
+	}
+
+	writeAPIJSON(w, apiPlayerDetail{
+		Sub:            sub,
+		DisplayName:    displayName,
+		Sessions:       sessionsOut,
+		Events:         eventsOut,
+		ActivityEvents: activityOut,
+	})
 }
 
 // apiStats is the JSON shape returned by /api/stats: severity + type counts

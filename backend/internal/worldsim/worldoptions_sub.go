@@ -107,6 +107,27 @@ func (s *Simulator) subscribeWorldOptions() error {
 	}); err != nil {
 		return fmt.Errorf("subscribe worldsim.admin_emails.get: %w", err)
 	}
+
+	// worldsim.players.list returns all registered players from PocketBase
+	// (user_id, display_name, entity_id, is_admin, created). Used by the audit
+	// service's /audit/players leaderboard to show all registered players,
+	// not just those with audit events. worldsim owns PocketBase, so it
+	// resolves the query; the audit service has no PB access.
+	if _, err := s.nc.Subscribe("worldsim.players.list", func(msg *nats.Msg) {
+		players, err := s.userStore.ListAllPlayers()
+		if err != nil {
+			s.logger.Warn("players.list", "err", err)
+			reply, _ := json.Marshal(map[string]any{"ok": false, "error": err.Error()})
+			msg.Respond(reply)
+			return
+		}
+		reply, _ := json.Marshal(map[string]any{"ok": true, "players": players})
+		if err := msg.Respond(reply); err != nil {
+			s.logger.Warn("players.list respond", "err", err)
+		}
+	}); err != nil {
+		return fmt.Errorf("subscribe worldsim.players.list: %w", err)
+	}
 	return nil
 }
 

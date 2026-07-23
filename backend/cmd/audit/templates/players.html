@@ -1,0 +1,31 @@
+{{template "base" .}}
+{{define "title"}}Players{{end}}
+{{define "content"}}
+<section>
+  <h2>Players</h2>
+  <p class="muted">Registered players ranked by total connected time. Guests and local dev sessions are excluded.</p>
+  <table class="players-table">
+    <thead>
+      <tr><th>#</th><th>Name</th><th>Total Time</th><th>Registered</th><th>Last Seen</th><th>Sessions</th><th>Events</th></tr>
+    </thead>
+    <tbody>
+    {{range $i, $p := .Players}}
+      <tr>
+        <td class="rank">{{add $i 1}}</td>
+        <td>
+          {{if $p.DisplayName}}<a href="{{bp}}/players/{{$p.Sub}}">{{$p.DisplayName}}</a>{{else}}<a href="{{bp}}/players/{{$p.Sub}}" class="muted">{{$p.Sub}}</a>{{end}}
+          {{if $p.IsAdmin}}<span class="admin-badge">admin</span>{{end}}
+        </td>
+        <td class="duration">{{durationStr $p.TotalSessionNs}}</td>
+        <td class="time">{{if $p.Created.IsZero}}-{{else}}{{$p.Created.Format "2006-01-02"}}{{end}}</td>
+        <td class="time">{{if $p.LastSeen.IsZero}}-{{else}}{{$p.LastSeen.Format "2006-01-02 15:04"}}{{end}}</td>
+        <td>{{$p.ConnectCount}}</td>
+        <td>{{$p.EventCount}}</td>
+      </tr>
+    {{else}}
+      <tr><td colspan="7">No registered players yet</td></tr>
+    {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

@@ -1,0 +1,74 @@
+{{template "base" .}}
+{{define "title"}}Player: {{if .DisplayName}}{{.DisplayName}}{{else}}{{.PlayerSub}}{{end}}{{end}}
+{{define "content"}}
+<section class="player-detail">
+  <a href="{{bp}}/players" class="back">&larr; Back to players</a>
+  <h2>{{if .DisplayName}}{{.DisplayName}}{{else}}{{.PlayerSub}}{{end}}</h2>
+  <p class="muted">sub: {{.PlayerSub}}</p>
+
+  <div class="cards">
+    <div class="card">
+      <h3>Total Time</h3>
+      <span class="big">{{durationStr .TotalSessionNs}}</span>
+    </div>
+    <div class="card">
+      <h3>Sessions</h3>
+      <span class="big">{{.SessionCount}}</span>
+    </div>
+    <div class="card">
+      <h3>Events</h3>
+      <span class="big">{{.EventCount}}</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Activity (last 7 days)</h3>
+    <svg class="activity-svg" viewBox="0 0 1000 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+      {{range .Segments}}
+      <rect x="{{printf "%.1f" (segmentX .Start $.TimelineStart $.TimelineEnd)}}"
+            y="0" width="{{printf "%.1f" (segmentW .Start .End $.TimelineStart $.TimelineEnd)}}"
+            height="40" class="{{segmentClass .State}}">
+        <title>{{.State}}: {{.Start.Format "Jan 02 15:04"}} - {{.End.Format "Jan 02 15:04"}}</title>
+      </rect>
+      {{end}}
+      {{range .DayMarkers}}
+      <line x1="{{printf "%.1f" .X}}" y1="-2" x2="{{printf "%.1f" .X}}" y2="46" class="day-line"/>
+      <text x="{{printf "%.1f" .X}}" y="54" class="day-label">{{.Label}}</text>
+      {{end}}
+    </svg>
+    <div class="activity-legend">
+      <span class="legend-item"><span class="legend-swatch act-present"></span> present</span>
+      <span class="legend-item"><span class="legend-swatch act-busy"></span> busy</span>
+      <span class="legend-item"><span class="legend-swatch act-dnd"></span> dnd</span>
+      <span class="legend-item"><span class="legend-swatch act-afk"></span> afk</span>
+      <span class="legend-item"><span class="legend-swatch act-offline"></span> offline</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Connection History</h3>
+    <table class="session-table">
+      <thead>
+        <tr><th>Connected</th><th>Disconnected</th><th>Duration</th><th>Client ID</th></tr>
+      </thead>
+      <tbody>
+      {{range .Sessions}}
+        <tr>
+          <td class="time">{{.ConnectedAt.Format "2006-01-02 15:04:05"}}</td>
+          <td class="time">{{if .Open}}<span class="muted">still connected</span>{{else}}{{.DisconnectedAt.Format "2006-01-02 15:04:05"}}{{end}}</td>
+          <td class="duration">{{durationStr .Duration}}</td>
+          <td class="muted">{{.ClientID}}</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="4">No sessions recorded</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3>All Events</h3>
+    {{template "events_table_inner" .Events}}
+  </div>
+</section>
+{{end}}

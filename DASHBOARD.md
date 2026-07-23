@@ -86,6 +86,45 @@ Tests: `entities_query_test.go`, `admin_actions_test.go` (worldsim); `server_tes
 - Live audit notifications via `ServerSession.SendNotification` (currently routed through slog → `notifications/message`).
 - OAuth for per-client tokens with revocation (currently a static bearer token).
 
+## Players page (audit leaderboard + detail)
+
+**Status:** Implemented — `go build ./cmd/audit/ ./cmd/mcp/`, `go test ./cmd/audit/ ./cmd/mcp/`, `go test ./internal/worldsim/` all pass. Smoke-tested with empty DB (templates render, API returns empty arrays, SVG renders offline segment).
+
+New `/audit/players` leaderboard + rich `/audit/players/{sub}` detail page in the audit service. Two new MCP tools (`list_players`, `player_activity`) expose the same data to LLM clients.
+
+### What was built
+
+- **Store layer** (`backend/cmd/audit/store.go`) — 4 new `SQLiteStore` methods + 2 types:
+  - `ListPlayers()` — per-`actor_sub` aggregates (excluding guests/`dev`): display name, first/last seen, event count, connect count, total session time (pairs `client.connected`/`client.disconnected` by `(sub, client_id)`; open sessions count to now). Sorted by total session time desc.
+  - `PlayerSessions(sub)` — connect/disconnect pairs for one sub, ordered by connected_at desc. Open sessions flagged.
+  - `PlayerEvents(sub, limit)` — events where `actor_sub = ?` OR `actor_entity` belongs to this player (captures `player.set_status`/`player.set_afk` which carry entity_id but not sub).
+  - `PlayerActivityEvents(sub, since)` — only `client.connected`, `client.disconnected`, `player.set_status`, `player.set_afk` (same sub-or-entity join), ordered ASC. Used for the SVG timeline.
+  - Types: `PlayerSummary`, `Session`.
+- **Audit handlers** (`backend/cmd/audit/server.go`):
+  - `handlePlayersList` at `/audit/players` — leaderboard.
+  - `handlePlayerDetail` at `/audit/players/{sub}` — replaces old `handlePlayerTimeline`. Builds activity timeline segments in Go (walks events chronologically, maintains `{connected, status, afk}`, emits segments `{start, end, state}` where state ∈ {offline, present, busy, dnd, afk}).
+  - JSON API: `GET /audit/api/players` (list), `GET /audit/api/players/{sub}` (detail with sessions + events + activity_events). Supports `?since_hours=N` query param for activity window.
+- **Templates** (`backend/cmd/audit/templates/`):
+  - `players.html` — leaderboard table: rank, name (link to detail), total time, first/last seen, sessions, events.
+  - `player_detail.html` — summary cards + inline SVG 7-day activity timeline (colored `<rect>` segments with `<title>` tooltips) + legend (present/busy/dnd/afk/offline) + session history table + full event list. Replaces `player_timeline.html` (deleted).
+  - `base.html` — Players nav link added.
+  - `embed.go` — new template funcs: `add`, `durationStr` (accepts `time.Duration` or `int64`), `segmentClass`, `segmentX`, `segmentW` (SVG coordinate helpers).
+- **CSS** (`backend/cmd/audit/static/style.css`) — `.players-table`, `.activity-svg` (responsive SVG with segment fill colors), `.activity-legend`, `.session-table`.
+- **MCP** (`backend/cmd/mcp/`):
+  - `audit_client.go` — `ListPlayers()` + `PlayerActivity(sub, sinceHours)` methods. `PlayerTimeline` updated to parse the new detail response format (with backward-compat fallback for older audit servers).
+  - `tools.go` — 2 new tools: `list_players` (no args), `player_activity` (sub + optional since_hours). Additive — existing `player_timeline` tool kept.
+- **Tests**:
+  - `backend/cmd/audit/store_test.go` — `TestListPlayers` (guest/dev exclusion, session duration computation, open session, sorting), `TestPlayerSessions` (pairing, open vs closed, ordering), `TestPlayerEvents` (entity-id join captures status events), `TestPlayerActivityEvents` (only 4 event types, ASC ordering, time window filtering).
+  - `backend/cmd/mcp/server_test.go` — extended `TestAuditClient_HTTP` with `ListPlayers` + `PlayerActivity` assertions; mock updated to new detail response format.
+
+### Design decisions
+
+- **Entity-id join**: `player.set_status`/`player.set_afk` events lack `actor_sub` (only carry `entity_id` + `client_id`). The `PlayerEvents`/`PlayerActivityEvents` queries join via `actor_entity IN (SELECT DISTINCT actor_entity FROM audit_events WHERE actor_sub = ? AND actor_entity != '')`. Safe because registered users have stable entity_ids derived from PocketBase records.
+- **Session pairing by client_id**: `client_id` is `c_` + 16 random hex chars (unique per WebSocket session). Each `(sub, client_id)` group has at most one connect + one disconnect. Missing disconnects (server crash) count as open sessions to now — overestimates duration for crashed sessions. Acceptable for an audit view.
+- **SVG timeline**: server-rendered static SVG `<rect>` elements with native `<title>` tooltips. No JS charting dependency. 1000-unit viewBox, segments positioned by time offset within the 7-day window. Minimum width of 1 unit ensures very short segments are visible. Day grid lines + labels (e.g. "Jul 17") at each midnight boundary.
+- **`durationStr` template func**: accepts `any` (handles both `time.Duration` from `Session.Duration` and `int64` from `PlayerSummary.TotalSessionNs`) because Go templates can't convert named types automatically.
+- **PocketBase merge**: the audit service fetches all registered players from PocketBase's `players` collection via REST (`PB_BASE_URL` env var) and merges with audit stats. Players who registered but never connected (or whose events were purged by retention) still appear with zero stats. Falls back to audit-only data if PB is not configured. Sort: active players first (by total session time desc), then inactive players (by registration date desc).
+
 ## A/V meeting recording (ext-rec + LiveKit Egress)
 
 **Branch:** `feat/recording`

@@ -132,9 +132,35 @@ func registerReadTools(s *mcp.Server, w *WorldsimClient, a *AuditClient, pb *Poc
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "player_timeline",
-		Description: "Get the audit event timeline for a player (by OIDC subject). Returns up to 200 recent events where the player was the actor.",
+		Description: "Get the audit event timeline for a player (by OIDC subject). Returns up to 200 recent events where the player was the actor, including events matched by entity_id (captures status/afk changes that lack actor_sub).",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, args PlayerTimelineArgs) (*mcp.CallToolResult, any, error) {
 		events, err := a.PlayerTimeline(ctx, args.Sub)
+		if err != nil {
+			return nil, nil, err
+		}
+		return jsonResult(events)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "list_players",
+		Description: "List all registered players (excluding guests and local dev) with their total connected time, first/last seen timestamps, session count, and event count. Sorted by total session time descending. No arguments.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		players, err := a.ListPlayers(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		return jsonResult(players)
+	})
+
+	type PlayerActivityArgs struct {
+		Sub        string `json:"sub" jsonschema:"Player OIDC subject"`
+		SinceHours int    `json:"since_hours,omitempty" jsonschema:"Time window in hours (default 168 = 7 days)"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "player_activity",
+		Description: "Get the activity events (client.connected, client.disconnected, player.set_status, player.set_afk) for a player within the given time window. These events can be used to reconstruct a presence/status timeline showing when the player was online, their status (present/busy/dnd), and AFK state.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, args PlayerActivityArgs) (*mcp.CallToolResult, any, error) {
+		events, err := a.PlayerActivity(ctx, args.Sub, args.SinceHours)
 		if err != nil {
 			return nil, nil, err
 		}
