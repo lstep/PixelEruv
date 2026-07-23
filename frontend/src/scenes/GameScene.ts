@@ -16,6 +16,7 @@ import { parsePlayerOptions } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
 import { getUsername } from "../username";
 import { isLoggedIn } from "../auth";
+import { isSoundEnabled } from "../soundPrefs";
 import { findPath, type Tile } from "../pathfinding";
 
 const TILE_SIZE = 32;
@@ -1524,7 +1525,7 @@ export class GameScene extends Phaser.Scene {
         // backgrounded tabs after ~5 min, killing all JS — the Notification
         // is the only signal that reaches the user in that state).
         const playPing = () => {
-          if (this.pingAudio) {
+          if (this.pingAudio && isSoundEnabled()) {
             this.pingAudio.currentTime = 0;
             this.pingAudio.play().catch(() => {});
           }
@@ -1608,6 +1609,13 @@ export class GameScene extends Phaser.Scene {
     topMenu?.setSetSpriteBaseHandler((spriteBase) => this.ws?.setSpriteBase(spriteBase));
     topMenu?.setSetPlayerOptionsHandler((options) => this.ws?.setPlayerOptions(options));
     topMenu?.setSetStatusHandler((status) => this.ws?.setStatus(status));
+    // Settings modal: pass the sprite catalog + a getter for the local
+    // player's current sprite_base so the image picker highlights the active
+    // sheet. The getter reads the local avatar's charKey; if it isn't a PB
+    // sprite_base (guest fallback), returns "" so no tile is highlighted.
+    const spriteBasesForSettings = this.registry.get("spriteBases") as SpriteBaseAsset[] | null;
+    if (spriteBasesForSettings) topMenu?.setSpriteBases(spriteBasesForSettings);
+    topMenu?.setLocalSpriteBaseGetter(() => this.getLocalSpriteBase());
 
     // Close the info dropdown when clicking outside it. The dot and buttons
     // set _dropdownClickedThisFrame to suppress this on their own clicks.
@@ -2520,7 +2528,7 @@ export class GameScene extends Phaser.Scene {
       const avatar = this.avatars.get(anim.entityId);
       if (!avatar) continue;
       if (anim.animationId === ANIM_CLICK) {
-        this.sound.play("clic", { volume: 0.5 });
+        if (isSoundEnabled()) this.sound.play("clic", { volume: 0.5 });
       }
     }
   }
@@ -3382,6 +3390,18 @@ export class GameScene extends Phaser.Scene {
     if (name) return name;
     if (entityId === this.myEntityId) return "You";
     return entityId;
+  }
+
+  // getLocalSpriteBase returns the local player's current sprite_base ID, or
+  // "" for the guest fallback (a static char_0..char_3 sheet). Used by the
+  // TopMenu settings modal to highlight the active sheet in the picker.
+  private getLocalSpriteBase(): string {
+    if (!this.myEntityId) return "";
+    const avatar = this.avatars.get(this.myEntityId);
+    if (!avatar) return "";
+    const spriteBases = this.registry.get("spriteBases") as SpriteBaseAsset[] | null;
+    if (!spriteBases) return "";
+    return spriteBases.some((b) => b.id === avatar.charKey) ? avatar.charKey : "";
   }
 
   // getConnectedPlayers returns the players currently on the local player's
