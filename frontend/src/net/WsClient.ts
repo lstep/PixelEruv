@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema, PingPlayerFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema, PingPlayerFrameSchema, TeleportToFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -719,6 +719,19 @@ export class WsClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const ping = create(PingPlayerFrameSchema, { entityId });
     const frame = create(ClientFrameSchema, { payload: { case: "pingPlayer", value: ping } });
+    this.ws.send(toBinary(ClientFrameSchema, frame));
+  }
+
+  // sendTeleportTo sends a TeleportToFrame to teleport the local player to
+  // another player's exact position on the same map. Worldsim enforces
+  // authorization server-side (admin always; registered non-guest only when
+  // allow_player_teleport is on; guests never) — the frontend button
+  // visibility is cosmetic only. Fire-and-forget; the local client sees its
+  // own position update via replication.
+  sendTeleportTo(entityId: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const tp = create(TeleportToFrameSchema, { entityId });
+    const frame = create(ClientFrameSchema, { payload: { case: "teleportTo", value: tp } });
     this.ws.send(toBinary(ClientFrameSchema, frame));
   }
 

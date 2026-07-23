@@ -49,6 +49,38 @@ export function clearWorldOptionsCache(): void {
   cached = null;
 }
 
+// fetchAllowPlayerTeleport returns whether registered (non-guest) players may
+// teleport to another player's position from the Players panel. Hits a
+// separate auth-required (but non-admin) endpoint so registered non-admins
+// can learn the flag; guests have no users JWT → 401 → returns false (button
+// hidden). Cached separately from the admin-gated WorldOptionsYouTube.
+let cachedAllowPlayerTeleport: boolean | null = null;
+let allowPlayerTeleportInflight: Promise<boolean> | null = null;
+
+export async function fetchAllowPlayerTeleport(): Promise<boolean> {
+  if (cachedAllowPlayerTeleport !== null) return cachedAllowPlayerTeleport;
+  if (allowPlayerTeleportInflight) return allowPlayerTeleportInflight;
+  allowPlayerTeleportInflight = (async () => {
+    try {
+      const res = await pb.send("/world-options/player-teleport", { method: "GET" });
+      cachedAllowPlayerTeleport = res.allow_player_teleport === true;
+      return cachedAllowPlayerTeleport;
+    } catch {
+      // 401 (guest / not logged in) or network error → hide the button.
+      cachedAllowPlayerTeleport = false;
+      return false;
+    } finally {
+      allowPlayerTeleportInflight = null;
+    }
+  })();
+  return allowPlayerTeleportInflight;
+}
+
+export function clearAllowPlayerTeleportCache(): void {
+  cachedAllowPlayerTeleport = null;
+  allowPlayerTeleportInflight = null;
+}
+
 // refreshWorldOptions clears the cache and re-fetches the admin-gated
 // world_options subset. Use this when a field that the client gates on
 // (e.g. recording_enabled) may have changed server-side since the first

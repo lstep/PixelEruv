@@ -15,6 +15,7 @@ import type { TopMenu } from "../ui/TopMenu";
 import { parsePlayerOptions } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
 import { getUsername } from "../username";
+import { isLoggedIn } from "../auth";
 
 const TILE_SIZE = 32;
 
@@ -444,6 +445,10 @@ export class GameScene extends Phaser.Scene {
   // field. When true, the nametag renders dimmed with an AFK indicator. The
   // manual status (statusByEntity) is preserved underneath.
   private afkByEntity = new Map<string, boolean>();
+  // AFK-since timestamp (unix ms, 0 = not AFK) by entity ID, from the
+  // DisplayName component's afk_since field. Used by the Players panel to
+  // render "AFK 3m" durations. 0 when the player is not AFK.
+  private afkSinceByEntity = new Map<string, number>();
   // Admin-only info by entity ID (IP, guest status). Populated from
   // AdminInfoFrame, only received by admin clients. Used to render the IP
   // below the name in the name tag pillbox for admin viewers.
@@ -1034,6 +1039,16 @@ export class GameScene extends Phaser.Scene {
       () => this.ws?.isAdmin() ?? false,
       () => this.avClient?.currentRoomName() ?? null,
     );
+    // Players panel — lists connected players on the current map with status,
+    // AFK + duration, and per-row Ping + admin/option-gated Teleport-to.
+    topMenu?.attachPlayersPanel({
+      getPlayers: () => this.getConnectedPlayers(),
+      getMapName: () => this.ws?.getMapId() ?? null,
+      isLocalAdmin: () => this.ws?.isAdmin() ?? false,
+      isLocalGuest: () => !isLoggedIn(),
+      onPing: (entityId) => this.ws?.sendPing(entityId),
+      onTeleportTo: (entityId) => this.ws?.sendTeleportTo(entityId),
+    });
     // AFK detector — monitors user activity + tab visibility and drives the
     // AFK overlay state (SetAfkFrame) and tab-visibility A/V auto-mute. Has
     // a meeting exemption (no AFK while in a room with other participants).
@@ -1163,6 +1178,7 @@ export class GameScene extends Phaser.Scene {
         this.isAdminByEntity.clear();
         this.statusByEntity.clear();
         this.afkByEntity.clear();
+        this.afkSinceByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         this.closeInteractionPopup();
@@ -1740,6 +1756,7 @@ export class GameScene extends Phaser.Scene {
         this.isAdminByEntity.clear();
         this.statusByEntity.clear();
         this.afkByEntity.clear();
+        this.afkSinceByEntity.clear();
         this.adminInfoByEntity.clear();
         this.closeDropdown();
         // Restart the scene to reload the map.
@@ -1873,6 +1890,7 @@ export class GameScene extends Phaser.Scene {
       let isAdmin = false;
       let status = 0;
       let afk = false;
+      let afkSince = 0;
       let lightIntensity = 0;
       let lightColor = 0;
       let lightRadius = 0;
@@ -1900,6 +1918,7 @@ export class GameScene extends Phaser.Scene {
           isAdmin = dn.isAdmin;
           status = dn.status;
           afk = dn.afk;
+          afkSince = Number(dn.afkSince);
         } else if (comp.componentId === 5) {
           // LightEmitter component — intensity/color/radius for the lighting
           // system. intensity > 0 marks the entity as an active light.
@@ -2007,6 +2026,7 @@ export class GameScene extends Phaser.Scene {
         this.isAdminByEntity.set(spawn.entityId, isAdmin);
         this.statusByEntity.set(spawn.entityId, status);
         this.afkByEntity.set(spawn.entityId, afk);
+        this.afkSinceByEntity.set(spawn.entityId, afkSince);
         this.createNameTag(spawn.entityId, displayName, isGuest, isAdmin, status, afk);
       }
       // Start idle animation immediately.
@@ -2086,6 +2106,7 @@ export class GameScene extends Phaser.Scene {
           this.isAdminByEntity.set(upd.entityId, dn.isAdmin);
           this.statusByEntity.set(upd.entityId, dn.status);
           this.afkByEntity.set(upd.entityId, dn.afk);
+          this.afkSinceByEntity.set(upd.entityId, Number(dn.afkSince));
           // Recreate the tag because the pillbox width depends on text width.
           avatar.nameTag?.destroy();
           this.createNameTag(upd.entityId, dn.name, dn.isGuest, dn.isAdmin, dn.status, dn.afk);
@@ -2172,6 +2193,7 @@ export class GameScene extends Phaser.Scene {
         this.isAdminByEntity.delete(dest.entityId);
         this.statusByEntity.delete(dest.entityId);
         this.afkByEntity.delete(dest.entityId);
+        this.afkSinceByEntity.delete(dest.entityId);
         this.adminInfoByEntity.delete(dest.entityId);
         console.log(`destroyed ${dest.entityId}`);
       }
@@ -3044,6 +3066,51 @@ export class GameScene extends Phaser.Scene {
     if (name) return name;
     if (entityId === this.myEntityId) return "You";
     return entityId;
+  }
+
+  // getConnectedPlayers returns the players currently on the local player's
+  // map (including self), with their presence status, AFK overlay + since
+  // timestamp, and guest/admin badges. Only entities with a DisplayName
+  // component are included — props and decorations never have one, so they
+  // are naturally filtered out. Used by the TopMenu Players panel.
+  getConnectedPlayers(): {
+    entityId: string;
+    name: string;
+    isGuest: boolean;
+    isAdmin: boolean;
+    status: number;
+    afk: boolean;
+    afkSinceMs: number;
+    isSelf: boolean;
+  }[] {
+    const out: {
+      entityId: string;
+      name: string;
+      isGuest: boolean;
+      isAdmin: boolean;
+      status: number;
+      afk: boolean;
+      afkSinceMs: number;
+      isSelf: boolean;
+    }[] = [];
+    for (const entityId of this.displayNameByEntity.keys()) {
+      out.push({
+        entityId,
+        name: this.resolveDisplayName(entityId),
+        isGuest: this.isGuestByEntity.get(entityId) ?? false,
+        isAdmin: this.isAdminByEntity.get(entityId) ?? false,
+        status: this.statusByEntity.get(entityId) ?? 0,
+        afk: this.afkByEntity.get(entityId) ?? false,
+        afkSinceMs: this.afkSinceByEntity.get(entityId) ?? 0,
+        isSelf: entityId === this.myEntityId,
+      });
+    }
+    // Self first, then alphabetical by name for stable ordering.
+    out.sort((a, b) => {
+      if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return out;
   }
 
   // --- Recording indicator + consent toast ---

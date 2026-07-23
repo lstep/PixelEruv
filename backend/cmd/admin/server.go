@@ -1074,6 +1074,9 @@ type worldOptionsFormFields struct {
 	ErrorEmailCustomAddresses string
 	// RecordingEnabled gates meeting recording globally.
 	RecordingEnabled bool
+	// AllowPlayerTeleport gates whether registered non-guest players can
+	// teleport to another player's position from the Players panel.
+	AllowPlayerTeleport bool
 	// Read-only display fields (not editable in the form).
 	PublicHost       string
 	LivekitPublicURL string
@@ -1101,6 +1104,7 @@ type worldOptionsReply struct {
 		ErrorEmailRecipientsMode  string `json:"error_email_recipients_mode"`
 		ErrorEmailCustomAddresses string `json:"error_email_custom_addresses"`
 		RecordingEnabled          bool   `json:"recording_enabled"`
+		AllowPlayerTeleport       bool   `json:"allow_player_teleport"`
 		PublicHost                string `json:"public_host"`
 		LivekitPublicURL          string `json:"livekit_public_url"`
 	} `json:"options"`
@@ -1151,6 +1155,7 @@ func (s *Server) handleWorldOptions(w http.ResponseWriter, r *http.Request) {
 		ErrorEmailRecipientsMode:  opts.Options.ErrorEmailRecipientsMode,
 		ErrorEmailCustomAddresses: opts.Options.ErrorEmailCustomAddresses,
 		RecordingEnabled:          opts.Options.RecordingEnabled,
+		AllowPlayerTeleport:       opts.Options.AllowPlayerTeleport,
 		PublicHost:                opts.Options.PublicHost,
 		LivekitPublicURL:          opts.Options.LivekitPublicURL,
 	}
@@ -1208,6 +1213,7 @@ func (s *Server) handleWorldOptionsPost(w http.ResponseWriter, r *http.Request, 
 			"error_email_recipients_mode": r.FormValue("error_email_recipients_mode"),
 			"error_email_custom_addresses": r.FormValue("error_email_custom_addresses"),
 			"recording_enabled":           r.FormValue("recording_enabled") == "on",
+			"allow_player_teleport":       r.FormValue("allow_player_teleport") == "on",
 		},
 		"actor": map[string]any{
 			"extension": "admin",

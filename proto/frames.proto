@@ -23,6 +23,7 @@ message ClientFrame {
     KickFrame kick = 11;
     SetAfkFrame set_afk = 12;
     PingPlayerFrame ping_player = 13;
+    TeleportToFrame teleport_to = 14;
   }
 }
 
@@ -62,6 +63,19 @@ message KickFrame {
 // documentation/plans/2026-07-22-player-ping-design.md.
 message PingPlayerFrame {
   string entity_id = 1;  // target player entity to ping
+}
+
+// TeleportToFrame is sent by a client to teleport themselves to another
+// player's exact position on the same map. The pusher forwards it to
+// worldsim.entity.teleport_to_entity via NATS. Worldsim enforces
+// authorization server-side: allowed if the sender is an admin, OR if the
+// sender is a registered (non-guest) user AND the world option
+// allow_player_teleport is on; guests are always rejected. The target must
+// be on the same map as the sender (the Players panel is current-map only).
+// Fire-and-forget — no ack is sent back; the sender's client sees its own
+// position update via replication.
+message TeleportToFrame {
+  string entity_id = 1;  // target player entity to teleport to
 }
 
 message InputFrame {

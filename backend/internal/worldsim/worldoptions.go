@@ -66,6 +66,13 @@ type WorldOptions struct {
 	// tooltip. Hot-reloaded on world_options.update.
 	RecordingEnabled bool `json:"recording_enabled"`
 
+	// AllowPlayerTeleport gates whether registered (non-guest) players can
+	// teleport themselves to another player's exact position from the Players
+	// panel. When false, only admins can teleport-to-player; guests are always
+	// rejected regardless. Enforced server-side in teleport_to_entity.go.
+	// Hot-reloaded on world_options.update.
+	AllowPlayerTeleport bool `json:"allow_player_teleport"`
+
 	// readOnly fields mirrored from env. Not editable from the admin UI.
 	PublicHost       string `json:"public_host"`        // readOnly
 	LivekitPublicURL string `json:"livekit_public_url"` // readOnly
@@ -85,6 +92,7 @@ func defaultWorldOptions(publicHost, livekitPublicURL string) WorldOptions {
 		FFmpegTimeout:            10 * time.Minute,
 		ErrorEmailRecipientsMode: "king",
 		RecordingEnabled:         true,
+		AllowPlayerTeleport:      false,
 		PublicHost:               publicHost,
 		LivekitPublicURL:         livekitPublicURL,
 	}

@@ -74,8 +74,9 @@ func (s *Simulator) subscribeWorldOptions() error {
 				"app_url":            opts.AppURL,
 				"ffmpeg_concurrency": opts.FFmpegConcurrency,
 				"ffmpeg_timeout_s":   int64(opts.FFmpegTimeout.Seconds()),
-				"recording_enabled":  opts.RecordingEnabled,
-				"king_name":          opts.KingName,
+				"recording_enabled":     opts.RecordingEnabled,
+				"allow_player_teleport": opts.AllowPlayerTeleport,
+				"king_name":             opts.KingName,
 				"error_email_mode":   opts.ErrorEmailRecipientsMode,
 			},
 			"")
@@ -156,6 +157,21 @@ func (s *Simulator) handleWorldOptionsHTTP(e *core.RequestEvent) error {
 		"youtube_stream_key": opts.YoutubeStreamKey,
 		"public_host":        opts.PublicHost,
 		"recording_enabled":  opts.RecordingEnabled,
+	})
+}
+
+// handlePlayerTeleportOptionHTTP is the GET /api/world-options/player-teleport
+// handler. Auth-required (any logged-in users JWT) but NOT admin-gated —
+// registered non-admin players need to know whether to show the Teleport-to
+// button in the Players panel. Guests have no users JWT, so they get 401 and
+// the frontend hides the button. Returns a single boolean field.
+func (s *Simulator) handlePlayerTeleportOptionHTTP(e *core.RequestEvent) error {
+	if e.Auth == nil {
+		return e.JSON(http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+	}
+	opts := s.worldOpts.Get()
+	return e.JSON(http.StatusOK, map[string]any{
+		"allow_player_teleport": opts.AllowPlayerTeleport,
 	})
 }
 

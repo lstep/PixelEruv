@@ -174,6 +174,11 @@ type Entity struct {
 	// AFK restores it. See
 	// documentation/plans/2026-07-22-afk-state-design.md.
 	AFK bool
+	// AfkSince is the server-stamped time the AFK overlay last turned true
+	// (zero when not AFK). Replicated as DisplayName.afk_since (unix ms) so
+	// other clients can render "AFK 3m" durations in the Players panel.
+	// Transient like AFK — not persisted to PocketBase; resets on connect.
+	AfkSince time.Time
 	// lastHeartbeat is the last time the pusher confirmed the WebSocket is
 	// alive (via client.<id>.heartbeat, published on each successful WS ping).
 	// The client reaper despawns entities whose heartbeat is older than
@@ -465,6 +470,11 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 	// options (SMTP password etc. stay server-side).
 	app.OnServe().BindFunc(func(e *core.ServeEvent) error {
 		e.Router.GET("/api/world-options", s.handleWorldOptionsHTTP).Bind(apis.RequireAuth("users"))
+		// /api/world-options/player-teleport is auth-required (any logged-in
+		// user) but NOT admin-gated — registered non-admins need to know
+		// whether to show the Teleport-to button in the Players panel. Guests
+		// have no users JWT → 401 → frontend hides the button.
+		e.Router.GET("/api/world-options/player-teleport", s.handlePlayerTeleportOptionHTTP).Bind(apis.RequireAuth("users"))
 		// /api/world-king is public (no auth) — returns only the king's
 		// display name for the welcome page footer. King email is not exposed.
 		e.Router.GET("/api/world-king", s.handleWorldKingHTTP)
@@ -918,6 +928,15 @@ func (s *Simulator) subscribe() error {
 			"")
 	}); err != nil {
 		return fmt.Errorf("subscribe worldsim.entity.teleport: %w", err)
+	}
+
+	// Player-initiated teleport-to-player: a client teleports itself to another
+	// player's exact position on the same map (from the Players panel).
+	// Authorization is enforced server-side (admin always; registered non-guest
+	// only when allow_player_teleport is on; guests never). See
+	// teleport_to_entity.go.
+	if err := s.subscribeTeleportToEntity(); err != nil {
+		return fmt.Errorf("subscribe worldsim.entity.teleport_to_entity: %w", err)
 	}
 
 	// Zone metadata request-reply handler: extensions fetch zone metadata on
@@ -2179,7 +2198,12 @@ func (s *Simulator) handleSetAfk(ctx context.Context, clientID string, frame *pb
 		return
 	}
 	entity.AFK = afk
-	entity.dirtyName = true // afk rides on the DisplayName component
+	if afk {
+		entity.AfkSince = time.Now()
+	} else {
+		entity.AfkSince = time.Time{}
+	}
+	entity.dirtyName = true // afk + afk_since ride on the DisplayName component
 	entityID := entity.ID
 	displayName := entity.DisplayName
 	s.mu.Unlock()
