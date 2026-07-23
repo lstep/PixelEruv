@@ -9,10 +9,46 @@ import { getUsername, setUsername } from "../username";
 import type { AvClient } from "../net/AvClient";
 import type { WsClient } from "../net/WsClient";
 import type { ChatPanel } from "./ChatPanel";
-import { fetchWorldOptions, refreshWorldOptions } from "../net/WorldOptions";
+import { fetchWorldOptions, refreshWorldOptions, fetchAllowPlayerTeleport } from "../net/WorldOptions";
 
 const PILL_STYLE =
   "padding:8px 16px;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
+
+// ConnectedPlayer is one row in the Players panel. Mirrors the object returned
+// by GameScene.getConnectedPlayers().
+export interface ConnectedPlayer {
+  entityId: string;
+  name: string;
+  isGuest: boolean;
+  isAdmin: boolean;
+  status: number; // 0=Available, 1=Busy, 2=DND
+  afk: boolean;
+  afkSinceMs: number; // unix ms, 0 = not AFK
+  isSelf: boolean;
+}
+
+// PlayersPanelOpts is wired by GameScene via attachPlayersPanel so the modal
+// can read the current-map roster and fire ping/teleport actions.
+export interface PlayersPanelOpts {
+  getPlayers: () => ConnectedPlayer[];
+  getMapName: () => string | null;
+  isLocalAdmin: () => boolean;
+  isLocalGuest: () => boolean;
+  onPing: (entityId: string) => void;
+  onTeleportTo: (entityId: string) => void;
+}
+
+// formatAfkDuration renders a compact "3m" / "1h 2m" / "2h" duration from an
+// afkSinceMs timestamp. Returns "just now" for < 1s.
+function formatAfkDuration(afkSinceMs: number): string {
+  const secs = Math.max(0, Math.floor((Date.now() - afkSinceMs) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMin = mins % 60;
+  return remMin === 0 ? `${hrs}h` : `${hrs}h ${remMin}m`;
+}
 
 export class TopMenu {
   private container: HTMLDivElement;
@@ -66,6 +102,20 @@ export class TopMenu {
   private playerOptions: string = "";
   private authStoreUnsub: (() => void) | null = null;
   private boundDocClick: () => void;
+  // Players panel wiring (set by attachPlayersPanel). The button is hidden
+  // until attachPlayersPanel is called by GameScene.
+  private playersBtn: HTMLButtonElement;
+  private playersPanelOpts: PlayersPanelOpts | null = null;
+  private playersModal: HTMLDivElement | null = null;
+  private playersModalTimer: ReturnType<typeof setInterval> | null = null;
+  // allowPlayerTeleportCached is the world option fetched (auth-required,
+  // non-admin) when the Players modal opens, so the Teleport-to button is
+  // shown for registered non-admins when the option is on. False for guests
+  // / failures (button hidden).
+  private allowPlayerTeleportCached = false;
+  // listHostRef points at the modal's row container while the modal is open,
+  // so rerenderPlayersRows can refresh it without rebuilding the whole modal.
+  private playersListHost: HTMLDivElement | null = null;
 
   constructor() {
     this.container = document.createElement("div");
@@ -166,6 +216,17 @@ export class TopMenu {
       this.chatPanel?.toggle();
     });
     this.container.appendChild(this.chatBtn);
+
+    // Players panel toggle button — hidden until attachPlayersPanel is called
+    // by GameScene (which provides the player roster + ping/teleport callbacks).
+    this.playersBtn = document.createElement("button");
+    this.playersBtn.textContent = "👥 Players";
+    this.playersBtn.style.cssText = PILL_STYLE + "display:none;";
+    this.playersBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.togglePlayersModal();
+    });
+    this.container.appendChild(this.playersBtn);
 
     this.authBtn = document.createElement("button");
     this.authBtn.addEventListener("click", () => {
@@ -768,6 +829,207 @@ export class TopMenu {
   setChatPanel(panel: ChatPanel): void {
     this.chatPanel = panel;
     this.chatBtn.style.display = "block";
+  }
+
+  // --- Players panel ---
+
+  // attachPlayersPanel wires the Players button + modal. Called by GameScene
+  // once the WS is connected and the entity maps are populated. Shows the
+  // Players button (it is hidden until this is called).
+  attachPlayersPanel(opts: PlayersPanelOpts): void {
+    this.playersPanelOpts = opts;
+    this.playersBtn.style.display = "block";
+  }
+
+  private togglePlayersModal(): void {
+    if (this.playersModal) {
+      this.closePlayersModal();
+    } else {
+      this.openPlayersModal();
+    }
+  }
+
+  private openPlayersModal(): void {
+    if (!this.playersPanelOpts) return;
+    const opts = this.playersPanelOpts;
+
+    // Refresh the allow_player_teleport option so the Teleport-to button
+    // reflects the current server-side setting (admin may have toggled it).
+    // Non-admins hit the auth-required endpoint; guests get 401 → false.
+    fetchAllowPlayerTeleport().then((v) => {
+      this.allowPlayerTeleportCached = v;
+      // Re-render rows if the modal is still open so the button appears.
+      if (this.playersModal) this.rerenderPlayersRows();
+    });
+
+    // Backdrop + centered window. DOM (not Phaser world-space) so camera zoom
+    // does not affect it.
+    const backdrop = document.createElement("div");
+    backdrop.style.cssText =
+      "position:fixed;inset:0;z-index:30;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;font-family:sans-serif;";
+    this.playersModal = backdrop;
+
+    const win = document.createElement("div");
+    win.style.cssText =
+      "background:#2d2d3a;color:#fff;border-radius:12px;padding:16px;min-width:360px;max-width:520px;max-height:80vh;overflow:auto;box-shadow:0 8px 24px rgba(0,0,0,0.5);";
+    win.addEventListener("click", (e) => e.stopPropagation());
+    backdrop.appendChild(win);
+
+    const header = document.createElement("div");
+    header.style.cssText = "display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;";
+    const title = document.createElement("div");
+    title.style.cssText = "font-size:16px;font-weight:700;";
+    const mapName = opts.getMapName() ?? "current map";
+    title.textContent = `Connected players — ${mapName}`;
+    header.appendChild(title);
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "✕";
+    closeBtn.style.cssText = PILL_STYLE + "padding:4px 10px;font-size:14px;background:#444;";
+    closeBtn.addEventListener("click", () => this.closePlayersModal());
+    header.appendChild(closeBtn);
+    win.appendChild(header);
+
+    const listHost = document.createElement("div");
+    listHost.style.cssText = "display:flex;flex-direction:column;gap:6px;";
+    win.appendChild(listHost);
+    this.playersListHost = listHost;
+
+    this.rerenderPlayersRows();
+    // Re-render every 1s so AFK durations tick up and join/leave
+    // reflects without reopening.
+    this.playersModalTimer = setInterval(() => this.rerenderPlayersRows(), 1000);
+
+    backdrop.addEventListener("click", () => this.closePlayersModal());
+    document.body.appendChild(backdrop);
+
+    // Esc to close.
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") {
+        this.closePlayersModal();
+      }
+    };
+    document.addEventListener("keydown", onKey, { once: true });
+    // Also clean up the keydown listener if the modal is closed by other means.
+    this.playersModal.addEventListener("remove-modal-listeners" as any, () => {
+      document.removeEventListener("keydown", onKey);
+    });
+  }
+
+  private closePlayersModal(): void {
+    if (this.playersModalTimer) {
+      clearInterval(this.playersModalTimer);
+      this.playersModalTimer = null;
+    }
+    if (this.playersModal) {
+      this.playersModal.dispatchEvent(new Event("remove-modal-listeners"));
+      this.playersModal.remove();
+      this.playersModal = null;
+    }
+    this.playersListHost = null;
+  }
+
+  // rerenderPlayersRows rebuilds the row list inside the open modal. Called
+  // on open, every 1s while open (live AFK duration + roster changes), and
+  // once the allow_player_teleport option resolves (so the Teleport-to
+  // button appears without reopening).
+  private rerenderPlayersRows(): void {
+    if (!this.playersModal || !this.playersListHost || !this.playersPanelOpts) return;
+    const opts = this.playersPanelOpts;
+    const listHost = this.playersListHost;
+    const players = opts.getPlayers();
+    listHost.innerHTML = "";
+    if (players.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "color:#aaa;font-size:13px;padding:8px;";
+      empty.textContent = "No other players on this map.";
+      listHost.appendChild(empty);
+      return;
+    }
+    for (const p of players) {
+      listHost.appendChild(this.buildPlayerRow(p, opts));
+    }
+  }
+
+  // buildPlayerRow renders one player row in the modal: status dot, name +
+  // badges, AFK duration, and Ping / Teleport-to buttons.
+  private buildPlayerRow(
+    p: ConnectedPlayer,
+    opts: PlayersPanelOpts,
+  ): HTMLDivElement {
+    const row = document.createElement("div");
+    row.style.cssText =
+      "display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:#1a1a2e;";
+
+    // Status dot (green/yellow/red). AFK overlays as a dimmed gray dot.
+    const dot = document.createElement("span");
+    const dotColor = p.afk ? "#6b7280" : p.status === 0 ? "#22c55e" : p.status === 1 ? "#eab308" : "#ef4444";
+    dot.style.cssText = `flex:0 0 10px;width:10px;height:10px;border-radius:50%;background:${dotColor};`;
+    row.appendChild(dot);
+
+    const nameWrap = document.createElement("div");
+    nameWrap.style.cssText = "flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;";
+    const nameRow = document.createElement("div");
+    nameRow.style.cssText = "display:flex;align-items:center;gap:6px;flex-wrap:wrap;";
+    const name = document.createElement("span");
+    name.style.cssText = "font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+    name.textContent = p.name + (p.isSelf ? " (you)" : "");
+    nameRow.appendChild(name);
+    if (p.isGuest) {
+      const badge = document.createElement("span");
+      badge.textContent = "GUEST";
+      badge.style.cssText = "font-size:10px;font-weight:700;background:#6b7280;color:#fff;padding:1px 5px;border-radius:8px;";
+      nameRow.appendChild(badge);
+    }
+    if (p.isAdmin) {
+      const badge = document.createElement("span");
+      badge.textContent = "admin";
+      badge.style.cssText = "font-size:10px;font-weight:700;background:#c0392b;color:#fff;padding:1px 5px;border-radius:8px;";
+      nameRow.appendChild(badge);
+    }
+    nameWrap.appendChild(nameRow);
+
+    // AFK duration line.
+    if (p.afk) {
+      const afkLine = document.createElement("div");
+      afkLine.style.cssText = "font-size:11px;color:#9ca3af;";
+      afkLine.textContent = p.afkSinceMs > 0 ? `AFK ${formatAfkDuration(p.afkSinceMs)}` : "AFK";
+      nameWrap.appendChild(afkLine);
+    }
+    row.appendChild(nameWrap);
+
+    // Action buttons (not on self row).
+    if (!p.isSelf) {
+      // Ping — disabled when target is DND (server drops those pings).
+      const pingBtn = document.createElement("button");
+      pingBtn.textContent = "🔔 Ping";
+      pingBtn.style.cssText = PILL_STYLE + "padding:4px 10px;font-size:12px;";
+      if (p.status === 2) {
+        pingBtn.disabled = true;
+        pingBtn.title = "DND — cannot be pinged";
+        pingBtn.style.opacity = "0.4";
+        pingBtn.style.cursor = "not-allowed";
+      } else {
+        pingBtn.addEventListener("click", () => opts.onPing(p.entityId));
+      }
+      row.appendChild(pingBtn);
+
+      // Teleport-to — shown only when the local viewer is an admin, OR a
+      // registered (non-guest) user AND allow_player_teleport is on. The
+      // button visibility is cosmetic; worldsim re-checks authorization.
+      const showTeleport = opts.isLocalAdmin() || (!opts.isLocalGuest() && this.allowPlayerTeleportCached);
+      if (showTeleport) {
+        const tpBtn = document.createElement("button");
+        tpBtn.textContent = "📍 Teleport";
+        tpBtn.title = "Teleport to this player's location";
+        tpBtn.style.cssText = PILL_STYLE + "padding:4px 10px;font-size:12px;background:#4c5cf0;";
+        tpBtn.addEventListener("click", () => {
+          opts.onTeleportTo(p.entityId);
+          this.closePlayersModal();
+        });
+        row.appendChild(tpBtn);
+      }
+    }
+    return row;
   }
 
   // refreshAuth updates the Login/Logout button and Register button to match

@@ -80,6 +80,9 @@ func TestHandleSetAfk(t *testing.T) {
 	if !a.dirtyName {
 		t.Error("dirtyName not set; afk rides on the DisplayName component")
 	}
+	if a.AfkSince.IsZero() {
+		t.Error("entity.AfkSince = zero, want a timestamp set when AFK turns true")
+	}
 
 	// AFK must NOT broadcast on worldsim.player_status.
 	if _, err := statusSub.NextMsg(100 * time.Millisecond); err == nil {
@@ -94,6 +97,9 @@ func TestHandleSetAfk(t *testing.T) {
 
 	if a.AFK {
 		t.Error("entity.AFK = true, want false")
+	}
+	if !a.AfkSince.IsZero() {
+		t.Error("entity.AfkSince should reset to zero when AFK clears")
 	}
 	if !a.dirtyName {
 		t.Error("dirtyName not set on AFK clear")

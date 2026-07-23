@@ -983,6 +983,28 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("ping publish failed", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_TeleportTo:
+			// Teleport-to-player: forward to worldsim.entity.teleport_to_entity.
+			// Worldsim enforces authorization server-side (admin always;
+			// registered non-guest only when allow_player_teleport is on;
+			// guests never) and moves the sender to the target's exact
+			// position on the same map. Fire-and-forget — the sender's client
+			// sees its own position update via replication.
+			pctx, pspan := s.tracer.Start(ctx, "pusher.nats.publish.teleport_to")
+			pspan.SetAttributes(attribute.String("client.id", clientID), attribute.String("teleport_to.entity_id", p.TeleportTo.GetEntityId()))
+			teleportPayload := map[string]string{
+				"sender_client_id": clientID,
+				"target_entity_id": p.TeleportTo.GetEntityId(),
+			}
+			teleportBytes, _ := json.Marshal(teleportPayload)
+			teleportMsg := &nats.Msg{Subject: "worldsim.entity.teleport_to_entity", Data: teleportBytes}
+			otelinternal.Inject(pctx, teleportMsg)
+			if err := s.nc.PublishMsg(teleportMsg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish teleport_to")
+				s.logger.Warn("teleport_to publish failed", "client", clientID, "err", err)
+			}
+			pspan.End()
 		}
 		}
 	}

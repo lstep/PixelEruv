@@ -120,6 +120,15 @@ button:hover { opacity: 0.9; }
   </section>
 
   <section>
+    <h2>Player teleport</h2>
+    <p class="hint">When off, only admins can teleport to a player's location from the Players panel. When on, registered (non-guest) players can too. Guests can never teleport. Hot-reloaded on save.</p>
+    <div class="checkbox-row">
+      <input type="checkbox" id="allow_player_teleport" name="allow_player_teleport" {{if .Fields.AllowPlayerTeleport}}checked{{end}}>
+      <label for="allow_player_teleport">Allow registered players to teleport to another player</label>
+    </div>
+  </section>
+
+  <section>
     <h2>Read-only (set via env var)</h2>
     <p class="hint">These are read at container startup and cannot be hot-reloaded. Change them in <code>docker-compose.yml</code> / <code>.env</code> and restart the stack.</p>
     <label for="public_host">PUBLIC_HOST</label>

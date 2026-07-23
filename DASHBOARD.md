@@ -919,3 +919,33 @@ No backward compat: the old `state === "on"` glow path is removed. Existing maps
 ## Roadmap (future features)
 
 See `ROADMAP.md`.
+
+## Players panel + teleport-to-player
+
+**Status:** Implemented (branch `feat/players-panel`) — `make proto`, `go build ./...`, `go test ./internal/worldsim/`, `npm run build`, `tsc --noEmit` all pass.
+
+A "👥 Players" button in the floating TopMenu opens a centered DOM modal listing all connected players on the **current map** (replication is same-map only, so no cross-map roster is needed). Each row shows: presence status dot (green/yellow/red, gray when AFK), name + `GUEST`/`admin` badges, AFK label with live duration ("AFK 3m"), a 🔔 Ping button (disabled with tooltip on DND targets — server drops those pings), and a 📍 Teleport button (admin-gated, or registered non-guest when the world option is on). The self row is pinned to the top with no action buttons. The list re-renders every 1s while open so AFK durations tick up and join/leave reflects without reopening.
+
+### What was built
+
+- **`proto/components.proto`** — `uint64 afk_since = 6` on `DisplayName` (unix ms, 0 = not AFK). Server-stamped so all clients see the same duration regardless of join time.
+- **`proto/frames.proto`** — `TeleportToFrame { string entity_id = 1; }` + `teleport_to = 14` on `ClientFrame`.
+- **`backend/internal/worldsim/worldsim.go`** — `Entity.AfkSince time.Time`; `handleSetAfk` stamps `time.Now()` on true→false transitions (zero on clear); new route `GET /api/world-options/player-teleport` (auth-required via users JWT, **non-admin OK** — registered non-admins need to learn the flag; guests get 401 → frontend hides the button).
+- **`backend/internal/worldsim/replication.go`** — `afkSinceMs()` helper; `AfkSince` added at the 3 `DisplayName` marshal sites.
+- **`backend/internal/worldsim/teleport_to_entity.go`** (NEW) — `worldsim.entity.teleport_to_entity` handler. Same-map only. Enforces server-side: admin always; registered non-guest only when `allow_player_teleport` is on; guests never. Applies the position mutation **after** the auth check (initial bug moved the sender before checking). Audits `player.teleport_to_entity` with result `delivered`/`forbidden`/`cross_map`/`not_connected`.
+- **`backend/internal/worldsim/worldoptions.go`** — `AllowPlayerTeleport bool` field (default false).
+- **`backend/internal/worldsim/worldoptions_sub.go`** — audit detail includes `allow_player_teleport`; new `handlePlayerTeleportOptionHTTP`.
+- **`backend/internal/pusher/pusher.go`** — `case *pb.ClientFrame_TeleportTo` forwards to `worldsim.entity.teleport_to_entity` (fire-and-forget, mirrors kick/ping).
+- **`backend/cmd/admin/`** — `allow_player_teleport` checkbox in World Options (server.go form fields + template).
+- **`frontend/src/ui/TopMenu.ts`** — Players button + `attachPlayersPanel` + modal (DOM, dark theme). `ConnectedPlayer`/`PlayersPanelOpts` interfaces exported. `formatAfkDuration` helper. `allowPlayerTeleportCached` fetched on modal open via `fetchAllowPlayerTeleport`.
+- **`frontend/src/scenes/GameScene.ts`** — `afkSinceByEntity` map (parsed at spawn + update, cleared/deleted alongside `afkByEntity`); `getConnectedPlayers()` returns current-map players incl. self, sorted self-first then alphabetical; `attachPlayersPanel` wired in `create()`.
+- **`frontend/src/net/WsClient.ts`** — `sendTeleportTo(entityId)`.
+- **`frontend/src/net/WorldOptions.ts`** — `fetchAllowPlayerTeleport()` hitting the new non-admin endpoint, cached separately from the admin-gated `fetchWorldOptions`.
+- **Tests** — `worldsim_afk_test.go` asserts `AfkSince` set on true / reset on false; `teleport_to_entity_test.go` covers admin ok, registered allowed when on, registered rejected when off, guest rejected, cross-map rejected.
+
+### Notes
+
+- **Server-side enforcement is authoritative** — the frontend button visibility is cosmetic. A non-admin with the button hidden can't craft a TeleportToFrame that works; worldsim rejects it.
+- **AFK duration uses client `Date.now() - afkSinceMs`** (server-stamped). Minor clock skew acceptable for a UI hint.
+- **No new persisted fields** — `afk_since` is transient like `afk`; `allow_player_teleport` lives in the existing `world_options` KV bucket.
+- **Modal is DOM** (not Phaser world-space) → unaffected by camera zoom.
