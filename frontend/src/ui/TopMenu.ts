@@ -12,7 +12,7 @@ import type { ChatPanel } from "./ChatPanel";
 import { fetchWorldOptions, refreshWorldOptions, fetchAllowPlayerTeleport } from "../net/WorldOptions";
 
 const PILL_STYLE =
-  "padding:8px 16px;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
+  "padding:8px 16px;line-height:1.5;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
 
 // ConnectedPlayer is one row in the Players panel. Mirrors the object returned
 // by GameScene.getConnectedPlayers().
