@@ -337,7 +337,8 @@ func (s *SQLiteStore) sessionPairingQuery(filterSub string) ([]sessionRow, error
 }
 
 // sessionFromRow converts a sessionRow into a Session, computing the
-// duration. Open sessions (no disconnect) use now as the end.
+// duration. Open sessions (no disconnect) are left with a zero
+// DisconnectedAt and Duration=0; capOpenSessions fills those in.
 func sessionFromRow(r sessionRow, now time.Time) (Session, error) {
 	connected, err := time.Parse(time.RFC3339, r.ConnectedAt)
 	if err != nil {
@@ -356,12 +357,50 @@ func sessionFromRow(r sessionRow, now time.Time) (Session, error) {
 		sess.Duration = disc.Sub(connected)
 	} else {
 		sess.Open = true
-		sess.Duration = now.Sub(connected)
-		if sess.Duration < 0 {
-			sess.Duration = 0
-		}
 	}
 	return sess, nil
+}
+
+// capOpenSessions fixes the duration of open sessions (no disconnect event).
+// An open session is capped at the player's next connect time — if the player
+// reconnected with a new client_id, the old WebSocket was dropped, so the
+// session ended when the new one started. The most recent open session per
+// player counts up to now. This prevents orphaned connects (server crash,
+// lost disconnect event) from inflating total session time to absurd values.
+func capOpenSessions(sessions []Session, now time.Time) {
+	// Sort by connected_at ascending to find "next connect" per session.
+	// sessions comes from sessionPairingQuery ordered DESC, so reverse.
+	type sorted struct {
+		idx  int
+		conn time.Time
+	}
+	sortedSessions := make([]sorted, len(sessions))
+	for i, s := range sessions {
+		sortedSessions[i] = sorted{i, s.ConnectedAt}
+	}
+	sort.Slice(sortedSessions, func(i, j int) bool {
+		return sortedSessions[i].conn.Before(sortedSessions[j].conn)
+	})
+
+	for i, ss := range sortedSessions {
+		sess := &sessions[ss.idx]
+		if !sess.Open {
+			continue
+		}
+		// Find the next connect for the same player (any client_id).
+		var end time.Time
+		if i+1 < len(sortedSessions) {
+			end = sortedSessions[i+1].conn
+		} else {
+			// Most recent session — count up to now.
+			end = now
+		}
+		if end.Before(sess.ConnectedAt) {
+			end = sess.ConnectedAt
+		}
+		sess.DisconnectedAt = end
+		sess.Duration = end.Sub(sess.ConnectedAt)
+	}
 }
 
 func (s *SQLiteStore) ListPlayers() ([]PlayerSummary, error) {
@@ -405,19 +444,27 @@ func (s *SQLiteStore) ListPlayers() ([]PlayerSummary, error) {
 		return nil, err
 	}
 
-	// Session durations per sub.
+	// Session durations per sub. Build sessions, cap open sessions at the
+	// next connect for the same player, then sum.
 	now := time.Now().UTC()
 	pairs, err := s.sessionPairingQuery("")
 	if err != nil {
 		return nil, err
 	}
-	totalNs := make(map[string]int64)
+	sessionsBySub := make(map[string][]Session)
 	for _, r := range pairs {
 		sess, err := sessionFromRow(r, now)
 		if err != nil {
 			return nil, err
 		}
-		totalNs[r.Sub] += int64(sess.Duration)
+		sessionsBySub[r.Sub] = append(sessionsBySub[r.Sub], sess)
+	}
+	totalNs := make(map[string]int64)
+	for sub, sessions := range sessionsBySub {
+		capOpenSessions(sessions, now)
+		for _, sess := range sessions {
+			totalNs[sub] += int64(sess.Duration)
+		}
 	}
 
 	out := make([]PlayerSummary, 0, len(subs))
@@ -460,6 +507,7 @@ func (s *SQLiteStore) PlayerSessions(sub string) ([]Session, error) {
 		}
 		out = append(out, sess)
 	}
+	capOpenSessions(out, now)
 	return out, nil
 }
 

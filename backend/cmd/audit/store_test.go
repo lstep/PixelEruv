@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -220,5 +221,55 @@ func TestPlayerActivityEvents(t *testing.T) {
 		if ev.Actor.ClientID == "c_old" {
 			t.Errorf("old event should not be in activity events")
 		}
+	}
+}
+
+func TestCapOpenSessions(t *testing.T) {
+	store := newTestStore(t)
+	// Use recent timestamps so the final open session's "now" delta is small.
+	base := time.Now().UTC().Add(-2 * time.Hour)
+
+	// Simulate the Luc bug: many orphaned connects (no disconnect) spread over
+	// 2 hours, then a final open session. Without capping, each orphaned connect
+	// counts up to now, inflating total time to ~2h * N orphans.
+	for i := 0; i < 10; i++ {
+		cid := fmt.Sprintf("c_%d", i)
+		insertEvent(t, store, "client.connected", "sub1", "e1", cid, "Alice", base.Add(time.Duration(i)*6*time.Minute))
+		// No disconnect — orphaned.
+	}
+	// Final session (also open — the player is currently connected).
+	insertEvent(t, store, "client.connected", "sub1", "e1", "c_final", "Alice", base.Add(1*time.Hour))
+
+	players, err := store.ListPlayers()
+	if err != nil {
+		t.Fatalf("ListPlayers: %v", err)
+	}
+	if len(players) != 1 {
+		t.Fatalf("expected 1 player, got %d", len(players))
+	}
+
+	// With capping: each orphaned session i is capped at the next connect
+	// (base + (i+1)*6m), so each contributes 6m = 10*6m = 60m.
+	// The final session counts from base+1h to now (~1h).
+	// Total ~ 2h. Without capping: 10 orphans * ~2h + 1h = ~21h (the bug).
+	dur := time.Duration(players[0].TotalSessionNs)
+	if dur > 3*time.Hour {
+		t.Errorf("total session = %v, want <= 3h (capping should prevent inflation)", dur)
+	}
+	if dur < 1*time.Hour {
+		t.Errorf("total session = %v, want >= 1h (10 capped sessions + final open session)", dur)
+	}
+
+	// Also verify via PlayerSessions.
+	sessions, err := store.PlayerSessions("sub1")
+	if err != nil {
+		t.Fatalf("PlayerSessions: %v", err)
+	}
+	var total time.Duration
+	for _, s := range sessions {
+		total += s.Duration
+	}
+	if total > 3*time.Hour {
+		t.Errorf("PlayerSessions total = %v, want <= 3h", total)
 	}
 }
