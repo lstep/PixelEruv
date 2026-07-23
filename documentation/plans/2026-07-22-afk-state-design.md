@@ -44,6 +44,8 @@ Constants in `AfkDetector.ts`, easily tuned. Could later be configurable via wor
 
 AFK does NOT activate if the player is in an A/V room with at least one other participant (`avClient.isInMeeting()` = `room !== null && remoteParticipants.size > 0`). This prevents false-positiving someone in a long video meeting who doesn't move the mouse. A solo user in a room (no remote participants) is NOT exempt — they can still go AFK.
 
+The exemption prevents activation only — it does NOT clear existing AFK. This matters for proximity/zone A/V: when a second player walks up to an already-AFK player, a LiveKit room forms and `isInMeeting()` flips true, but the AFK player has not actually returned. Clearing AFK there would wake them with no input. Existing AFK clears only on genuine user activity (mouse/keyboard/touch/wheel handlers), which is immediate and does not wait for the next check tick.
+
 ### Tab-visibility A/V gating is client-side only, debounced both directions
 
 When the tab is hidden or window blurred, AvClient mutes all tracks (mic, cam, screen) without disconnecting from the room. When the tab returns, tracks restore to the user's manual preferences. Debounced 3s in both directions to avoid WebRTC track churn on rapid tab switching. Applies even in meetings — no A/V broadcast while the tab is not in focus.
