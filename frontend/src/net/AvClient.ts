@@ -499,8 +499,8 @@ export class AvClient {
   // setAfkMuted toggles the AFK overlay auto-mute. When AFK is on, all local
   // tracks are muted (mic, camera, screen) but the player stays in the room
   // (unlike DND, which disconnects). When AFK clears, tracks restore to the
-  // user's manual preferences if the tab is also visible. Does NOT change the
-  // stored micMuted/cameraEnabled preferences — only the actual track state.
+  // user's manual preferences. Does NOT change the stored micMuted/cameraEnabled
+  // preferences — only the actual track state.
   setAfkMuted(afk: boolean): void {
     this.afkMuted = afk;
     this.applyAutoMute();
