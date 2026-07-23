@@ -533,6 +533,18 @@ export class GameScene extends Phaser.Scene {
   // the background (new Audio() created on-the-fly gets blocked by autoplay
   // policy in hidden tabs). Reused for each ping by resetting currentTime.
   private pingAudio: HTMLAudioElement | null = null;
+  // Persistent HTMLAudioElement for the "another player joined" sound. Same
+  // pre-create + click-unlock pattern as pingAudio so it can play in
+  // background tabs. Plays only when another player's avatar spawns after
+  // the initial world snapshot (not for props, the local player, the initial
+  // snapshot, or spawns buffered during a map transition).
+  private joinAudio: HTMLAudioElement | null = null;
+  // True once the first replication batch has been processed. The first
+  // batch is the initial world snapshot (all entities already present when
+  // the client connected); subsequent spawns are genuine joins. Reset to
+  // false on map transition so the post-restart snapshot doesn't trigger a
+  // flurry of join sounds for players already on the new map.
+  private initialSnapshotDone = false;
   // Entity IDs in the local player's current proximity chat group, computed
   // each frame via connected-components on feet-distance ≤ 2 tiles (matching
   // the server's runProximityClustering). Used to highlight group members.
@@ -1550,11 +1562,22 @@ export class GameScene extends Phaser.Scene {
     this.pingAudio = new Audio("/assets/sounds/clic.wav");
     this.pingAudio.preload = "auto";
     this.pingAudio.volume = 1.0;
+    // Same pre-create + click-unlock pattern as pingAudio so the join sound
+    // can play in background tabs (see pingAudio comment above).
+    this.joinAudio = new Audio("/assets/sounds/join.wav");
+    this.joinAudio.preload = "auto";
+    this.joinAudio.volume = 0.7;
     document.addEventListener("click", () => {
       if (this.pingAudio) {
         this.pingAudio.play().then(() => {
           this.pingAudio!.pause();
           this.pingAudio!.currentTime = 0;
+        }).catch(() => {});
+      }
+      if (this.joinAudio) {
+        this.joinAudio.play().then(() => {
+          this.joinAudio!.pause();
+          this.joinAudio!.currentTime = 0;
         }).catch(() => {});
       }
       if (Notification && Notification.permission === "default") {
@@ -1570,7 +1593,7 @@ export class GameScene extends Phaser.Scene {
       this.transitioning = false;
       const pending = this.pendingSpawns;
       this.pendingSpawns = [];
-      this.processSpawns(pending);
+      this.processSpawns(pending, false);
     } else {
       this.transitioning = false;
     }
@@ -1979,6 +2002,10 @@ export class GameScene extends Phaser.Scene {
     this.transitioning = true;
     this.cancelAutoMove();
     this.pendingSpawns = [];
+    // Reset so the post-restart snapshot (all entities already on the new
+    // map) doesn't trigger join sounds. Set back to true after the first
+    // replication batch on the new map completes.
+    this.initialSnapshotDone = false;
     // Apply map options (e.g. day_night_enabled) before loading assets so the
     // overlay is correct when the scene restarts.
     if (mapOptions !== undefined) this.applyMapOptions(mapOptions);
@@ -2128,14 +2155,25 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
-    this.processSpawns(batch.spawns);
+    // The first replication batch is the initial world snapshot (all
+    // entities already present when the client connected); subsequent
+    // spawns are genuine joins. playJoinSound is false for the snapshot so
+    // the client doesn't emit a flurry of join sounds on load. It's also
+    // false for spawns buffered during a map transition (passed explicitly
+    // below) since those players were already on the new map.
+    const playJoinSound = this.initialSnapshotDone;
+    this.initialSnapshotDone = true;
+    this.processSpawns(batch.spawns, playJoinSound);
     this.processUpdatesAndDestroys(batch);
   }
 
   // processSpawns creates avatars for entities in the given spawn list.
   // Extracted from handleReplication so it can be called both during normal
   // replication and after a map transition (from buffered pendingSpawns).
-  private processSpawns(spawns: ReplicationBatchView["spawns"]): void {
+  // playJoinSound is true only for spawns arriving after the initial world
+  // snapshot; processSpawns plays the join sound for player avatars (not
+  // props, not the local player) when it is true.
+  private processSpawns(spawns: ReplicationBatchView["spawns"], playJoinSound = false): void {
     for (const spawn of spawns) {
       if (this.avatars.has(spawn.entityId)) continue;
 
@@ -2309,6 +2347,15 @@ export class GameScene extends Phaser.Scene {
         }
       }
       console.log(`spawned ${spawn.entityId} at (${x}, ${y})`);
+      // Play the join sound for another player's avatar spawning after the
+      // initial world snapshot. Skipped for the local player (you don't
+      // want a sound when you join your own world), for props (gid !== 0
+      // branch above already `continue`d), and when playJoinSound is false
+      // (initial snapshot or map-transition buffered spawns).
+      if (playJoinSound && spawn.entityId !== this.myEntityId && this.joinAudio) {
+        this.joinAudio.currentTime = 0;
+        this.joinAudio.play().catch(() => {});
+      }
     }
   }
 
