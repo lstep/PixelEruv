@@ -239,6 +239,7 @@ type Simulator struct {
 // used by startPositionPersister to skip unchanged entities.
 type savedPos struct {
 	x, y  float32
+	dir   uint32
 	mapID string
 }
 
@@ -1158,6 +1159,7 @@ func (s *Simulator) startPositionPersister(ctx context.Context) {
 type positionSave struct {
 	entityID string
 	x, y     float32
+	dir      uint32
 	mapID    string
 }
 
@@ -1171,10 +1173,10 @@ func (s *Simulator) collectChangedPositionsLocked() []positionSave {
 			continue
 		}
 		last, ok := s.lastSavedPos[e.ID]
-		if ok && last.x == e.Position.X && last.y == e.Position.Y && last.mapID == e.Position.MapId {
+		if ok && last.x == e.Position.X && last.y == e.Position.Y && last.dir == e.Position.Dir && last.mapID == e.Position.MapId {
 			continue
 		}
-		toSave = append(toSave, positionSave{entityID: e.ID, x: e.Position.X, y: e.Position.Y, mapID: e.Position.MapId})
+		toSave = append(toSave, positionSave{entityID: e.ID, x: e.Position.X, y: e.Position.Y, dir: e.Position.Dir, mapID: e.Position.MapId})
 	}
 	return toSave
 }
@@ -1192,7 +1194,7 @@ func (s *Simulator) persistChangedPositions(ctx context.Context) {
 	}
 
 	for _, p := range toSave {
-		if err := s.userStore.SavePosition(p.entityID, p.x, p.y); err != nil {
+		if err := s.userStore.SavePosition(p.entityID, p.x, p.y, p.dir); err != nil {
 			s.logger.WarnContext(ctx, "periodic position save failed", "err", err, "entity", p.entityID)
 			continue
 		}
@@ -1201,7 +1203,7 @@ func (s *Simulator) persistChangedPositions(ctx context.Context) {
 			continue
 		}
 		s.mu.Lock()
-		s.lastSavedPos[p.entityID] = savedPos{x: p.x, y: p.y, mapID: p.mapID}
+		s.lastSavedPos[p.entityID] = savedPos{x: p.x, y: p.y, dir: p.dir, mapID: p.mapID}
 		s.mu.Unlock()
 	}
 }
@@ -1349,6 +1351,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 
 	defaultEntityID := "e_" + clientID[2:]
 	spawnX, spawnY := float32(10), float32(10)
+	spawnDir := uint32(0) // 0=down; restored from PB below for logged-in users
 	mapName := s.defaultMap
 	if mapName == "" {
 		// Fallback: pick the first loaded map.
@@ -1392,6 +1395,8 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 			if user.PosX != 0 || user.PosY != 0 {
 				spawnX, spawnY = user.PosX, user.PosY
 			}
+			// Restore saved facing direction. recordToUser clamps to 0-3.
+			spawnDir = user.Dir
 			// Restore saved map if it exists and is loaded.
 			if user.MapID != "" {
 				if _, ok := s.maps[user.MapID]; ok {
@@ -1467,7 +1472,7 @@ func (s *Simulator) provisionClient(ctx context.Context, clientID, sub, ip, devi
 
 	e := &Entity{
 		ID:       entityID,
-		Position: &pb.Position{X: spawnX, Y: spawnY, MapId: mapName, Dir: 0},
+		Position: &pb.Position{X: spawnX, Y: spawnY, MapId: mapName, Dir: spawnDir},
 		NetworkSession: &NetworkSession{
 			ClientID: clientID,
 			Input:    &pb.InputState{},
@@ -1547,6 +1552,7 @@ type despawnClientResult struct {
 	clientID       string
 	displayName    string
 	posX, posY     float32
+	dir            uint32
 	mapID          string
 	replacedByNewer bool
 	hadEntity      bool
@@ -1623,6 +1629,7 @@ func (s *Simulator) despawnClientLocked(ctx context.Context, clientID string) de
 	s.destroyedEntities = append(s.destroyedEntities, e.ID)
 	result.posX = e.Position.X
 	result.posY = e.Position.Y
+	result.dir = e.Position.Dir
 	result.mapID = e.Position.MapId
 	return result
 }
@@ -1644,9 +1651,9 @@ func (s *Simulator) despawnClient(ctx context.Context, clientID string) {
 		return
 	}
 
-	// Save position and map_id to PocketBase outside the lock (network I/O).
+	// Save position, dir, and map_id to PocketBase outside the lock (network I/O).
 	if s.userStore != nil {
-		if err := s.userStore.SavePosition(result.entityID, result.posX, result.posY); err != nil {
+		if err := s.userStore.SavePosition(result.entityID, result.posX, result.posY, result.dir); err != nil {
 			s.logger.WarnContext(ctx, "failed to save user position", "err", err, "entity", result.entityID)
 		}
 		if err := s.userStore.SaveMapID(result.entityID, result.mapID); err != nil {

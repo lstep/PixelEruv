@@ -17,6 +17,7 @@ type UserRecord struct {
 	DisplayName string
 	PosX        float32
 	PosY        float32
+	Dir         uint32 // players.dir — last facing direction (0=down,1=left,2=right,3=up), persisted across sessions
 	SpriteBase  string
 	MapID       string
 	IP          string
@@ -69,8 +70,9 @@ func (s *UserStore) FindOrCreateUser(sub, entityID, defaultMapID, ip string) (*U
 	return user, nil
 }
 
-// SavePosition updates the player's position in PocketBase.
-func (s *UserStore) SavePosition(entityID string, x, y float32) error {
+// SavePosition updates the player's position and facing direction in
+// PocketBase. dir is the Position component dir (0=down,1=left,2=right,3=up).
+func (s *UserStore) SavePosition(entityID string, x, y float32, dir uint32) error {
 	record, err := s.findByEntityIDRecord(entityID)
 	if err != nil {
 		return fmt.Errorf("find user for save: %w", err)
@@ -81,6 +83,7 @@ func (s *UserStore) SavePosition(entityID string, x, y float32) error {
 
 	record.Set("pos_x", x)
 	record.Set("pos_y", y)
+	record.Set("dir", dir)
 	return s.app.Save(record)
 }
 
@@ -333,6 +336,13 @@ func (s *UserStore) isAdminUser(userID string) bool {
 }
 
 func recordToUser(r *core.Record) *UserRecord {
+	// Clamp dir to the valid 0-3 range. PB is a trust boundary and the field
+	// could be set out-of-range via the admin UI; an invalid value would
+	// index out of bounds in the client's DIR_FRAME_START array.
+	dir := uint32(r.GetInt("dir"))
+	if dir > 3 {
+		dir = 0
+	}
 	return &UserRecord{
 		ID:          r.Id,
 		UserID:      r.GetString("user_id"),
@@ -340,6 +350,7 @@ func recordToUser(r *core.Record) *UserRecord {
 		DisplayName: r.GetString("display_name"),
 		PosX:        float32(r.GetFloat("pos_x")),
 		PosY:        float32(r.GetFloat("pos_y")),
+		Dir:         dir,
 		SpriteBase:  r.GetString("sprite_base"),
 		MapID:       r.GetString("map_id"),
 		IP:          r.GetString("ip"),
