@@ -1417,6 +1417,11 @@ export class GameScene extends Phaser.Scene {
         this.myEntityId = entityId || null;
         this.pendingInputs = [];
         this.inputDirty = true;
+        // Reset so the post-reconnect snapshot (all entities re-spawned by the
+        // server) doesn't trigger a flurry of join sounds. Set back to true
+        // after the first replication batch completes (handleReplication).
+        // Mirrors the same reset in handleMapTransition.
+        this.initialSnapshotDone = false;
         // Re-apply map and player options from the fresh AuthResult so a
         // reconnect restores the saved zoom level and map options (e.g.
         // day/night) instead of resetting to defaults. onReady does the same
