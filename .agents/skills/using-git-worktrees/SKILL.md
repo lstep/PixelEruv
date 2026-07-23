@@ -31,8 +31,8 @@ ls -d worktrees 2>/dev/null      # Alternative
 
 ```bash
 # Check for worktree preferences in project config
-grep -i "worktree.*director" .windsurf/rules.md 2>/dev/null
-grep -i "worktree.*director" CLAUDE.md 2>/dev/null
+grep -i "worktree.*directory" .windsurf/rules.md 2>/dev/null
+grep -i "worktree.*directory" CLAUDE.md 2>/dev/null
 ```
 
 **If preference specified:** Use it without asking.

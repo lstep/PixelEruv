@@ -602,6 +602,24 @@ Each tick, sort entities in AOI by priority (distance, gameplay relevance). Send
 
 Each phase is independently shippable and testable. Phases build on each other but don't require later phases to be useful.
 
+### 5.0 Recommended Implementation Order
+
+The phases below are numbered by logical grouping, not by recommended build order. Build in this sequence:
+
+| Order | Phase | Why this order |
+|---|---|---|
+| **1st** | Phase 2 (AOI grid) | Highest-impact performance change. Zero prerequisites — works on existing finite maps. Converts O(N*M) replication to O(N_local*M). Without this, any generated large map chokes at ~50 concurrent players. Foundation that makes large maps viable at all. |
+| **2nd** | Phase 1 (infinite maps) | Small change, unblocks worldgen output. Quick once AOI is in place. No performance value on its own but required for worldgen to produce loadable maps. |
+| **3rd** | Phase 4 (worldgen terrain + biomes) | Now you can generate huge maps AND populate them without hitting the replication ceiling. The exciting visible deliverable. |
+| **4th** | Phase 3 (delta compression) | Second-order bandwidth optimization. Valuable but not urgent until player counts rise. Protocol change — ship when there's time to handle the migration. |
+| **5th** | Phase 5 (chunk streaming) | Needed only when generated maps grow large enough that full-load is too slow/memory-heavy. Not needed for 200x200 worlds. |
+| **6th** | Phase 6 (NPCs, history, quests) | The ambitious story layer. Builds on worldgen (Phase 4) and chunk streaming (Phase 5 for on-demand NPC spawn). |
+| **7th** | Phase 7 (sharding) | Only if you exceed hundreds of concurrent players. Explicitly deferred — AOI grid (Phase 2) makes future sharding easier since spatial partitioning is already in place. |
+
+**Rationale for Phase 2 first (not Phase 1):** Phase 1 is the smallest change but delivers no performance value. Starting there feels like progress but doesn't address the actual scaling problem. Phase 2 has zero prerequisites, works on current finite maps, and is the foundation that makes large maps viable. Building worldgen (Phase 4) before AOI would produce maps you can't actually populate — a 2000x2000 map with 100 players and no AOI = 10,000 replication pairs per tick = the ceiling this doc warns about.
+
+**Alternative if a visible demo is prioritized over raw player count:** swap order 1 and 2 (Phase 1 → Phase 4 → Phase 2). Risk: you'd have a beautiful generated world that chokes at ~50 concurrent players until AOI lands. Not recommended for production targets.
+
 ### Phase 1: Infinite Map Support (backend parser + bounding-box collision)
 
 **Goal:** Load and play on Tiled infinite maps with working collision, spawning, and zones. Finite maps unchanged.
