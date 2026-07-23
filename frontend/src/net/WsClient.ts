@@ -443,7 +443,22 @@ export class WsClient {
 
   // scheduleReconnect backs off exponentially (1s, 2s, 4s, ... capped at 30s)
   // and re-dials. Reset to 0 on successful auth.
+  //
+  // If the client has never authenticated (hadFirstAuth is false) and 3
+  // reconnect attempts have already failed (~7s of retries), the server is
+  // considered down for a fresh page load. Stop retrying and redirect to the
+  // static maintenance page, which polls /healthz and sends the user back
+  // once the server recovers. Already-connected users (hadFirstAuth true)
+  // keep retrying indefinitely — they keep their in-game state and get a
+  // seamless reconnect when the server comes back.
   private scheduleReconnect(): void {
+    if (!this.hadFirstAuth && this.reconnectAttempt >= 3) {
+      console.log("server unreachable on initial connect, redirecting to maintenance page");
+      this.closed = true;
+      this.setState("closed");
+      window.location.replace("/maintenance.html");
+      return;
+    }
     this.setState("reconnecting");
     const delay = Math.min(1000 * 2 ** this.reconnectAttempt, 30000);
     this.reconnectAttempt++;
