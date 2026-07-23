@@ -8,11 +8,11 @@
 // room with at least one other participant (isInMeeting callback), so a user
 // in a long video meeting who doesn't move the mouse is not marked AFK.
 //
-// Tab-visibility transitions (hidden ↔ visible) are reported via
-// onTabVisibilityChange with a debounce in both directions
-// (TAB_VISIBILITY_DEBOUNCE_MS, 3s) to avoid WebRTC track churn on rapid tab
-// switching. The AvClient uses the tab-visibility signal to mute/unmute A/V
-// tracks independently of the AFK overlay.
+// The tab-hidden state (document.hidden OR window blurred) is tracked
+// internally with a debounce (TAB_VISIBILITY_DEBOUNCE_MS, 3s) in both
+// directions and drives the shorter AFK_TAB_HIDDEN_MS idle timeout. It is no
+// longer reported to the AvClient — A/V tracks keep broadcasting while the
+// tab is hidden/unfocused.
 //
 // On an AFK transition (false→true or true→false), the detector calls
 // onAfkChange and sends a SetAfkFrame via wsClient.setAfk. The server is
@@ -30,7 +30,6 @@ const CHECK_INTERVAL_MS = 5 * 1000; // 5s
 
 export interface AfkDetectorCallbacks {
   onAfkChange: (afk: boolean) => void;
-  onTabVisibilityChange: (hidden: boolean) => void;
   isInMeeting: () => boolean;
 }
 
@@ -84,9 +83,8 @@ export class AfkDetector {
     window.addEventListener("focus", this.boundFocus);
 
     // Initialize tab-hidden state from current visibility (no debounce on
-    // init — report immediately so AvClient starts in the right state).
+    // init — used internally for the AFK idle timeout).
     this.tabHidden = this.computeTabHidden();
-    this.callbacks.onTabVisibilityChange(this.tabHidden);
 
     this.checkTimer = setInterval(() => this.check(), CHECK_INTERVAL_MS);
   }
@@ -110,7 +108,6 @@ export class AfkDetector {
       this.pendingTabHidden = null;
       if (next !== this.tabHidden) {
         this.tabHidden = next;
-        this.callbacks.onTabVisibilityChange(this.tabHidden);
       }
     }, TAB_VISIBILITY_DEBOUNCE_MS);
   }

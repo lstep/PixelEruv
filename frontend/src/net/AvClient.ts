@@ -49,14 +49,13 @@ export class AvClient {
   // proactively ejects). Defense in depth — a modded client could bypass
   // this, but the server won't mint tokens for DND players.
   private dnd = false;
-  // AFK overlay + tab-visibility auto-mute flags. When either is true, all
-  // local tracks (mic, camera, screen) are muted to stop broadcasting, but
-  // the player stays in the room (unlike DND, which disconnects). When both
-  // clear, tracks restore to the user's manual preferences (micMuted /
-  // cameraEnabled). These do NOT change the stored preferences — only the
-  // actual track state. See documentation/plans/2026-07-22-afk-state-design.md.
+  // AFK overlay auto-mute flag. When true, all local tracks (mic, camera,
+  // screen) are muted to stop broadcasting, but the player stays in the room
+  // (unlike DND, which disconnects). When it clears, tracks restore to the
+  // user's manual preferences (micMuted / cameraEnabled). Does NOT change the
+  // stored preferences — only the actual track state. See
+  // documentation/plans/2026-07-22-afk-state-design.md.
   private afkMuted = false;
-  private tabHidden = false;
   // WebRTC noise cancellation (noiseSuppression + echoCancellation +
   // autoGainControl). Defaults on — persisted so the user's choice survives
   // reconnects. Not yet wired to the TopMenu; toggle via setNoiseCancellation.
@@ -507,25 +506,14 @@ export class AvClient {
     this.applyAutoMute();
   }
 
-  // setTabHidden toggles tab-visibility auto-mute. When the tab is hidden or
-  // the window is blurred, all local tracks are muted to stop broadcasting
-  // (the player isn't looking). When the tab returns, tracks restore to the
-  // user's manual preferences if AFK is also clear. Does NOT change the
-  // stored micMuted/cameraEnabled preferences.
-  setTabHidden(hidden: boolean): void {
-    this.tabHidden = hidden;
-    this.applyAutoMute();
-  }
-
-  // applyAutoMute mutes or restores all local tracks based on the
-  // afkMuted/tabHidden flags. When either is true, mic/camera/screen are
-  // muted. When both are false, tracks restore to the user's manual
-  // preferences (micMuted / cameraEnabled). Fire-and-forget — LiveKit track
-  // operations are async and safe to call without awaiting. No-op when no
-  // room is connected.
+  // applyAutoMute mutes or restores all local tracks based on the afkMuted
+  // flag. When true, mic/camera/screen are muted. When false, tracks restore
+  // to the user's manual preferences (micMuted / cameraEnabled).
+  // Fire-and-forget — LiveKit track operations are async and safe to call
+  // without awaiting. No-op when no room is connected.
   private applyAutoMute(): void {
     if (!this.room) return;
-    const mute = this.afkMuted || this.tabHidden;
+    const mute = this.afkMuted;
     if (mute) {
       this.room.localParticipant.setMicrophoneEnabled(false).catch((err) => console.warn("AvClient: auto-mute mic failed:", err));
       this.room.localParticipant.setCameraEnabled(false).catch((err) => console.warn("AvClient: auto-mute cam failed:", err));
