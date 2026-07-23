@@ -818,6 +818,27 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("nats publish set_name", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_SetSpriteBase:
+			// Forward sprite sheet change to worldsim on
+			// client.<id>.set_sprite_base. Worldsim validates the ID exists,
+			// updates Entity.SpriteBase, marks dirty for replication, and
+			// persists to PocketBase for logged-in users. See
+			// documentation/plans/2026-07-07-sprite-selection-design.md.
+			pctx, pspan := s.tracer.Start(
+				otelinternal.ContextFromTraceparent(ctx, p.SetSpriteBase.GetTraceparent()),
+				"pusher.nats.publish.set_sprite_base",
+			)
+			pspan.SetAttributes(attribute.String("client.id", clientID))
+			spriteBytes, _ := proto.Marshal(p.SetSpriteBase)
+			subject := fmt.Sprintf("client.%s.set_sprite_base", clientID)
+			msg := &nats.Msg{Subject: subject, Data: spriteBytes}
+			otelinternal.Inject(pctx, msg)
+			if err := s.nc.PublishMsg(msg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish set_sprite_base")
+				s.logger.Warn("nats publish set_sprite_base", "client", clientID, "err", err)
+			}
+			pspan.End()
 		case *pb.ClientFrame_Action:
 			// Player-initiated input trigger (key/click) — see
 			// 14-zones-and-interactions.md §3a. Forwarded to worldsim like

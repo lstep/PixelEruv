@@ -10,6 +10,8 @@ import type { AvClient } from "../net/AvClient";
 import type { WsClient } from "../net/WsClient";
 import type { ChatPanel } from "./ChatPanel";
 import { fetchWorldOptions, refreshWorldOptions, fetchAllowPlayerTeleport } from "../net/WorldOptions";
+import { SettingsModal } from "./SettingsModal";
+import type { SpriteBaseAsset } from "../spriteLoader";
 
 const PILL_STYLE =
   "padding:8px 16px;line-height:1.5;font-size:14px;font-family:sans-serif;font-weight:600;background:#2d2d3a;color:#fff;border:none;border-radius:20px;cursor:pointer;";
@@ -116,6 +118,11 @@ export class TopMenu {
   // listHostRef points at the modal's row container while the modal is open,
   // so rerenderPlayersRows can refresh it without rebuilding the whole modal.
   private playersListHost: HTMLDivElement | null = null;
+  // --- Settings modal wiring ---
+  private settingsBtn: HTMLButtonElement;
+  private settingsModal: SettingsModal | null = null;
+  private spriteBases: SpriteBaseAsset[] = [];
+  private localSpriteBaseGetter: (() => string) | null = null;
 
   constructor() {
     this.container = document.createElement("div");
@@ -227,6 +234,18 @@ export class TopMenu {
       this.togglePlayersModal();
     });
     this.container.appendChild(this.playersBtn);
+
+    // Settings button — opens the in-game settings modal (character name,
+    // name tag, sprite sheet picker, notification sounds, change password).
+    // Always visible; the modal hides guest-inapplicable sections itself.
+    this.settingsBtn = document.createElement("button");
+    this.settingsBtn.textContent = "⚙ Settings";
+    this.settingsBtn.style.cssText = PILL_STYLE;
+    this.settingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleSettingsModal();
+    });
+    this.container.appendChild(this.settingsBtn);
 
     this.authBtn = document.createElement("button");
     this.authBtn.addEventListener("click", () => {
@@ -1070,6 +1089,44 @@ export class TopMenu {
   // for A/V exclusion enforcement).
   setSetStatusHandler(fn: (status: number) => void): void {
     this.setStatusHandler = fn;
+  }
+
+  // --- Settings modal ---
+
+  // setSpriteBases provides the sprite catalog for the settings modal's image
+  // picker. Called by GameScene after loadSpriteBases resolves.
+  setSpriteBases(bases: SpriteBaseAsset[]): void {
+    this.spriteBases = bases;
+  }
+
+  // setLocalSpriteBaseGetter provides a callback returning the local player's
+  // current sprite_base ID (or "" for the fallback), so the picker highlights
+  // the active sheet on open. Called by GameScene after the local entity exists.
+  setLocalSpriteBaseGetter(fn: () => string): void {
+    this.localSpriteBaseGetter = fn;
+  }
+
+  // toggleSettingsModal opens or closes the settings modal. The modal is
+  // constructed lazily on first open so it reads the latest sprite catalog +
+  // local sprite base at open time.
+  toggleSettingsModal(): void {
+    if (this.settingsModal?.isOpen()) {
+      this.settingsModal.close();
+      return;
+    }
+    this.settingsModal = new SettingsModal({
+      getPlayerOptions: () => this.playerOptions,
+      onPlayerOptions: (json) => {
+        this.playerOptions = json;
+        this.setPlayerOptionsHandler?.(json);
+      },
+      onSpriteBase: (id) => this.setSpriteBaseHandler?.(id),
+      spriteBases: this.spriteBases,
+      getLocalSpriteBase: () => this.localSpriteBaseGetter?.() ?? "",
+      onName: (name) => this.setNameHandler?.(name),
+      isLoggedIn,
+    });
+    this.settingsModal.open();
   }
 
   // syncStatusFromServer reflects a server-confirmed presence status in the
