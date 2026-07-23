@@ -231,6 +231,38 @@ func (s *UserStore) AdminEmails() ([]string, error) {
 	return out, nil
 }
 
+// PlayerListEntry is a minimal player record for the worldsim.players.list
+// NATS reply. Only fields needed by external consumers (audit service
+// leaderboard) are included.
+type PlayerListEntry struct {
+	UserID      string `json:"user_id"`
+	DisplayName string `json:"display_name"`
+	EntityID    string `json:"entity_id"`
+	IsAdmin     bool   `json:"is_admin"`
+	Created     string `json:"created"`
+}
+
+// ListAllPlayers returns all player records from the players collection.
+// Used by the worldsim.players.list NATS request-reply so the audit service
+// can show all registered players (not just those with audit events).
+func (s *UserStore) ListAllPlayers() ([]PlayerListEntry, error) {
+	records, err := s.app.FindRecordsByFilter("players", "1=1", "-created", 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("query all players: %w", err)
+	}
+	out := make([]PlayerListEntry, 0, len(records))
+	for _, r := range records {
+		out = append(out, PlayerListEntry{
+			UserID:      r.GetString("user_id"),
+			DisplayName: r.GetString("display_name"),
+			EntityID:    r.GetString("entity_id"),
+			IsAdmin:     r.GetBool("is_admin"),
+			Created:     r.GetDateTime("created").String(),
+		})
+	}
+	return out, nil
+}
+
 // findByEntityIDRecord returns the raw *core.Record for update operations.
 func (s *UserStore) findByEntityIDRecord(entityID string) (*core.Record, error) {
 	record, err := s.app.FindFirstRecordByData("players", "entity_id", entityID)

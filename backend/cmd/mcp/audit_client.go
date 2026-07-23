@@ -143,11 +143,72 @@ func (a *AuditClient) PlayerTimeline(ctx context.Context, sub string) ([]APIEven
 	if err != nil {
 		return nil, err
 	}
-	var out []APIEvent
+	// The /api/players/{sub} endpoint now returns a player detail object
+	// (with sessions, events, activity_events) instead of a bare event list.
+	// For backward compatibility, extract the events array.
+	var detail struct {
+		Events []APIEvent `json:"events"`
+	}
+	if err := json.Unmarshal(data, &detail); err != nil {
+		// Fall back to the old shape (bare event array) for older audit servers.
+		var out []APIEvent
+		if jerr := json.Unmarshal(data, &out); jerr != nil {
+			return nil, fmt.Errorf("unmarshal player timeline: %w", err)
+		}
+		return out, nil
+	}
+	return detail.Events, nil
+}
+
+// PlayerSummary mirrors the audit service's apiPlayerSummary JSON shape.
+type PlayerSummary struct {
+	Sub             string `json:"sub"`
+	DisplayName     string `json:"display_name"`
+	FirstSeen       string `json:"first_seen"`
+	LastSeen        string `json:"last_seen"`
+	EventCount      int    `json:"event_count"`
+	ConnectCount    int    `json:"connect_count"`
+	TotalSessionSec int64  `json:"total_session_sec"`
+	Created         string `json:"created,omitempty"`
+	IsAdmin         bool   `json:"is_admin"`
+}
+
+// ListPlayers returns the player leaderboard from the audit service: all
+// registered players (excluding guests and local dev) with total session
+// time, first/last seen, and event counts.
+func (a *AuditClient) ListPlayers(ctx context.Context) ([]PlayerSummary, error) {
+	data, err := a.getJSON(ctx, "/api/players")
+	if err != nil {
+		return nil, err
+	}
+	var out []PlayerSummary
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("unmarshal player timeline: %w", err)
+		return nil, fmt.Errorf("unmarshal players list: %w", err)
 	}
 	return out, nil
+}
+
+// PlayerActivity returns the activity events (connect, disconnect, set_status,
+// set_afk) for a player within the given time window. These are the events
+// needed to reconstruct a presence/status timeline.
+func (a *AuditClient) PlayerActivity(ctx context.Context, sub string, sinceHours int) ([]APIEvent, error) {
+	if sinceHours <= 0 {
+		sinceHours = 168 // default 7 days
+	}
+	path := fmt.Sprintf("/api/players/%s?activity=1&since_hours=%d", url.PathEscape(sub), sinceHours)
+	data, err := a.getJSON(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	// The /api/players/{sub} endpoint returns a detail object; extract the
+	// activity_events array.
+	var detail struct {
+		ActivityEvents []APIEvent `json:"activity_events"`
+	}
+	if err := json.Unmarshal(data, &detail); err != nil {
+		return nil, fmt.Errorf("unmarshal player activity: %w", err)
+	}
+	return detail.ActivityEvents, nil
 }
 
 // AuditStats mirrors the audit service's apiStats JSON shape.

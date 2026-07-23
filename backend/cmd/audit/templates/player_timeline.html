@@ -1,9 +1,0 @@
-{{template "base" .}}
-{{define "title"}}Player: {{.PlayerSub}}{{end}}
-{{define "content"}}
-<section>
-  <a href="{{bp}}/events" class="back">&larr; Back to events</a>
-  <h2>Player Timeline: {{.PlayerSub}}</h2>
-  {{template "events_table_inner" .Events}}
-</section>
-{{end}}
