@@ -150,6 +150,7 @@ make debug    # starts motel, NATS container, PocketBase, worldsim + pusher with
 - Do not commit in branch `main`. Check you are in a branch and if not, create one.
 - Commit locally as you go, but do NOT push automatically.
 - Only push and create a PR when explicitly asked. Never push directly to main — always create a PR.
+- Always add at least one label to every PR (`gh pr edit <n> --add-label <label>`).
 
 ### Other
 
