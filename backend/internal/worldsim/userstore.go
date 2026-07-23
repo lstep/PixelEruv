@@ -3,6 +3,7 @@ package worldsim
 import (
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/pocketbase/pocketbase/core"
@@ -246,7 +247,7 @@ type PlayerListEntry struct {
 // Used by the worldsim.players.list NATS request-reply so the audit service
 // can show all registered players (not just those with audit events).
 func (s *UserStore) ListAllPlayers() ([]PlayerListEntry, error) {
-	records, err := s.app.FindRecordsByFilter("players", "1=1", "-created", 0, 0)
+	records, err := s.app.FindRecordsByFilter("players", "1=1", "", 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("query all players: %w", err)
 	}
@@ -260,6 +261,11 @@ func (s *UserStore) ListAllPlayers() ([]PlayerListEntry, error) {
 			Created:     r.GetDateTime("created").String(),
 		})
 	}
+	// Sort by created desc (PocketBase's FindRecordsByFilter doesn't support
+	// sorting by the auto "created" field).
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Created > out[j].Created
+	})
 	return out, nil
 }
 
