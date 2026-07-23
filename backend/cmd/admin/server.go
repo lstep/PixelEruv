@@ -367,6 +367,69 @@ func (s *Server) pbAdminToken() (string, error) {
 	return result.Token, nil
 }
 
+// resolveEntityNames queries the PocketBase players collection and returns a
+// map of entity_id -> display_name for the given entity_ids. Entity IDs with
+// no matching player record (e.g. guests, deleted players) are absent from
+// the map; callers fall back to the raw entity_id. Errors are logged but not
+// returned as fatal — name resolution is a display nicety, not a correctness
+// requirement.
+func (s *Server) resolveEntityNames(token string, entityIDs []string) map[string]string {
+	out := make(map[string]string, len(entityIDs))
+	if len(entityIDs) == 0 {
+		return out
+	}
+	// Deduplicate so the PB filter stays short.
+	seen := make(map[string]struct{}, len(entityIDs))
+	unique := make([]string, 0, len(entityIDs))
+	for _, id := range entityIDs {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return out
+	}
+	// Build a PocketBase filter: entity_id="a" || entity_id="b" || ...
+	parts := make([]string, len(unique))
+	for i, id := range unique {
+		parts[i] = fmt.Sprintf("entity_id=%q", id)
+	}
+	filter := strings.Join(parts, " || ")
+	u := fmt.Sprintf("%s/collections/players/records?perPage=%d&filter=%s",
+		s.cfg.PBApiURL, len(unique), url.QueryEscape(filter))
+	req, _ := http.NewRequest("GET", u, nil)
+	req.Header.Set("Authorization", token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		s.logger.Warn("resolve entity names: query", "err", err)
+		return out
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		s.logger.Warn("resolve entity names: status", "status", resp.StatusCode)
+		return out
+	}
+	var res struct {
+		Items []struct {
+			EntityID    string `json:"entity_id"`
+			DisplayName string `json:"display_name"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		s.logger.Warn("resolve entity names: decode", "err", err)
+		return out
+	}
+	for _, it := range res.Items {
+		out[it.EntityID] = it.DisplayName
+	}
+	return out
+}
+
 // recordingRow is one row in the recordings table.
 type recordingRow struct {
 	ID            string
@@ -474,9 +537,27 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve participant entity_ids to display_names in one batched PB
+	// query so the Participants column shows names instead of opaque ids.
+	allParticipants := make([]string, 0, len(result.Items)*4)
+	for _, item := range result.Items {
+		allParticipants = append(allParticipants, item.Participants...)
+	}
+	nameByID := s.resolveEntityNames(token, allParticipants)
+
 	rows := make([]recordingRow, 0, len(result.Items))
 	var totalBytes uint64
 	for _, item := range result.Items {
+		// Map each participant entity_id to its display_name, falling back
+		// to the raw id when no player record exists (guests, deleted).
+		displayNames := make([]string, len(item.Participants))
+		for i, pid := range item.Participants {
+			if name, ok := nameByID[pid]; ok && name != "" {
+				displayNames[i] = name
+			} else {
+				displayNames[i] = pid
+			}
+		}
 		row := recordingRow{
 			ID:           item.ID,
 			MeetingID:    item.MeetingID,
@@ -487,7 +568,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			StartedBy:    item.StartedBy,
 			StartTime:    item.StartTime,
 			EndTime:      item.EndTime,
-			Participants: strings.Join(item.Participants, ", "),
+			Participants: strings.Join(displayNames, ", "),
 			FileURL:      item.FileURL,
 			HasFile:      item.FileURL != "",
 			AudioURL:     item.AudioURL,
