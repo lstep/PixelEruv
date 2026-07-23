@@ -1,5 +1,42 @@
 # Dashboard
 
+## AOI Grid — Phase 2 of MMORPG-Scale World Engine
+
+**Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/` all pass. 7 new AOI tests + all existing tests green.
+
+**Design doc:** `documentation/plans/2026-07-23-mmorpg-scale-and-worldgen-design.md` (section 5.0 for implementation order, section 5 Phase 2 for spec).
+
+Replaces "replicate everything on the same map" with cell-based Area of Interest (AOI) filtering. Each client now only receives replication for entities within their AOI radius, with hysteresis to prevent spawn/despawn storms at cell boundaries. This is the single highest-impact performance change for scaling to large maps — converts O(N*M) replication bandwidth to O(N*k) where k = entities in AOI radius.
+
+### What was built
+
+- **`backend/internal/worldsim/aoi.go`** — `AOIGrid` struct: spatial hash grid with `cellSize=16` tiles, `Insert(entity)`, `EntitiesInRadius(pos, radiusCells)`. One grid per map, rebuilt from scratch each tick before replication (O(M) hash inserts, ~100µs for 1000 entities — avoids incremental maintenance across provision/despawn/portal-transition).
+- **`backend/internal/worldsim/world.go`** — Added `aoiGrids map[string]*AOIGrid` field to `World`.
+- **`backend/internal/worldsim/worldsim.go`** — Added `rebuildAOIGrids()` method, called in `tick()` after movement/zone/proximity and before replication. Passes grids to `ReplicationInput`.
+- **`backend/internal/worldsim/replication.go`** — Added `AOIGrids` to `ReplicationInput`. In `replicateToClient`, replaced the same-map filter with AOI filtering: entities within `aoiUnsubscribeRadius` (4 cells = 64 tiles) stay spawned/updated; entities beyond that get `DestroyEntity` + flag clear; new entities only spawn if within `aoiSubscribeRadius` (3 cells = 48 tiles). The hysteresis band (48-64 tiles) prevents thrashing. Client's own entity always bypasses AOI. Falls back to whole-map replication when no grid is available (nil `AOIGrids`).
+- **`backend/internal/worldsim/aoi_test.go`** — 7 tests: `TestAOI_BasicFiltering` (far entity not replicated), `TestAOI_BoundaryCrossing` (spawn on enter, destroy on exit, re-spawn on re-entry), `TestAOI_Hysteresis` (entity in hysteresis band stays spawned, no thrash), `TestAOI_FallbackNoGrid` (nil grids = whole-map replication), `TestAOI_ClientAlwaysSeesSelf`, `TestAOIGrid_BasicInsert`, `TestAOIGrid_NilPosition`.
+- **`ROADMAP.md`** — Added MMORPG-Scale World Engine initiative with recommended implementation order table.
+
+### Design decisions
+
+- **Rebuild grids from scratch each tick** instead of incremental maintenance. Simpler, correct, negligible cost. Avoids hooking into provision/despawn/portal-transition/map-reload.
+- **Reuse existing `spawnedTo[clientID]` as subscription state** — no new per-client tracking. AOI filter decides spawn/update; entities leaving unsubscribe radius get DestroyEntity + flag clear.
+- **Hysteresis**: subscribe radius (3 cells) < unsubscribe radius (4 cells). Entity at 50 tiles (cell 3) spawns; moves to 70 tiles (cell 4) stays spawned; moves to 100 tiles (cell 6) gets destroyed.
+- **Fallback to whole-map** when no grid is available — ensures backward compatibility and graceful degradation.
+- **Zone indexing by cell** (design doc item 4) deferred — secondary optimization, not needed for the replication win.
+
+### Performance impact
+
+- **Small maps (50x50)**: AOI covers entire map (3x3 cells at 16 tiles = 48 tiles > 50). Degrades to current whole-map behavior. No regression.
+- **Medium maps (200x200)**: AOI covers 7x7 = 49 cells out of 144 (~34%). ~3x bandwidth reduction.
+- **Large maps (2000x2000)**: AOI covers 49 cells out of 15625 (~0.3%). ~300x bandwidth reduction. This is the scaling win that makes worldgen viable.
+
+### Next phases (per ROADMAP.md)
+
+1. Phase 1: Infinite map support (backend parser for Tiled infinite maps)
+2. Phase 4: Worldgen terrain + biomes
+3. Phase 3: Delta compression (second-order bandwidth optimization)
+
 ## Roadmap (not started)
 
 - **Periodic world snapshot on the Welcome page** — show a 60s-refreshed full-map image (map + props + live players) below the buttons on `/welcome/`. Rendering approach deferred; the two obvious paths (headless browser container, Go server-side render) are rejected for now as respectively heavyweight or divergent. See `documentation/plans/2026-07-18-world-snapshot-on-welcome-roadmap.md` for alternatives to explore (SVG minimap via stats channel, real-client canvas upload, static map + live overlay, off-host headless).

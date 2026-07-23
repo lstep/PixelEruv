@@ -27,15 +27,23 @@ func afkSinceMs(t time.Time) uint64 {
 
 // ReplicationInput is the narrow read-view of World that ReplicationSystem needs.
 // DestroyedEntities is a pointer so Step can drain it after replication.
+// AOIGrids holds per-map spatial hash grids for area-of-interest filtering.
+// When nil or missing a map entry, replication falls back to whole-map
+// replication for that map (the pre-AOI behavior).
 type ReplicationInput struct {
 	Entities          map[string]*Entity
 	TickSnapshotSeq   uint32
 	DestroyedEntities *[]string
+	AOIGrids          map[string]*AOIGrid
 }
 
 // ReplicationSystem builds and publishes replication batches for all
-// connected clients each tick. Lite MVP: replicate everything to everyone
-// (no AOI filter), filtered by same-map.
+// connected clients each tick. Uses per-map AOI grids to filter which
+// entities each client receives — only entities within the client's
+// unsubscribe radius are replicated, with hysteresis (subscribe radius <
+// unsubscribe radius) to prevent spawn/despawn storms at cell boundaries.
+// Falls back to whole-map replication when no AOI grid is available for a
+// map.
 //
 // Field ownership (writes):
 //   - Entity.spawnedTo (marks clients that received SpawnEntity)
@@ -99,11 +107,53 @@ func (r *ReplicationSystem) replicateToClient(ctx context.Context, in Replicatio
 	// them if the client is an admin.
 	var spawnedEntities []*Entity
 
+	// AOI filtering: compute the set of entities within the client's
+	// unsubscribe radius (visible) and subscribe radius (spawn range).
+	// visible: entities that should stay spawned or be updated.
+	// spawnRange: entities close enough to be newly spawned.
+	// When no grid is available for the client's map, both are nil and the
+	// loop falls back to whole-map replication (pre-AOI behavior).
+	var visible, spawnRange map[string]*Entity
+	if clientEntity.Position != nil {
+		if grid := in.AOIGrids[clientEntity.Position.MapId]; grid != nil {
+			visible = grid.EntitiesInRadius(clientEntity.Position, aoiUnsubscribeRadius)
+			spawnRange = grid.EntitiesInRadius(clientEntity.Position, aoiSubscribeRadius)
+		}
+	}
+
 	for _, e := range in.Entities {
 		// Multi-map filtering: only replicate entities on the same map as the
 		// client. The client's own entity is always included.
 		if e != clientEntity && e.Position != nil && e.Position.MapId != clientEntity.Position.MapId {
 			continue
+		}
+
+		// AOI filtering (only when grid is available). The client's own
+		// entity always bypasses AOI — the player always sees themselves.
+		if visible != nil && e != clientEntity {
+			_, inVisible := visible[e.ID]
+			if !inVisible {
+				// Entity is beyond unsubscribe radius. If it was previously
+				// spawned to this client, send a DestroyEntity and clear the
+				// flag so a future re-entry triggers a fresh SpawnEntity.
+				if e.spawnedTo[clientID] {
+					batch.Destroys = append(batch.Destroys, &pb.DestroyEntity{
+						EntityId:    e.ID,
+						SnapshotSeq: in.TickSnapshotSeq,
+					})
+					delete(e.spawnedTo, clientID)
+				}
+				continue
+			}
+			// Entity is within unsubscribe radius (visible). If not yet
+			// spawned, only spawn if within subscribe radius — the band
+			// between subscribe and unsubscribe is hysteresis: entities
+			// there stay spawned but new ones don't enter until closer.
+			if !e.spawnedTo[clientID] {
+				if _, inSpawn := spawnRange[e.ID]; !inSpawn {
+					continue
+				}
+			}
 		}
 
 		alreadySpawned := e.spawnedTo[clientID]

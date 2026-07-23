@@ -40,6 +40,12 @@ type World struct {
 	mapWarnings map[string][]*pb.MapWarning // mapName -> non-fatal validation warnings
 	mapErrors   map[string]string           // mapName -> fatal validation message
 
+	// aoiGrids holds per-map AOI spatial hash grids, rebuilt from scratch each
+	// tick before replication. Used by ReplicationSystem to filter which
+	// entities each client receives. nil entries (maps with no grid) cause the
+	// replication loop to fall back to whole-map replication for that map.
+	aoiGrids map[string]*AOIGrid // mapName -> grid
+
 	rng *rand.Rand
 
 	// Tick holds per-tick bookkeeping. The pipeline increments SnapshotSeq
