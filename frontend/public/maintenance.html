@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- JS-free fallback: reload every 30s so we re-check the server. The
+     fetch poll below is the primary mechanism; this only fires if JS
+     is disabled or errors out. -->
+<meta http-equiv="refresh" content="30">
+<title>PixelEruv &mdash; Maintenance in progress</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --surface: #16213e;
+  --text: #e0e0e0;
+  --muted: #888;
+  --accent: #4e9af1;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+}
+.container { max-width: 540px; }
+h1 { font-size: 2rem; margin-bottom: 1rem; }
+p { color: var(--muted); line-height: 1.6; margin-bottom: 1.5rem; }
+.status { font-size: 0.9rem; color: var(--muted); margin-bottom: 1.5rem; min-height: 1.2em; }
+.retry {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  border-radius: 6px;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+  text-decoration: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+}
+.retry:hover { filter: brightness(1.1); }
+.retry:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Maintenance in progress</h1>
+  <p>The server is temporarily unavailable. We'll put you back in the game automatically as soon as it's back up.</p>
+  <div class="status" id="status">Checking server status&hellip;</div>
+  <button class="retry" id="retry" type="button">Try again now</button>
+</div>
+<script>
+(function () {
+  var POLL_MS = 15000;
+  var statusEl = document.getElementById('status');
+  var retryBtn = document.getElementById('retry');
+  var timer = null;
+
+  function goHome() {
+    // replace() so the maintenance page isn't kept in browser history.
+    window.location.replace('/');
+  }
+
+  function check() {
+    statusEl.textContent = 'Checking server status\u2026';
+    retryBtn.disabled = true;
+    // cache: 'no-store' so we never read a stale 200 from a previous healthy state.
+    fetch('/healthz', { cache: 'no-store' })
+      .then(function (resp) {
+        if (resp.ok) {
+          statusEl.textContent = 'Server is back up! Redirecting\u2026';
+          goHome();
+          return;
+        }
+        scheduleNext();
+      })
+      .catch(function () {
+        scheduleNext();
+      });
+  }
+
+  function scheduleNext() {
+    statusEl.textContent = 'Server still down. Retrying in ' + (POLL_MS / 1000) + 's\u2026';
+    retryBtn.disabled = false;
+    timer = setTimeout(check, POLL_MS);
+  }
+
+  retryBtn.addEventListener('click', function () {
+    if (timer) { clearTimeout(timer); timer = null; }
+    check();
+  });
+
+  // First check on load; subsequent checks via scheduleNext().
+  check();
+})();
+</script>
+</body>
+</html>
