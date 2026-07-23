@@ -2336,8 +2336,8 @@ export class GameScene extends Phaser.Scene {
         this.afkSinceByEntity.set(spawn.entityId, afkSince);
         this.createNameTag(spawn.entityId, displayName, isGuest, isAdmin, status, afk);
       }
-      // Start idle animation immediately.
-      sprite.play(`${charKey}_idle_down`, true);
+      // Start idle animation immediately, facing the restored direction.
+      sprite.play(`${charKey}_idle_${DIR_NAMES[dir]}`, true);
       // Camera follows the local player. roundPixels keeps pixel-art
       // crisp; lerp 1 = hard snap each frame (no sub-pixel smear).
       if (spawn.entityId === this.myEntityId) {
