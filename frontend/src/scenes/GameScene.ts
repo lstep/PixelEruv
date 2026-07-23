@@ -16,6 +16,7 @@ import { parsePlayerOptions } from "../ui/TopMenu";
 import type { ChatPanel } from "../ui/ChatPanel";
 import { getUsername } from "../username";
 import { isLoggedIn } from "../auth";
+import { findPath, type Tile } from "../pathfinding";
 
 const TILE_SIZE = 32;
 
@@ -455,6 +456,20 @@ export class GameScene extends Phaser.Scene {
   private adminInfoByEntity = new Map<string, { ip: string; isGuest: boolean; deviceId: string }>();
   private inputState: InputState = { up: false, down: false, left: false, right: false, run: false };
   private inputDirty = false;
+  // --- Auto-move (double-click to walk) ---
+  // Client-side A* path over collisionGrid + wallZones. Drives inputState
+  // toward each waypoint every tick. The server still validates every move,
+  // so a stale/wrong path can't wall-hack — worst case the avatar stops at a
+  // wall and we re-path or cancel. See frontend/src/pathfinding.ts.
+  private autoMoveWaypoints: Tile[] = [];
+  private autoMoveActive = false;
+  private autoMoveStuckTicks = 0;
+  private autoMoveRetried = false;
+  private autoMoveMarker: Phaser.GameObjects.Graphics | null = null;
+  // Last pointerdown time/pos for double-click detection.
+  private lastPointerDownTime = 0;
+  private lastPointerDownX = 0;
+  private lastPointerDownY = 0;
   // Un-acked inputs for the local avatar, newest last. Replayed against the
   // server's authoritative position on each reconciliation.
   private pendingInputs: InputEvent[] = [];
@@ -641,6 +656,209 @@ export class GameScene extends Phaser.Scene {
       }
     }
     return false;
+  }
+
+  // isTilePassable — true if a tile is walkable for pathfinding. Combines
+  // the Walls tile-layer grid (isBlocked) with a point-in-expanded-shape
+  // test against wall zones (rect/circle/polygon expanded by
+  // PLAYER_COLLISION_RADIUS), evaluated at the tile center's feet. This is a
+  // rasterization of the server's continuous-space swept collision, so it's
+  // conservative — a tile flagged impassable here may still be enterable at
+  // some sub-tile positions, but the server validates every move anyway.
+  // Used only by auto-move (A*); the live prediction path uses isBlocked +
+  // isZoneBlocked directly.
+  private isTilePassable(tx: number, ty: number): boolean {
+    if (this.isBlocked(tx, ty)) return false;
+    if (this.wallZones.length === 0) return true;
+    // Tile center in tile coords; feet at center.y + FEET_Y_OFFSET.
+    const cx = tx + 0.5;
+    const fy = ty + 0.5 + FEET_Y_OFFSET;
+    const r = PLAYER_COLLISION_RADIUS;
+    for (const z of this.wallZones) {
+      switch (z.shape) {
+        case "rect":
+          if (cx >= z.x - r && cx <= z.x + z.w + r && fy >= z.y - r && fy <= z.y + z.h + r) return false;
+          break;
+        case "circle": {
+          const ddx = cx - z.cx, ddy = fy - z.cy;
+          if (ddx * ddx + ddy * ddy <= (z.r + r) * (z.r + r)) return false;
+          break;
+        }
+        case "polygon": {
+          // Point-in-polygon (expanded by r via vertex circles + edge
+          // distance), reusing the helpers used by isZoneBlocked.
+          const abs: [number, number][] = z.verts.map(v => [v[0], v[1]]);
+          if (pointInPolygon(cx, fy, abs)) return false;
+          for (let i = 0; i < abs.length; i++) {
+            const ax = abs[i][0], ay = abs[i][1];
+            const ddx = cx - ax, ddy = fy - ay;
+            if (ddx * ddx + ddy * ddy <= r * r) return false;
+            const bx = abs[(i + 1) % abs.length][0], by = abs[(i + 1) % abs.length][1];
+            if (pointSegmentDistSq(cx, fy, ax, ay, bx, by) <= r * r) return false;
+          }
+          break;
+        }
+      }
+    }
+    return true;
+  }
+
+  // startAutoMove computes an A* path from the local avatar's current tile
+  // to the target tile and begins driving inputState toward each waypoint.
+  // On no path (unreachable / blocked target), flashes a red marker and
+  // aborts. The destination marker is a tile outline at the target that
+  // fades over ~1s as visual feedback.
+  private startAutoMove(targetTileX: number, targetTileY: number): void {
+    const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+    if (!local) return;
+    const startX = Math.floor(local.predX);
+    const startY = Math.floor(local.predY + FEET_Y_OFFSET);
+    console.log("[auto-move] startAutoMove", { startX, startY, targetTileX, targetTileY, predX: local.predX, predY: local.predY });
+    const path = findPath(startX, startY, targetTileX, targetTileY, (tx, ty) => this.isTilePassable(tx, ty));
+    console.log("[auto-move] path result", path ? `${path.length} waypoints` : "null");
+    this.destroyAutoMoveMarker();
+    if (!path || path.length === 0) {
+      // No path — flash a red marker at the target so the user sees the
+      // click was registered but the tile is unreachable. Clear any active
+      // auto-move state so a failed re-path doesn't keep driving stale
+      // waypoints.
+      this.autoMoveActive = false;
+      this.autoMoveWaypoints = [];
+      this.autoMoveStuckTicks = 0;
+      this.autoMoveMarker = this.add.graphics();
+      this.autoMoveMarker.lineStyle(2, 0xff0000, 1);
+      this.autoMoveMarker.strokeRect(
+        targetTileX * TILE_SIZE, targetTileY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
+      );
+      this.autoMoveMarker.setDepth(2000);
+      this.tweens.add({
+        targets: this.autoMoveMarker,
+        alpha: 0,
+        duration: 600,
+        onComplete: () => this.destroyAutoMoveMarker(),
+      });
+      return;
+    }
+    this.autoMoveWaypoints = path;
+    this.autoMoveActive = true;
+    this.autoMoveStuckTicks = 0;
+    this.autoMoveRetried = false;
+    // Destination marker (green tile outline, fades).
+    this.autoMoveMarker = this.add.graphics();
+    this.autoMoveMarker.lineStyle(2, 0x00ff00, 0.9);
+    this.autoMoveMarker.strokeRect(
+      targetTileX * TILE_SIZE, targetTileY * TILE_SIZE, TILE_SIZE, TILE_SIZE,
+    );
+    this.autoMoveMarker.setDepth(2000);
+    this.tweens.add({
+      targets: this.autoMoveMarker,
+      alpha: 0,
+      duration: 1000,
+      delay: 200,
+      onComplete: () => this.destroyAutoMoveMarker(),
+    });
+  }
+
+  private destroyAutoMoveMarker(): void {
+    if (this.autoMoveMarker) {
+      this.autoMoveMarker.destroy();
+      this.autoMoveMarker = null;
+    }
+  }
+
+  // cancelAutoMove stops auto-move and zeroes the direction inputs so the
+  // stop is transmitted to the server. Safe to call when not active.
+  private cancelAutoMove(): void {
+    if (!this.autoMoveActive && this.autoMoveWaypoints.length === 0) {
+      this.destroyAutoMoveMarker();
+      return;
+    }
+    this.autoMoveActive = false;
+    this.autoMoveWaypoints = [];
+    this.autoMoveStuckTicks = 0;
+    this.autoMoveRetried = false;
+    // Only clear direction bits we may have set; preserve `run`.
+    this.inputState.up = false;
+    this.inputState.down = false;
+    this.inputState.left = false;
+    this.inputState.right = false;
+    this.inputDirty = true;
+    this.destroyAutoMoveMarker();
+  }
+
+  // driveAutoMove advances toward the current waypoint each tick, advancing
+  // to the next waypoint when close enough. Stuck detection: if the avatar
+  // barely moves for ~2s (40 ticks at 20Hz), re-path once from the current
+  // tile; if still stuck, cancel. This handles dynamic door toggles (stale
+  // wall data) gracefully — the avatar stops at a closed door, re-paths, and
+  // either finds a way around or gives up.
+  private driveAutoMove(delta: number): void {
+    const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+    if (!local) { this.cancelAutoMove(); return; }
+    // If the user is pressing movement keys, the keydown handler already
+    // cancelled auto-move; this is a defensive guard.
+    if (this.autoMoveWaypoints.length === 0) { this.cancelAutoMove(); return; }
+
+    const wp = this.autoMoveWaypoints[0];
+    // Aim at the tile center (+0.5). predX is the avatar's center; predY is
+    // the sprite's top, so feet are at predY + FEET_Y_OFFSET. We steer by
+    // the center-to-center vector in feet space.
+    const targetX = wp.x + 0.5;
+    const targetY = wp.y + 0.5 + FEET_Y_OFFSET;
+    const dx = targetX - local.predX;
+    const dy = targetY - (local.predY + FEET_Y_OFFSET);
+
+    // Set direction inputs from the sign of the delta. Both axes can be set
+    // simultaneously for diagonal movement (matches keyboard up+left).
+    this.inputState.left = dx < -0.05;
+    this.inputState.right = dx > 0.05;
+    this.inputState.up = dy < -0.05;
+    this.inputState.down = dy > 0.05;
+    // If within one tick's worth of movement on both axes, advance to the
+    // next waypoint. SPEED_TILES_PER_TICK is per-tick; delta/TICK_MS gives
+    // this frame's tick budget.
+    const step = SPEED_TILES_PER_TICK * (delta / TICK_MS);
+    if (Math.abs(dx) <= step && Math.abs(dy) <= step) {
+      this.autoMoveWaypoints.shift();
+      if (this.autoMoveWaypoints.length === 0) {
+        // Reached the destination — stop.
+        this.cancelAutoMove();
+        return;
+      }
+    }
+    this.inputDirty = true;
+
+    // Stuck detection: compare this frame's pre-prediction pos to last
+    // frame's (stashed on the avatar). Prediction runs later in update(), so
+    // this measures one frame of actual movement. If the avatar barely
+    // moves for ~2s (40 ticks at 20Hz), re-path once from the current tile;
+    // if still stuck, cancel. Handles dynamic door toggles — the avatar
+    // stops at a closed door, re-paths, and either routes around or gives up.
+    const stash = local as unknown as { _autoLastX?: number; _autoLastY?: number };
+    const lastX = stash._autoLastX ?? local.predX;
+    const lastY = stash._autoLastY ?? local.predY;
+    const realMoved = Math.hypot(local.predX - lastX, local.predY - lastY);
+    stash._autoLastX = local.predX;
+    stash._autoLastY = local.predY;
+
+    if (realMoved < SPEED_TILES_PER_TICK * 0.25) {
+      this.autoMoveStuckTicks++;
+    } else {
+      this.autoMoveStuckTicks = 0;
+    }
+    if (this.autoMoveStuckTicks >= 40) {
+      if (!this.autoMoveRetried) {
+        // Re-path from the current tile to the original destination.
+        // startAutoMove resets autoMoveRetried=false, so set the flag
+        // AFTER the call to prevent infinite retries.
+        this.autoMoveStuckTicks = 0;
+        const last = this.autoMoveWaypoints[this.autoMoveWaypoints.length - 1];
+        this.startAutoMove(last.x, last.y);
+        this.autoMoveRetried = true;
+      } else {
+        this.cancelAutoMove();
+      }
+    }
   }
 
   preload(): void {
@@ -931,13 +1149,13 @@ export class GameScene extends Phaser.Scene {
     // Input — keyboard
     const kb = this.input.keyboard;
     if (!kb) return;
-    kb.on("keydown-UP", () => { this.inputState.up = true; this.inputDirty = true; });
+    kb.on("keydown-UP", () => { this.cancelAutoMove(); this.inputState.up = true; this.inputDirty = true; });
     kb.on("keyup-UP", () => { this.inputState.up = false; this.inputDirty = true; });
-    kb.on("keydown-DOWN", () => { this.inputState.down = true; this.inputDirty = true; });
+    kb.on("keydown-DOWN", () => { this.cancelAutoMove(); this.inputState.down = true; this.inputDirty = true; });
     kb.on("keyup-DOWN", () => { this.inputState.down = false; this.inputDirty = true; });
-    kb.on("keydown-LEFT", () => { this.inputState.left = true; this.inputDirty = true; });
+    kb.on("keydown-LEFT", () => { this.cancelAutoMove(); this.inputState.left = true; this.inputDirty = true; });
     kb.on("keyup-LEFT", () => { this.inputState.left = false; this.inputDirty = true; });
-    kb.on("keydown-RIGHT", () => { this.inputState.right = true; this.inputDirty = true; });
+    kb.on("keydown-RIGHT", () => { this.cancelAutoMove(); this.inputState.right = true; this.inputDirty = true; });
     kb.on("keyup-RIGHT", () => { this.inputState.right = false; this.inputDirty = true; });
 
     // Interact key — sends a discrete ActionFrame (not continuous movement
@@ -954,7 +1172,7 @@ export class GameScene extends Phaser.Scene {
     // ESC closes the interaction popup (matches the "click outside" close
     // below). The popup's action buttons close it themselves on click, so
     // by the time the global pointerdown handler runs this is already null.
-    kb.on("keydown-ESC", () => this.closeInteractionPopup());
+    kb.on("keydown-ESC", () => { this.cancelAutoMove(); this.closeInteractionPopup(); });
 
     // Proximity spotlight toggle — shows/hides the soft warm pool around every
     // avatar visualizing the 2-tile chat radius. Group members get a brighter
@@ -974,6 +1192,7 @@ export class GameScene extends Phaser.Scene {
     // after the popup appears. Reset all movement state on blur/hidden so the
     // avatar stops until the user presses a key again.
     const clearMovementInput = () => {
+      this.cancelAutoMove();
       this.inputState.up = false;
       this.inputState.down = false;
       this.inputState.left = false;
@@ -993,6 +1212,7 @@ export class GameScene extends Phaser.Scene {
     // inputState booleans as the keyboard handlers above.
     if (navigator.maxTouchPoints > 0) {
       this.joystick = new VirtualJoystick((j) => {
+        if (j.up || j.down || j.left || j.right) this.cancelAutoMove();
         this.inputState.up = j.up;
         this.inputState.down = j.down;
         this.inputState.left = j.left;
@@ -1367,7 +1587,37 @@ export class GameScene extends Phaser.Scene {
     // buttons call closeInteractionPopup() on their own pointerdown, so by
     // the time this global handler runs, this.interactionPopup is already
     // null for in-popup clicks and only non-null for outside clicks.
-    this.input.on("pointerdown", () => {
+    //
+    // Double-click on an empty map tile starts auto-move (A* pathfind to
+    // that tile). Two pointerdowns within 300ms and <8px count as a
+    // double-click. We skip auto-move if the click hit an interactive
+    // GameObject (dropdown dot, popup button, etc.) so UI clicks don't
+    // walk the avatar.
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer, gameObjects: Phaser.GameObjects.GameObject[]) => {
+      // --- Double-click → auto-move ---
+      const now = performance.now();
+      const px = pointer.x, py = pointer.y;
+      const isDbl = (now - this.lastPointerDownTime) < 300 &&
+                    Math.hypot(px - this.lastPointerDownX, py - this.lastPointerDownY) < 8;
+      this.lastPointerDownTime = now;
+      this.lastPointerDownX = px;
+      this.lastPointerDownY = py;
+      if (isDbl) {
+        // Only auto-move if no interactive UI was hit and the click is
+        // within map bounds. gameObjects lists objects under the pointer;
+        // any with input enabled means a UI element consumed the click.
+        const hitUI = gameObjects.some(g => g.input && g.input.enabled);
+        if (!hitUI) {
+          const tx = Math.floor(pointer.worldX / TILE_SIZE);
+          const ty = Math.floor(pointer.worldY / TILE_SIZE);
+          if (tx >= 0 && tx < this.mapW && ty >= 0 && ty < this.mapH) {
+            this.startAutoMove(tx, ty);
+          }
+        }
+        // Reset so a triple-click doesn't re-trigger immediately.
+        this.lastPointerDownTime = 0;
+      }
+
       if (!this._dropdownClickedThisFrame && this.dropdownContainer) {
         this.closeDropdown();
       }
@@ -1387,6 +1637,7 @@ export class GameScene extends Phaser.Scene {
       this.avClient = null;
       this.debugZoneOverlay?.destroy();
       this.debugZoneOverlay = null;
+      this.cancelAutoMove();
       this.closeDropdown();
       this.closeInteractionPopup();
       topMenu?.detachAvControls();
@@ -1409,6 +1660,14 @@ export class GameScene extends Phaser.Scene {
     // Update record button visibility (admin + in A/V room).
     const tm = this.game.registry.get("topMenu") as TopMenu | undefined;
     tm?.updateRecVisibility();
+
+    // --- Auto-move driver ---
+    // Runs before sendInput so the input it sets is transmitted and
+    // predicted this frame. Only drives input when no manual input is held
+    // (keyboard/joystick take over and cancel auto-move via their handlers).
+    if (this.autoMoveActive) {
+      this.driveAutoMove(delta);
+    }
 
     // Send input on change and buffer it for reconciliation.
     if (this.inputDirty && this.ws) {
@@ -1718,6 +1977,7 @@ export class GameScene extends Phaser.Scene {
     // Mark transitioning so handleReplication buffers spawns instead of
     // creating avatars that SHUTDOWN would immediately destroy.
     this.transitioning = true;
+    this.cancelAutoMove();
     this.pendingSpawns = [];
     // Apply map options (e.g. day_night_enabled) before loading assets so the
     // overlay is correct when the scene restarts.
