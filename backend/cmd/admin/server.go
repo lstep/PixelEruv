@@ -297,14 +297,24 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkIsAdmin queries PocketBase for the user's is_admin flag.
+//
+// The players collection REST API is locked down (all rules nil, see
+// migration 1753900000_lock_players_collection), so this must authenticate
+// as superadmin — anonymous calls get 403.
 func (s *Server) checkIsAdmin(sub string) (bool, error) {
 	if sub == "" || sub == "dev" {
 		return false, nil
 	}
+	token, err := s.pbAdminToken()
+	if err != nil {
+		return false, fmt.Errorf("pb admin token: %w", err)
+	}
 	// Query PB players collection filtered by user_id.
 	filter := fmt.Sprintf("user_id=%q", sub)
 	u := fmt.Sprintf("%s/collections/players/records?filter=%s", s.cfg.PBApiURL, url.QueryEscape(filter))
-	resp, err := http.Get(u)
+	req, _ := http.NewRequest("GET", u, nil)
+	req.Header.Set("Authorization", token)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false, err
 	}
