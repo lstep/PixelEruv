@@ -114,8 +114,10 @@ export class AfkDetector {
 
   private check(): void {
     // Meeting exemption: never go AFK while in a room with other participants.
+    // Prevents activation only — does NOT clear existing AFK, so a proximity/
+    // zone A/V room forming around an already-AFK player (someone walks up)
+    // does not wake them. Existing AFK clears only on genuine user input.
     if (this.callbacks.isInMeeting()) {
-      if (this.afk) this.clearAfk();
       return;
     }
     const idleMs = Date.now() - this.lastActivityMs;
