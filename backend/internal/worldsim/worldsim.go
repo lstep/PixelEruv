@@ -2491,7 +2491,33 @@ func (s *Simulator) startMapReloadChecker(ctx context.Context) {
 			for mapName := range s.maps {
 				s.checkMapReload(mapName)
 			}
+			s.discoverNewMaps()
 		}
+	}
+}
+
+// discoverNewMaps scans PocketBase for map records that are not yet loaded
+// into s.maps and loads them via checkMapReload. This lets admins add new
+// maps to PB at runtime without restarting worldsim. Called every 30s
+// alongside the existing map-reload checker.
+func (s *Simulator) discoverNewMaps() {
+	records, err := s.mapStore.ListAllMaps()
+	if err != nil {
+		s.logger.Warn("map discovery: failed to list maps", "err", err)
+		return
+	}
+	s.mu.Lock()
+	known := make(map[string]bool, len(s.maps))
+	for name := range s.maps {
+		known[name] = true
+	}
+	s.mu.Unlock()
+	for _, mr := range records {
+		if known[mr.Name] {
+			continue
+		}
+		s.logger.Info("discovered new map, loading", "map", mr.Name)
+		s.checkMapReload(mr.Name)
 	}
 }
 
