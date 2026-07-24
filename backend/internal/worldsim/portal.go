@@ -124,13 +124,6 @@ func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID,
 	e.Position.Y = spawnY
 	e.dirtyPosition = true
 
-	// Clear pending input so the avatar doesn't keep moving on the new
-	// map with stale direction bits from before the teleport. The client
-	// re-sends fresh input after its scene restart.
-	if e.NetworkSession != nil {
-		e.NetworkSession.Input = &pb.InputState{}
-	}
-
 	// Clear current zones — the entity is on a new map with different zones.
 	e.currentZones = make(map[string]bool)
 
