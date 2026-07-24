@@ -1,5 +1,38 @@
 # Dashboard
 
+## Admin Teleport Buttons — "Teleport to" + "Teleport to me"
+
+**Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/`, `tsc --noEmit`, `vite build` all pass. 4 new admin-teleport tests green. Branch: `feature/admin-teleport-buttons`. Not yet tested on ellipsis.
+
+Added two admin-only buttons to both the avatar dropdown and the Players panel modal:
+
+- **"Teleport to"** — opens a map picker (fetched from new public `GET /api/assets/maps` endpoint) and sends the target player to the selected map via `AdminTeleportFrame` (random spawn zone).
+- **"Teleport to me"** — sends the target player to the admin's exact position on the admin's current map via `AdminTeleportFrame` with `exact_position=true`.
+
+### What was built
+
+- **`proto/frames.proto`** — New `AdminTeleportFrame` message (ClientFrame oneof case 15): `entity_id`, `map_id`, `x`, `y`, `exact_position`.
+- **`backend/internal/worldsim/entity_teleport.go`** — Extracted `subscribeEntityTeleport()` from the inline subscription in `subscribe()`. Handles `worldsim.entity.teleport` with sender admin auth (non-admins rejected with forbidden audit) + exact-position passthrough. Trusted callers (MCP, extensions) publish without `sender_client_id` and skip the auth check.
+- **`backend/internal/worldsim/portal.go`** — `portalTransitionReq` + `transition()` now accept `spawnX/spawnY/exactSpawn`. When `exactSpawn` is true, uses x/y directly instead of beacon/random-spawn resolution. Zone-triggered transitions leave these zero/false (unchanged).
+- **`backend/internal/worldsim/asset_http.go`** — New `handleAssetMapsList` serving `GET /api/assets/maps` → `[{name, is_default}]` via `MapStore.ListAllMaps()`.
+- **`backend/internal/worldsim/worldsim.go`** — Registered the new route; replaced inline teleport subscription with `subscribeEntityTeleport()` call.
+- **`backend/internal/pusher/pusher.go`** — New `ClientFrame_AdminTeleport` case forwarding to `worldsim.entity.teleport` with `sender_client_id`, `entity_id`, `map_id`, `x`, `y`, `exact_position`.
+- **`backend/internal/worldsim/admin_teleport_test.go`** — 4 tests: admin exact-position, admin random-spawn, non-admin rejection, trusted-caller (no sender) bypass.
+- **`frontend/src/net/WsClient.ts`** — `sendAdminTeleport(entityId, mapId, x, y, exact)`.
+- **`frontend/src/scenes/GameScene.ts`** — Avatar dropdown admin buttons + `openMapTeleportMenu` (Phaser submenu, counter-scaled); wired Players panel callbacks (`onAdminTeleportToMap`, `onAdminTeleportToMe`).
+- **`frontend/src/ui/TopMenu.ts`** — `PlayersPanelOpts` extended; admin buttons in player rows with inline map picker (`toggleMapPickerForRow` + `fetchMapList`).
+
+### Design decisions
+
+- **Server-side auth is the real gate** — frontend button visibility is cosmetic, consistent with the existing `teleport_to_entity` pattern. The `worldsim.entity.teleport` handler now checks `sender_client_id` → admin; empty sender = trusted caller (MCP/extensions), preserving original behavior.
+- **Fire-and-forget** — no ack frame (matches kick/teleport_to_entity). Same-map targets move via replication; cross-map targets get a `MapTransitionFrame`.
+- **Map list cached** on both GameScene and TopMenu instances after first fetch from `/api/assets/maps`.
+
+### Next steps
+
+- Test on ellipsis (remote): login as admin → verify both buttons appear only for admin; test teleport-to-map and teleport-to-me on a target player; verify non-admin sees neither button.
+- Push + create PR when verified.
+
 ## AOI Grid — Phase 2 of MMORPG-Scale World Engine
 
 **Status:** Implemented — `make proto`, `make build`, `go test ./internal/worldsim/` all pass. 7 new AOI tests + all existing tests green.
