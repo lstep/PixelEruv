@@ -207,6 +207,12 @@
          "id":1,
          "name":"Floor",
          "opacity":1,
+         "properties":[
+                {
+                 "name":"layer_type",
+                 "type":"string",
+                 "value":"decoratior"
+                }],
          "type":"tilelayer",
          "visible":true,
          "width":200,
