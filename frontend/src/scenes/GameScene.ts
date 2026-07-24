@@ -2874,18 +2874,22 @@ export class GameScene extends Phaser.Scene {
         // returns to the dropdown.
         this.openMapTeleportMenu(entityId, container, panelW);
       });
-      makeActionButton("Teleport to me", () => {
-        const myMap = this.ws?.getMapId();
-        if (!myMap) {
+      // "Teleport to me" moves the target to the admin's position — a no-op
+      // (and confusing) when the target is the admin themselves, so skip it.
+      if (entityId !== this.myEntityId) {
+        makeActionButton("Teleport to me", () => {
+          const myMap = this.ws?.getMapId();
+          if (!myMap) {
+            this.closeDropdown();
+            return;
+          }
+          const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+          const x = local?.sprite.x ?? 0;
+          const y = local?.sprite.y ?? 0;
+          this.ws?.sendAdminTeleport(entityId, myMap, x, y, true);
           this.closeDropdown();
-          return;
-        }
-        const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
-        const x = local?.sprite.x ?? 0;
-        const y = local?.sprite.y ?? 0;
-        this.ws?.sendAdminTeleport(entityId, myMap, x, y, true);
-        this.closeDropdown();
-      });
+        });
+      }
     }
 
     y -= btnGap; // remove trailing gap
