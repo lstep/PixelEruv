@@ -38,6 +38,10 @@ export interface PlayersPanelOpts {
   isLocalGuest: () => boolean;
   onPing: (entityId: string) => void;
   onTeleportTo: (entityId: string) => void;
+  // Admin-only: teleport another player to a target map (random spawn).
+  onAdminTeleportToMap: (entityId: string, mapId: string) => void;
+  // Admin-only: teleport another player to the admin's exact position.
+  onAdminTeleportToMe: (entityId: string) => void;
 }
 
 // formatAfkDuration renders a compact "3m" / "1h 2m" / "2h" duration from an
@@ -115,6 +119,10 @@ export class TopMenu {
   // shown for registered non-admins when the option is on. False for guests
   // / failures (button hidden).
   private allowPlayerTeleportCached = false;
+  // mapListCached is the list of map names fetched from /api/assets/maps
+  // (public, no auth) for the admin "Teleport to" map picker in the Players
+  // panel. Fetched lazily on first admin button click; null = not yet fetched.
+  private mapListCached: { name: string; is_default: boolean }[] | null = null;
   // listHostRef points at the modal's row container while the modal is open,
   // so rerenderPlayersRows can refresh it without rebuilding the whole modal.
   private playersListHost: HTMLDivElement | null = null;
@@ -1047,8 +1055,98 @@ export class TopMenu {
         });
         row.appendChild(tpBtn);
       }
+
+      // Admin-only: "Teleport to" (pick a map → send the target player
+      // there) and "Teleport to me" (send the target player to the admin's
+      // exact position). Both fire AdminTeleportFrame; worldsim re-checks
+      // admin authorization server-side.
+      if (opts.isLocalAdmin()) {
+        const tpToBtn = document.createElement("button");
+        tpToBtn.textContent = "🗺️ Teleport to";
+        tpToBtn.title = "Teleport this player to a map";
+        tpToBtn.style.cssText = PILL_STYLE + "padding:4px 10px;font-size:12px;background:#c0392b;";
+        tpToBtn.addEventListener("click", () => {
+          this.toggleMapPickerForRow(row, p.entityId, opts);
+        });
+        row.appendChild(tpToBtn);
+
+        const tpToMeBtn = document.createElement("button");
+        tpToMeBtn.textContent = "🎯 Teleport to me";
+        tpToMeBtn.title = "Teleport this player to your position";
+        tpToMeBtn.style.cssText = PILL_STYLE + "padding:4px 10px;font-size:12px;background:#c0392b;";
+        tpToMeBtn.addEventListener("click", () => {
+          opts.onAdminTeleportToMe(p.entityId);
+          this.closePlayersModal();
+        });
+        row.appendChild(tpToMeBtn);
+      }
     }
     return row;
+  }
+
+  // toggleMapPickerForRow shows or hides an inline map-name list below the
+  // given player row. Clicking a map name fires onAdminTeleportToMap and
+  // closes the modal. The map list is fetched once from /api/assets/maps and
+  // cached on the TopMenu instance.
+  private toggleMapPickerForRow(
+    row: HTMLDivElement,
+    entityId: string,
+    opts: PlayersPanelOpts,
+  ): void {
+    // Toggle off if already open.
+    const existing = row.querySelector<HTMLDivElement>(".map-picker");
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    const picker = document.createElement("div");
+    picker.className = "map-picker";
+    picker.style.cssText = "flex-basis:100%;display:flex;flex-wrap:wrap;gap:4px;padding:4px 0;";
+    const loading = document.createElement("span");
+    loading.style.cssText = "font-size:11px;color:#9ca3af;";
+    loading.textContent = "Loading maps…";
+    picker.appendChild(loading);
+    row.appendChild(picker);
+
+    this.fetchMapList().then((maps) => {
+      picker.innerHTML = "";
+      if (maps.length === 0) {
+        const empty = document.createElement("span");
+        empty.style.cssText = "font-size:11px;color:#9ca3af;";
+        empty.textContent = "No maps available.";
+        picker.appendChild(empty);
+        return;
+      }
+      for (const m of maps) {
+        const btn = document.createElement("button");
+        btn.textContent = m.name + (m.is_default ? " ★" : "");
+        btn.title = m.is_default ? "Default map" : `Teleport to ${m.name}`;
+        btn.style.cssText = PILL_STYLE + "padding:3px 8px;font-size:11px;";
+        btn.addEventListener("click", () => {
+          opts.onAdminTeleportToMap(entityId, m.name);
+          this.closePlayersModal();
+        });
+        picker.appendChild(btn);
+      }
+    });
+  }
+
+  // fetchMapList returns the cached map list, or fetches it from
+  // /api/assets/maps (public, no auth) and caches the result.
+  private async fetchMapList(): Promise<{ name: string; is_default: boolean }[]> {
+    if (this.mapListCached) return this.mapListCached;
+    const pbUrl = window.location.port === "5173"
+      ? "http://localhost:8090"
+      : window.location.origin;
+    try {
+      const resp = await fetch(`${pbUrl}/api/assets/maps`);
+      if (!resp.ok) return [];
+      const maps = await resp.json() as { name: string; is_default: boolean }[];
+      this.mapListCached = maps;
+      return maps;
+    } catch {
+      return [];
+    }
   }
 
   // refreshAuth updates the Login/Logout button and Register button to match

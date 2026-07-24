@@ -482,6 +482,7 @@ func New(natsURL string, app core.App, tickHz int, logger *slog.Logger) (*Simula
 		// Asset-serving routes for the frontend. Public (no auth) — these
 		// serve game assets (maps, sprites) from PB via the Go SDK, allowing
 		// the maps/sprite_bases collections to be fully locked (nil rules).
+		e.Router.GET("/api/assets/maps", s.handleAssetMapsList)
 		e.Router.GET("/api/assets/maps/default", s.handleAssetMapDefault)
 		e.Router.GET("/api/assets/maps/{name}", s.handleAssetMap)
 		e.Router.GET("/api/assets/maps/{name}/tilesets/{filename}", s.handleAssetTileset)
@@ -894,41 +895,9 @@ func (s *Simulator) subscribe() error {
 
 	// Extension-triggered map transitions: extensions can teleport a player
 	// to a different map via NATS (e.g. clicking a door, admin teleport).
-	// The target position is resolved by target_entity (beacon name) or, if
-	// omitted, a random spawn zone on the target map.
-	if _, err := s.nc.Subscribe("worldsim.entity.teleport", func(m *nats.Msg) {
-		ctx, span := s.tracer.Start(otelinternal.Extract(context.Background(), m), "worldsim.entity.teleport")
-		defer span.End()
-		var req struct {
-			EntityID     string `json:"entity_id"`
-			MapID        string `json:"map_id"`
-			TargetEntity string `json:"target_entity,omitempty"`
-		}
-		if err := json.Unmarshal(m.Data, &req); err != nil {
-			s.logger.WarnContext(ctx, "teleport unmarshal", "err", err)
-			return
-		}
-		s.mu.Lock()
-		displayName := ""
-		if e, ok := s.entities[req.EntityID]; ok {
-			displayName = e.DisplayName
-		}
-		s.mu.Unlock()
-		s.portal.transition(ctx, PortalInput{
-			Entities:                 s.entities,
-			Maps:                     s.maps,
-			Zones:                    s.zones,
-			MapWarnings:              s.mapWarnings,
-			RNG:                      s.rng,
-			PendingPortalTransitions: &s.pendingPortalTransitions,
-			DestroyedEntities:        &s.destroyedEntities,
-		}, req.EntityID, req.MapID, req.TargetEntity)
-		audit.Emit(s.nc, "player.teleport", audit.SeverityInfo,
-			audit.Actor{EntityID: req.EntityID, DisplayName: displayName},
-			audit.Details{"target_map": req.MapID, "target_entity": req.TargetEntity},
-			"")
-	}); err != nil {
-		return fmt.Errorf("subscribe worldsim.entity.teleport: %w", err)
+	// See subscribeEntityTeleport for the handler details.
+	if err := s.subscribeEntityTeleport(); err != nil {
+		return err
 	}
 
 	// Player-initiated teleport-to-player: a client teleports itself to another
@@ -1674,6 +1643,13 @@ type portalTransitionReq struct {
 	entityID     string
 	targetMap    string
 	targetEntity string
+	// spawnX/spawnY + exactSpawn carry an admin-specified exact spawn point
+	// (e.g. "teleport to me"). When exactSpawn is false the portal resolves
+	// the spawn via beacon or random spawn zone, and spawnX/spawnY are
+	// ignored. Zone-triggered transitions always leave these zero/false.
+	spawnX      float32
+	spawnY      float32
+	exactSpawn  bool
 }
 
 func (s *Simulator) applyInput(ctx context.Context, clientID string, input *pb.InputFrame) {

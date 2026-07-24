@@ -26,6 +26,13 @@ type mapAssetsResponse struct {
 	Tilesets  []tilesetAsset  `json:"tilesets"`
 }
 
+// mapListItem is one entry in the GET /api/assets/maps list — just the name +
+// is_default flag, enough for the frontend admin "Teleport to" map picker.
+type mapListItem struct {
+	Name      string `json:"name"`
+	IsDefault bool   `json:"is_default"`
+}
+
 type spriteBaseAsset struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -38,6 +45,22 @@ type tiledMapForTilesets struct {
 		Name  string `json:"name"`
 		Image string `json:"image"`
 	} `json:"tilesets"`
+}
+
+// handleAssetMapsList serves GET /api/assets/maps — a list of all map names
+// with their is_default flag. Used by the frontend admin "Teleport to" map
+// picker. Public (no auth) like the other asset routes; it exposes only map
+// names, not the Tiled JSON or tilesets.
+func (s *Simulator) handleAssetMapsList(e *core.RequestEvent) error {
+	records, err := s.mapStore.ListAllMaps()
+	if err != nil {
+		return e.JSON(http.StatusInternalServerError, map[string]any{"error": "list maps"})
+	}
+	result := make([]mapListItem, 0, len(records))
+	for _, r := range records {
+		result = append(result, mapListItem{Name: r.Name, IsDefault: r.IsDefault})
+	}
+	return e.JSON(http.StatusOK, result)
 }
 
 // handleAssetMapDefault serves GET /api/assets/maps/default — the map marked

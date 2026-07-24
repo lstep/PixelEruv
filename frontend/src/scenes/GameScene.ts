@@ -513,6 +513,9 @@ export class GameScene extends Phaser.Scene {
   // admins, plus stub "Invite" and (admin-only) "Ban" buttons.
   private openDropdownEntityId: string | null = null;
   private dropdownContainer: Phaser.GameObjects.Container | null = null;
+  // Map list cache for the admin "Teleport to" map submenu in the avatar
+  // dropdown. Fetched lazily from /api/assets/maps on first open.
+  private mapListCache: { name: string; is_default: boolean }[] | null = null;
   // Set by the dot/button pointerdown handlers so the scene-level pointerdown
   // listener knows not to close the dropdown on that same click.
   private _dropdownClickedThisFrame = false;
@@ -1274,6 +1277,7 @@ export class GameScene extends Phaser.Scene {
     );
     // Players panel — lists connected players on the current map with status,
     // AFK + duration, and per-row Ping + admin/option-gated Teleport-to.
+    // Admin rows also get "Teleport to" (map picker) and "Teleport to me".
     topMenu?.attachPlayersPanel({
       getPlayers: () => this.getConnectedPlayers(),
       getMapName: () => this.ws?.getMapId() ?? null,
@@ -1281,6 +1285,15 @@ export class GameScene extends Phaser.Scene {
       isLocalGuest: () => !isLoggedIn(),
       onPing: (entityId) => this.ws?.sendPing(entityId),
       onTeleportTo: (entityId) => this.ws?.sendTeleportTo(entityId),
+      onAdminTeleportToMap: (entityId, mapId) => this.ws?.sendAdminTeleport(entityId, mapId, 0, 0, false),
+      onAdminTeleportToMe: (entityId) => {
+        const myMap = this.ws?.getMapId();
+        if (!myMap) return;
+        const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+        const x = local?.sprite.x ?? 0;
+        const y = local?.sprite.y ?? 0;
+        this.ws?.sendAdminTeleport(entityId, myMap, x, y, true);
+      },
     });
     // AFK detector — monitors user activity + tab visibility and drives the
     // AFK overlay state (SetAfkFrame) and tab-visibility A/V auto-mute. Has
@@ -2855,6 +2868,24 @@ export class GameScene extends Phaser.Scene {
         this.closeDropdown();
       });
       makeButton("Ban");
+      makeActionButton("Teleport to", () => {
+        // Open a map submenu below the dropdown. The dropdown stays open so
+        // the submenu is positioned relative to it; closing the submenu
+        // returns to the dropdown.
+        this.openMapTeleportMenu(entityId, container, panelW);
+      });
+      makeActionButton("Teleport to me", () => {
+        const myMap = this.ws?.getMapId();
+        if (!myMap) {
+          this.closeDropdown();
+          return;
+        }
+        const local = this.myEntityId ? this.avatars.get(this.myEntityId) : null;
+        const x = local?.sprite.x ?? 0;
+        const y = local?.sprite.y ?? 0;
+        this.ws?.sendAdminTeleport(entityId, myMap, x, y, true);
+        this.closeDropdown();
+      });
     }
 
     y -= btnGap; // remove trailing gap
@@ -2902,6 +2933,100 @@ export class GameScene extends Phaser.Scene {
     this.dropdownContainer?.destroy();
     this.dropdownContainer = null;
     this.openDropdownEntityId = null;
+  }
+
+  // openMapTeleportMenu builds a secondary panel below the avatar dropdown
+  // listing all map names. Clicking a map teleports the target entity there
+  // via AdminTeleportFrame (random spawn). The submenu is a child of the
+  // dropdown container so it inherits the counter-scale and closes when the
+  // dropdown closes.
+  private openMapTeleportMenu(
+    entityId: string,
+    dropdown: Phaser.GameObjects.Container,
+    panelW: number,
+  ): void {
+    const pad = 8;
+    const btnHeight = 18;
+    const btnGap = 4;
+    const x0 = -panelW / 2;
+    const panelH = dropdown.getData("panelH") as number;
+
+    const submenu = this.add.container(0, panelH + 2);
+    submenu.setScale(1 / this.cameras.main.zoom);
+    dropdown.add(submenu);
+    this._dropdownClickedThisFrame = true;
+
+    const loading = this.add.text(x0 + pad, pad, "Loading maps…", {
+      fontFamily: "Nunito, sans-serif",
+      fontSize: "10px",
+      color: "#cbd5e1",
+    });
+    loading.setOrigin(0, 0);
+    submenu.add(loading);
+
+    this.fetchMapListForDropdown().then((maps) => {
+      submenu.removeAll(true);
+      let y = pad;
+      if (maps.length === 0) {
+        const empty = this.add.text(x0 + pad, y, "No maps available", {
+          fontFamily: "Nunito, sans-serif",
+          fontSize: "10px",
+          color: "#fbbf24",
+        });
+        empty.setOrigin(0, 0);
+        submenu.add(empty);
+        y += btnHeight;
+      } else {
+        for (const m of maps) {
+          const label = m.name + (m.is_default ? " ★" : "");
+          const btn = this.add.text(x0 + pad, y, label, {
+            fontFamily: "Nunito, sans-serif",
+            fontSize: "10px",
+            color: "#ffffff",
+            fontStyle: "bold",
+            backgroundColor: "#3e3e4a",
+            padding: { left: 6, right: 6, top: 3, bottom: 3 },
+          });
+          btn.setOrigin(0, 0);
+          btn.setInteractive({ useHandCursor: true });
+          btn.on("pointerover", () => btn.setStyle({ backgroundColor: "#52525e" }));
+          btn.on("pointerout", () => btn.setStyle({ backgroundColor: "#3e3e4a" }));
+          btn.on("pointerdown", () => {
+            this._dropdownClickedThisFrame = true;
+            this.ws?.sendAdminTeleport(entityId, m.name, 0, 0, false);
+            this.closeDropdown();
+          });
+          submenu.add(btn);
+          y += btnHeight + btnGap;
+        }
+      }
+      y -= btnGap;
+      const subH = y + pad;
+      const bg = this.add.graphics();
+      bg.fillStyle(0x333340, 0.92);
+      bg.fillRoundedRect(x0, 0, panelW, subH, 6);
+      bg.setDepth(-1);
+      submenu.add(bg);
+      submenu.sendToBack(bg);
+    });
+  }
+
+  // fetchMapListForDropdown returns the cached map list, or fetches it from
+  // /api/assets/maps (public, no auth) and caches the result.
+  private async fetchMapListForDropdown(): Promise<{ name: string; is_default: boolean }[]> {
+    if (this.mapListCache) return this.mapListCache;
+    const pbUrl = window.location.port === "5173"
+      ? "http://localhost:8090"
+      : window.location.origin;
+    try {
+      const resp = await fetch(`${pbUrl}/api/assets/maps`);
+      if (!resp.ok) return [];
+      const maps = await resp.json() as { name: string; is_default: boolean }[];
+      this.mapListCache = maps;
+      return maps;
+    } catch {
+      return [];
+    }
   }
 
   // showAlreadyConnectedConfirm shows a centered confirm dialog when the

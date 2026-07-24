@@ -1026,6 +1026,36 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 				s.logger.Warn("teleport_to publish failed", "client", clientID, "err", err)
 			}
 			pspan.End()
+		case *pb.ClientFrame_AdminTeleport:
+			// Admin teleport of ANOTHER player to a target map (optionally to
+			// an exact x/y, e.g. "teleport to me"). Forward to
+			// worldsim.entity.teleport with sender_client_id set so worldsim
+			// can authorize the sender as an admin. Fire-and-forget — the
+			// target's client sees a MapTransitionFrame via replication.
+			pctx, pspan := s.tracer.Start(ctx, "pusher.nats.publish.admin_teleport")
+			pspan.SetAttributes(
+				attribute.String("client.id", clientID),
+				attribute.String("admin_teleport.entity_id", p.AdminTeleport.GetEntityId()),
+				attribute.String("admin_teleport.map_id", p.AdminTeleport.GetMapId()),
+				attribute.Bool("admin_teleport.exact_position", p.AdminTeleport.GetExactPosition()),
+			)
+			adminTeleportPayload := map[string]any{
+				"sender_client_id": clientID,
+				"entity_id":        p.AdminTeleport.GetEntityId(),
+				"map_id":           p.AdminTeleport.GetMapId(),
+				"x":                p.AdminTeleport.GetX(),
+				"y":                p.AdminTeleport.GetY(),
+				"exact_position":   p.AdminTeleport.GetExactPosition(),
+			}
+			adminTeleportBytes, _ := json.Marshal(adminTeleportPayload)
+			adminTeleportMsg := &nats.Msg{Subject: "worldsim.entity.teleport", Data: adminTeleportBytes}
+			otelinternal.Inject(pctx, adminTeleportMsg)
+			if err := s.nc.PublishMsg(adminTeleportMsg); err != nil {
+				pspan.RecordError(err)
+				pspan.SetStatus(codes.Error, "nats publish admin_teleport")
+				s.logger.Warn("admin_teleport publish failed", "client", clientID, "err", err)
+			}
+			pspan.End()
 		}
 		}
 	}
