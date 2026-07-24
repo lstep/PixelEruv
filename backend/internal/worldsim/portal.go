@@ -58,18 +58,23 @@ func (p *PortalSystem) Step(ctx context.Context, in PortalInput) {
 	pending := *in.PendingPortalTransitions
 	*in.PendingPortalTransitions = nil
 	for _, t := range pending {
-		p.transition(ctx, in, t.entityID, t.targetMap, t.targetEntity)
+		p.transition(ctx, in, t.entityID, t.targetMap, t.targetEntity, t.spawnX, t.spawnY, t.exactSpawn)
 	}
 }
 
 // transition moves an entity to a different map. The spawn position on
 // the target map is resolved as follows:
-//   - If targetEntity is set, teleport to that named base entity's position
-//     (a "beacon"). Fails if the entity doesn't exist on the target map.
+//   - If exactSpawn is true, use spawnX/spawnY directly (e.g. admin
+//     "teleport to me" — the admin's own tile coordinates). x/y are trusted
+//     because the caller (worldsim.entity.teleport handler) already
+//     authorized the sender as an admin.
+//   - Else if targetEntity is set, teleport to that named base entity's
+//     position (a "beacon"). Fails if the entity doesn't exist on the target
+//     map.
 //   - Otherwise, pick a random "spawn" zone on the target map (FindSpawnPoint).
 //
 // It:
-//  1. Resolves the spawn position (beacon or random spawn point).
+//  1. Resolves the spawn position (exact / beacon / random spawn point).
 //  2. Removes the entity's mobile zone from the old map's zone registry.
 //  3. Changes Position.MapId, X, Y to the target.
 //  4. Re-adds the mobile zone to the new map's zone registry.
@@ -78,7 +83,7 @@ func (p *PortalSystem) Step(ctx context.Context, in PortalInput) {
 //  7. Sends a MapTransitionFrame to the client (via sink).
 //  8. Persists the new map_id to PocketBase (via sink).
 //  9. Emits an audit event (via sink).
-func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID, targetMap, targetEntity string) {
+func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID, targetMap, targetEntity string, spawnX, spawnY float32, exactSpawn bool) {
 	p.mu.Lock()
 	e, ok := in.Entities[entityID]
 	if !ok {
@@ -95,18 +100,19 @@ func (p *PortalSystem) transition(ctx context.Context, in PortalInput, entityID,
 	}
 
 	// Resolve spawn position on the target map.
-	var spawnX, spawnY float32
-	if targetEntity != "" {
-		beacon := targetMD.FindEntityByName(targetEntity)
-		if beacon == nil {
-			p.logger.WarnContext(ctx, "transition target entity not found on target map",
-				"entity", entityID, "target_map", targetMap, "target_entity", targetEntity)
-			p.mu.Unlock()
-			return
+	if !exactSpawn {
+		if targetEntity != "" {
+			beacon := targetMD.FindEntityByName(targetEntity)
+			if beacon == nil {
+				p.logger.WarnContext(ctx, "transition target entity not found on target map",
+					"entity", entityID, "target_map", targetMap, "target_entity", targetEntity)
+				p.mu.Unlock()
+				return
+			}
+			spawnX, spawnY = beacon.X, beacon.Y
+		} else {
+			spawnX, spawnY = targetMD.FindSpawnPoint(in.RNG)
 		}
-		spawnX, spawnY = beacon.X, beacon.Y
-	} else {
-		spawnX, spawnY = targetMD.FindSpawnPoint(in.RNG)
 	}
 
 	oldMap := e.Position.MapId

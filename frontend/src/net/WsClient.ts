@@ -1,6 +1,6 @@
 import { create, toBinary, fromBinary } from "@bufbuild/protobuf";
 import { context, trace } from "@opentelemetry/api";
-import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema, PingPlayerFrameSchema, TeleportToFrameSchema } from "../proto/frames_pb";
+import { ClientFrameSchema, ServerFrameSchema, AuthFrameSchema, InputFrameSchema, InputStateSchema, ActionFrameSchema, ChatFrameSchema, SetNameFrameSchema, SetSpriteBaseFrameSchema, SetPlayerOptionsFrameSchema, SetStatusFrameSchema, SetAfkFrameSchema, RecordingRequestFrameSchema, KickFrameSchema, PingPlayerFrameSchema, TeleportToFrameSchema, AdminTeleportFrameSchema } from "../proto/frames_pb";
 import { PositionSchema } from "../proto/components_pb";
 import { tracer, traceparentFor } from "../otel";
 import { getIdToken, clearIdToken, getDeviceId } from "../auth";
@@ -747,6 +747,20 @@ export class WsClient {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const tp = create(TeleportToFrameSchema, { entityId });
     const frame = create(ClientFrameSchema, { payload: { case: "teleportTo", value: tp } });
+    this.ws.send(toBinary(ClientFrameSchema, frame));
+  }
+
+  // sendAdminTeleport sends an AdminTeleportFrame to teleport ANOTHER player
+  // (entityId) to a target map. If exact is true, x/y are used as the spawn
+  // point (e.g. "teleport to me" — the admin's own position); if false, x/y
+  // are ignored and the server picks a random spawn zone on the target map.
+  // Worldsim enforces admin authorization server-side — the frontend button
+  // visibility is cosmetic only. Fire-and-forget; the target's client sees a
+  // MapTransitionFrame via replication.
+  sendAdminTeleport(entityId: string, mapId: string, x: number, y: number, exact: boolean): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    const tp = create(AdminTeleportFrameSchema, { entityId, mapId, x, y, exactPosition: exact });
+    const frame = create(ClientFrameSchema, { payload: { case: "adminTeleport", value: tp } });
     this.ws.send(toBinary(ClientFrameSchema, frame));
   }
 

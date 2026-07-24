@@ -24,6 +24,7 @@ message ClientFrame {
     SetAfkFrame set_afk = 12;
     PingPlayerFrame ping_player = 13;
     TeleportToFrame teleport_to = 14;
+    AdminTeleportFrame admin_teleport = 15;
   }
 }
 
@@ -76,6 +77,24 @@ message PingPlayerFrame {
 // position update via replication.
 message TeleportToFrame {
   string entity_id = 1;  // target player entity to teleport to
+}
+
+// AdminTeleportFrame is sent by an admin client to teleport ANOTHER player
+// (entity_id) to a target map. If exact_position is true, x/y are used as the
+// spawn coordinates (e.g. "teleport to me" — the admin's own position); if
+// false, x/y are ignored and the spawn is resolved as a random spawn zone on
+// the target map (or a named beacon, but the client UI only uses the random
+// spawn path). The pusher forwards it to worldsim.entity.teleport with
+// sender_client_id set; worldsim enforces admin authorization server-side
+// (only admins may send this frame — non-admins get a forbidden audit and no
+// state change). Fire-and-forget — no ack is sent back; the target's client
+// sees a MapTransitionFrame via replication.
+message AdminTeleportFrame {
+  string entity_id = 1;     // target player entity to teleport
+  string map_id = 2;        // target map name
+  float x = 3;              // spawn x (tile coords) when exact_position=true
+  float y = 4;              // spawn y (tile coords) when exact_position=true
+  bool exact_position = 5;  // if true, use x/y as the spawn point
 }
 
 message InputFrame {
