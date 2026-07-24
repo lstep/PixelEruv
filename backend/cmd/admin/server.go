@@ -537,11 +537,13 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve participant entity_ids to display_names in one batched PB
-	// query so the Participants column shows names instead of opaque ids.
+	// Resolve participant and started_by entity_ids to display_names in one
+	// batched PB query so the Participants and Started by columns show names
+	// instead of opaque ids.
 	allParticipants := make([]string, 0, len(result.Items)*4)
 	for _, item := range result.Items {
 		allParticipants = append(allParticipants, item.Participants...)
+		allParticipants = append(allParticipants, item.StartedBy)
 	}
 	nameByID := s.resolveEntityNames(token, allParticipants)
 
@@ -558,6 +560,12 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 				displayNames[i] = pid
 			}
 		}
+		// Resolve started_by entity_id to display_name, falling back to the
+		// raw id when no player record exists (guests, deleted).
+		startedByName := item.StartedBy
+		if name, ok := nameByID[item.StartedBy]; ok && name != "" {
+			startedByName = name
+		}
 		row := recordingRow{
 			ID:           item.ID,
 			MeetingID:    item.MeetingID,
@@ -565,7 +573,7 @@ func (s *Server) handleRecordings(w http.ResponseWriter, r *http.Request) {
 			ZoneID:       item.ZoneID,
 			Target:       item.Target,
 			Status:       item.Status,
-			StartedBy:    item.StartedBy,
+			StartedBy:    startedByName,
 			StartTime:    item.StartTime,
 			EndTime:      item.EndTime,
 			Participants: strings.Join(displayNames, ", "),
