@@ -2014,6 +2014,19 @@ export class GameScene extends Phaser.Scene {
     // creating avatars that SHUTDOWN would immediately destroy.
     this.transitioning = true;
     this.cancelAutoMove();
+    // Zero manual movement input so a held key doesn't keep the avatar
+    // moving on the new map after the scene restart. cancelAutoMove
+    // early-returns without clearing inputState when auto-move isn't
+    // active, so clear explicitly here. inputDirty=true ensures the
+    // stop frame is sent once update() runs after restart (the WS stays
+    // open across scene.restart). Also covers keyup events lost during
+    // the SHUTDOWN->create window, which would otherwise leave a
+    // direction bit stuck on forever.
+    this.inputState.up = false;
+    this.inputState.down = false;
+    this.inputState.left = false;
+    this.inputState.right = false;
+    this.inputDirty = true;
     this.pendingSpawns = [];
     // Reset so the post-restart snapshot (all entities already on the new
     // map) doesn't trigger join sounds. Set back to true after the first
